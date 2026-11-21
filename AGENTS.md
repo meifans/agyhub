@@ -17,7 +17,7 @@ Agyhub 是一个面向 macOS 13.0+ 的原生状态栏应用（Swift + SwiftUI，
 | `build_app.sh` | 编译打包脚本 | 使用 `swiftc` 编译 `Sources/*.swift`，生成 `Agyhub.app` 并执行本地 ad-hoc 签名（支持 `--universal`、`--dmg`、`--version`、`--sync-tools`） |
 | `tests/AGYHubTests.swift` | Swift TDD 回归测试套件 | 无 Xcode 工程，通过 `-DAGYHUB_TESTING` 直接编译运行全部 Swift 单元测试 |
 | `tests/test_agy_monitor.py` | Python TDD 回归测试套件 | 验证增量缓存、`now` 动态重算、损坏恢复与 `--daemon` NDJSON 协议 |
-| `docs/adr/ADR-001-cli-app-account-isolation.md` | 架构决策记录 001 | 根目录 `ADR.md` 软链指向此文件，详述 App 与 CLI 账号隔离的原理和演进 |
+| `docs/adr/ADR-001-cli-app-account-isolation.md` | 架构决策记录 001 | 详述 App 与 CLI 账号隔离的原理、双轨模式与演进 |
 | `docs/adr/ADR-002-low-overhead-incremental-monitoring.md` | 架构决策记录 002 | 详述 P0 增量缓存、P1 可见性降频与防重绘、P2 常驻 `--daemon` 与 `FSEvents` 监听方案 |
 
 ---
