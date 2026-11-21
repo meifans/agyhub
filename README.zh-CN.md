@@ -26,6 +26,29 @@
 
 ---
 
+## 界面预览
+
+<p align="center">
+  <img src="./assets/screenshot-dashboard-zh.png" alt="实时主面板 —— App/CLI 账号隔离、活跃子 Agent 与实时生成速率" width="540" />
+  <br />
+  <em>实时主面板：App / CLI 独立账号与周度配额、活跃子 Agent 徽标、以及实时 <code>t/s</code> 生成速率一览。</em>
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./assets/screenshot-detail-zh.png" alt="会话详情 —— 运行中子 Agent 速率、上下文来源环图与缓存失效诊断" width="100%" />
+      <br />
+      <em>子 Agent 实时速率监控、上下文来源占比环图与缓存失效多花费用诊断。</em>
+    </td>
+    <td align="center" width="50%">
+      <img src="./assets/screenshot-usage-zh.png" alt="近 7 天用量趋势 —— 逐日堆叠柱状图与分模型费用统计" width="100%" />
+      <br />
+      <em>近 7 天堆叠消耗趋势，支持按模型 / 按对话多维度切分费用与 Token。</em>
+    </td>
+  </tr>
+</table>
+
 ## 核心特性
 
 - **无需额外登录，数据 100% 留在本机**  

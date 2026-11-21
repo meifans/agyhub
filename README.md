@@ -26,6 +26,29 @@
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="./assets/screenshot-dashboard.png" alt="Live Dashboard — Isolated App/CLI Accounts, Active Subagents & Live Throughput" width="540" />
+  <br />
+  <em>Live Dashboard: isolated App/CLI accounts with weekly quota pills, active multi-subagent badges, and real-time token throughput (<code>t/s</code>).</em>
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./assets/screenshot-detail.png" alt="Session Detail — Running Subagents, Context Breakdown & Cache Miss Diagnostics" width="100%" />
+      <br />
+      <em>Running subagent speed, context source attribution donut &amp; cache-miss cost diagnostics.</em>
+    </td>
+    <td align="center" width="50%">
+      <img src="./assets/screenshot-usage.png" alt="7-Day Usage Analytics — Daily Trend & Model Cost Breakdown" width="100%" />
+      <br />
+      <em>7-day stacked usage trend with per-model &amp; per-session cost/token breakdown.</em>
+    </td>
+  </tr>
+</table>
+
 ## Features
 
 - **No Extra Login, 100% Local Data**  
