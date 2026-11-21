@@ -1,0 +1,3 @@
+# agy-monitor.py 在 --json 模式（Agyhub.app 菜单栏数据引擎）下仅使用 Python 3 标准库，零第三方依赖。
+# 仅当在终端使用 agy-top 启动高刷新率 TUI 看板时，rich 为可选增强依赖（未安装时自动降级为原生 ANSI 输出）。
+rich>=13.0.0

@@ -1,0 +1,1 @@
+docs/adr/ADR-001-cli-app-account-isolation.md

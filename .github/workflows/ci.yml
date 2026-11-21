@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Shell syntax check
+        run: |
+          bash -n agy-top
+          bash -n build_app.sh
+
+      - name: Run deterministic I18N guardrail
+        run: python3 scripts/check_i18n.py
+
+      - name: Run Swift unit tests
+        run: |
+          swiftc -DAGYHUB_TESTING Sources/*.swift tests/AGYHubTests.swift \
+            -parse-as-library \
+            -sdk "$(xcrun --show-sdk-path --sdk macosx)" \
+            -target "$(uname -m)-apple-macos13.0" \
+            -framework SwiftUI -framework AppKit -framework Security -framework ServiceManagement \
+            -o /tmp/agyhub_tests
+          /tmp/agyhub_tests
+          rm -f /tmp/agyhub_tests
+
+      - name: Run Python unit tests
+        run: python3 tests/test_agy_monitor.py
+
+      - name: Build Agyhub.app
+        run: |
+          ./build_app.sh
+          test -d Agyhub.app
+          test -x Agyhub.app/Contents/MacOS/Agyhub

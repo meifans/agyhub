@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VER="$INPUT_VERSION"
+            TAG="v${RAW_VER#v}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Run Swift unit tests
+        run: |
+          swiftc -DAGYHUB_TESTING Sources/*.swift tests/AGYHubTests.swift \
+            -parse-as-library \
+            -sdk "$(xcrun --show-sdk-path --sdk macosx)" \
+            -target "$(uname -m)-apple-macos13.0" \
+            -framework SwiftUI \
+            -framework AppKit \
+            -framework Security \
+            -framework ServiceManagement \
+            -o /tmp/agyhub_tests
+          /tmp/agyhub_tests
+          rm -f /tmp/agyhub_tests
+
+      - name: Run Python unit tests
+        run: python3 tests/test_agy_monitor.py
+
+      - name: Build Universal Binary and DMG installer
+        run: ./build_app.sh --universal --dmg --version "${{ steps.meta.outputs.version }}"
+
+      - name: Verify bundle signature and architectures
+        run: |
+          lipo -info ./Agyhub.app/Contents/MacOS/Agyhub
+          codesign -v ./Agyhub.app
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Agyhub ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/Agyhub-v${{ steps.meta.outputs.version }}-universal.dmg
+            dist/Agyhub-v${{ steps.meta.outputs.version }}-universal.zip
+            dist/SHA256SUMS.txt
