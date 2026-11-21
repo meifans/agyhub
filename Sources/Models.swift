@@ -1,12 +1,5 @@
-//
-//  Models.swift
-//  Agyhub — 数据模型、用量统计模型、账号环境配置与格式化工具
-//
-
 import Foundation
 import SwiftUI
-
-// MARK: - 1. 数据模型 (与 agy-monitor.py --json 100% 严格对齐)
 
 struct MonitorPayload: Codable, Equatable {
     let timestamp: String
@@ -89,7 +82,6 @@ struct Recent503Stats: Codable, Equatable {
     }
 }
 
-/// 最近 1 小时 503 统计调度与徽章分级策略（固定 5 分钟周期刷新，避免高频扫盘）
 enum Recent503Policy {
     enum Severity: Equatable {
         case normal
@@ -127,13 +119,11 @@ enum Recent503Policy {
     }
 }
 
-/// 弹窗/窗口可见性感知轮询间隔策略（展开正常 / 收起活跃 15s / 收起空闲 60s）
 enum PollingSchedulePolicy {
     static let hiddenActiveFallbackInterval: Double = 15.0
     static let hiddenIdleFallbackInterval: Double = 60.0
     static let minimumRefreshInterval: Double = 0.2
 
-    /// 根据窗口可见性、是否有活跃会话及用户配置的刷新间隔，计算实际后台兜底轮询周期
     static func effectiveInterval(
         userRefreshInterval: Double,
         isDashboardVisible: Bool,
@@ -150,9 +140,8 @@ enum PollingSchedulePolicy {
     }
 }
 
-/// MonitorPayload 关键展示状态比较策略：忽略纯采集时间戳 timestamp，防止未变化时触发 SwiftUI 整树重绘
 enum MonitorPayloadEquivalencePolicy {
-    /// 比较决定 UI 与菜单栏展示的全部关键字段是否实质等价
+
     static func areDisplayEquivalent(_ lhs: MonitorPayload, _ rhs: MonitorPayload) -> Bool {
         lhs.dataDir == rhs.dataDir
             && lhs.activeCount == rhs.activeCount
@@ -163,7 +152,6 @@ enum MonitorPayloadEquivalencePolicy {
             && lhs.sessions == rhs.sessions
     }
 
-    /// 判断新采集到的 payload 是否需要写入 @Published 属性以触发视图刷新
     static func shouldUpdatePayload(
         current: MonitorPayload,
         incoming: MonitorPayload,
@@ -183,8 +171,6 @@ struct SessionStep: Codable, Identifiable, Hashable {
     let time: String
     let summary: String
 }
-
-// MARK: - 1.5 会话上下文、工作阶段与缓存失效诊断模型
 
 struct SessionPhaseStat: Codable, Identifiable, Hashable {
     var id: String { name }
@@ -454,7 +440,6 @@ enum SessionDiagnosticsPolicy {
         let end: Double
     }
 
-    /// 将正数权重归一化为 [0, 1] 首尾相接的环形饼图分片，自动过滤非正数且避免除零
     static func donutSlices(values: [Double]) -> [DonutSlice] {
         let positives = values.enumerated().filter { $0.element > 0 }
         let total = positives.reduce(0.0) { $0 + $1.element }
@@ -628,37 +613,30 @@ struct SessionItem: Codable, Identifiable, Hashable {
         return sum > 0 ? sum : activeSubagentTps
     }
 
-    /// 自身正在运行或有任意子 Agent 正在干活时视为活跃工作中
     var isActivelyWorking: Bool {
         isRunning || effectiveActiveSubagentCount > 0
     }
 
-    /// 包含主会话自身及全部子 Agent 的累计 Token 消耗
     var aggregatedTotalTokensConsumed: Int {
         totalTokensConsumed + subagents.reduce(0) { $0 + $1.aggregatedTotalTokensConsumed }
     }
 
-    /// 包含主会话自身及全部子 Agent 的累计预估账单 (USD)
     var aggregatedTotalCostUsd: Double {
         totalCostUsd + subagents.reduce(0.0) { $0 + $1.aggregatedTotalCostUsd }
     }
 
-    /// 包含主会话自身及全部子 Agent 的累计缓存读取 Token
     var aggregatedTotalCacheConsumed: Int {
         totalCacheConsumed + subagents.reduce(0) { $0 + $1.aggregatedTotalCacheConsumed }
     }
 
-    /// 包含主会话自身及全部子 Agent 的累计非缓存输入 Token
     var aggregatedTotalInputConsumed: Int {
         totalInputConsumed + subagents.reduce(0) { $0 + $1.aggregatedTotalInputConsumed }
     }
 
-    /// 包含主会话自身及全部子 Agent 的累计输出 Token
     var aggregatedTotalOutputConsumed: Int {
         totalOutputConsumed + subagents.reduce(0) { $0 + $1.aggregatedTotalOutputConsumed }
     }
 
-    /// 含子 Agent 时按全树总缓存命中输入与非缓存输入之和加权计算缓存率；无子 Agent 时沿用自身最近一步缓存率
     var aggregatedCachePct: Double {
         if subagents.isEmpty {
             return cachePct
@@ -683,7 +661,6 @@ struct SessionItem: Codable, Identifiable, Hashable {
         (clientType ?? "app").lowercased() == "cli"
     }
 
-    /// CLI 来源小标记文案，非 CLI 会话不渲染标记
     var cliBadgeLabel: String? {
         isCLISession ? "CLI" : nil
     }
@@ -783,8 +760,6 @@ struct SessionItem: Codable, Identifiable, Hashable {
         self.breakdownStr = breakdownStr
     }
 }
-
-// MARK: - 1.5 用量趋势与按模型统计模型 (Usage Analytics)
 
 enum UsageRangeOption: String, CaseIterable, Identifiable, Equatable {
     case today = "today"
@@ -982,7 +957,6 @@ struct UsageHistoryPayload: Codable, Equatable {
     }
 }
 
-/// 纯函数用量聚合引擎：按 今天 / 最近 7 天 / 最近一个月 统一汇总柱状图数据与按模型占比排行
 enum UsageAnalyticsPolicy {
     struct BarPoint: Identifiable, Equatable {
         let id: String
@@ -1338,19 +1312,17 @@ enum UsageAnalyticsPolicy {
     }
 }
 
-// MARK: - 2. 账号环境配置模型 (Profile Manager)
-
 struct AGYProfile: Codable, Identifiable, Hashable {
     var id: String { name }
-    var name: String               // 账号邮箱或环境标识 (例如: alice@example.com)
-    var email: String?             // 真实探测到的认证邮箱
-    var tier: String?              // 订阅等级 (例如: Google AI Pro)
-    var userDataDir: String        // 对应环境数据目录
-    var geminiDataDir: String      // 对应监控日志目录，默认 ~/.gemini/antigravity
-    var notes: String              // 说明 (例如: 官方原生主环境)
-    var isDefault: Bool?           // 是否为主/默认环境
+    var name: String
+    var email: String?
+    var tier: String?
+    var userDataDir: String
+    var geminiDataDir: String
+    var notes: String
+    var isDefault: Bool?
     var createdAt: String
-    var lastUsedAt: TimeInterval?  // 最近一次使用或切换的 Unix 时间戳（用于按上次使用顺序排序）
+    var lastUsedAt: TimeInterval?
 
     var isDefaultProfile: Bool {
         isDefault ?? false
@@ -1378,8 +1350,6 @@ struct AGYProfile: Codable, Identifiable, Hashable {
         self.lastUsedAt = lastUsedAt
     }
 }
-
-// MARK: - 3. 格式化辅助工具
 
 enum Formatters {
     static func formatTokens(_ n: Int) -> String {

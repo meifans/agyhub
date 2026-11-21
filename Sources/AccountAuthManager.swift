@@ -1,30 +1,16 @@
-//
-//  AccountAuthManager.swift
-//  Agyhub — 本地账号探测、鉴权、Profile/Keychain 隔离与 OAuth 配额管理
-//
-
 import AppKit
 import Foundation
 import Security
 import SQLite3
 
-// MARK: - 2.05 Antigravity 启动与视口配置引擎 (Antigravity Launch Config)
-
 enum AntigravityLaunchConfig {
-    /// 等待 Antigravity 优雅退出的超时上限（必须覆盖 Electron 内部 killLanguageServer() 的 5 秒收尾窗口）
+
     static let gracefulShutdownTimeoutSeconds: TimeInterval = 8.0
 
-    // Antigravity IDE (com.google.antigravity-ide) 使用独立的 user-data-dir、~/.gemini/antigravity-ide 与 state.vscdb 认证，绝不纳入切换重启范围
     private static let primaryBundleIds: Set<String> = [
         "com.google.antigravity"
     ]
 
-    /// 计算启动参数：
-    /// 1. 当 isParallelLaunch == false（常规单实例切换模式）：
-    ///    严禁附带 --user-data-dir 与强制多开参数 -n！必须使用 macOS 原生单实例参数 ["-a", targetApp]，
-    ///    让 LaunchServices 按标准桌面应用流程拉起并走主目录 ~/Library/Application Support/Antigravity，保证 Retina 2x 视口、默认配置加载与单例锁 100% 原生；
-    /// 2. 当 isParallelLaunch == true 且 !profile.isDefaultProfile（并排双开模式）：
-    ///    才附带 -n、--user-data-dir 与 --extensions-dir。
     static func launchArguments(
         for profile: AGYProfile,
         targetApp: String,
@@ -48,9 +34,6 @@ enum AntigravityLaunchConfig {
         return args
     }
 
-    /// 构造与 macOS Spotlight / Dock / LaunchServices 一致的极简 GUI 环境变量白名单，
-    /// 彻底阻断终端或 Agent 会话环境变量（如 ANTIGRAVITY_AGENT、ANTIGRAVITY_LS_ADDRESS 等）经由 /usr/bin/open 泄漏给桌面端及 language_server；
-    /// 目标 App 自身 Info.plist 中的 LSEnvironment（如 MallocNanoZone=0）仍会由 LaunchServices 自动注入。
     static func sanitizedLaunchEnvironment(
         from baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
@@ -82,7 +65,6 @@ enum AntigravityLaunchConfig {
         return env
     }
 
-    /// 仅匹配可接收 Cmd+Q / terminate() 优雅退出的 Antigravity 主应用（.regular 策略），严格排除 Helper、Agyhub 与独立的 Antigravity IDE
     static func isPrimaryAntigravityApplication(
         bundleIdentifier: String?,
         localizedName: String?,
@@ -100,7 +82,6 @@ enum AntigravityLaunchConfig {
         return bundle.isEmpty && name == "antigravity"
     }
 
-    /// 匹配需要等待随主应用一并自然退出的 Antigravity Helper 等辅助进程（不得主动提前杀掉，且严格排除 Antigravity IDE Helper）
     static func isAuxiliaryAntigravityProcess(
         bundleIdentifier: String?,
         localizedName: String?,
@@ -116,7 +97,6 @@ enum AntigravityLaunchConfig {
         return bundle.hasPrefix("com.google.antigravity.")
     }
 
-    /// 发现属于桌面端 Antigravity 主进程树下的 language_server PID（两层父子扫描即可覆盖子进程派生的 language_server）
     static func discoverDesktopLanguageServerPids(parentPids: Set<pid_t>) -> [pid_t] {
         guard !parentPids.isEmpty else { return [] }
         let proc = Process()
@@ -142,7 +122,6 @@ enum AntigravityLaunchConfig {
             rows.append((pid: pid, ppid: ppid, comm: String(parts[2])))
         }
 
-        // 先收集直属 language_server，再覆盖其派生的同名子 language_server（不包含交互式 Shell 等其他用户子进程）
         var trackedLSPids = Set<pid_t>()
         for row in rows where parentPids.contains(row.ppid) && row.comm.hasSuffix("/Contents/Resources/bin/language_server") {
             trackedLSPids.insert(row.pid)
@@ -153,7 +132,6 @@ enum AntigravityLaunchConfig {
         return Array(trackedLSPids)
     }
 
-    /// 清理残留的孤儿 Chromium 单例锁（使用 attributesOfItem 以同时兼容指向不存在 PID 的悬空软链接）
     static func cleanupStaleLocks(in dir: String) {
         let fm = FileManager.default
         let expanded = (dir as NSString).expandingTildeInPath
@@ -167,7 +145,6 @@ enum AntigravityLaunchConfig {
         }
     }
 
-    /// 清除隔离目录中由旧逻辑复制残留的、带有 per_host_zoom_levels 的 Preferences 文件，杜绝双开时被缩放污染
     static func cleanZoomContamination(in profileDir: String) {
         let fm = FileManager.default
         let expanded = (profileDir as NSString).expandingTildeInPath
@@ -180,7 +157,6 @@ enum AntigravityLaunchConfig {
         }
     }
 
-    /// 在默认主环境 app_storage.json 中同步当前账号，避免 Antigravity 启动或轮询登录态时弹出 "One last thing..." 引导弹窗
     static func syncOnboardingUsername(_ email: String, in mainUserDataDir: String) {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -204,7 +180,7 @@ enum AntigravityLaunchConfig {
 }
 
 enum AccountDisplayPolicy {
-    /// 计算 UI 中应展示 `[App]` 标识的实际桌面端运行账号：优先使用预期运行账号与主环境落盘账号，防止共享钥匙串被后台 CLI 漂移后误将别号标为当前 App
+
     static func effectiveRunningAppEmail(
         expectedAppEmail: String,
         appStorageEmail: String,
@@ -225,13 +201,12 @@ enum AccountDisplayPolicy {
 }
 
 enum AccountSortOrder {
-    /// 判断 profile 是否命中指定规范化邮箱（小写）
+
     private static func matchesEmail(_ profile: AGYProfile, key: String) -> Bool {
         let emailKey = (profile.email ?? profile.name).lowercased()
         return emailKey == key || profile.name.lowercased() == key
     }
 
-    /// 记录一次账号使用（切换前将刚离开的活跃账号置于紧随新账号之后的上一位，再将目标账号设为最新）
     @discardableResult
     static func markProfileUsed(
         targetEmail: String,
@@ -263,7 +238,6 @@ enum AccountSortOrder {
         return changed
     }
 
-    /// 轮询期间被动观察到当前活跃账号变化（如用户直接在 Antigravity/CLI 手工重登）或首次启动尚未记录时间时同步使用时间
     @discardableResult
     static func syncObservedActiveAccount(
         activeEmail: String?,
@@ -291,7 +265,6 @@ enum AccountSortOrder {
         return markProfileUsed(targetEmail: cur, previousEmail: prev, in: &profiles, at: timestamp)
     }
 
-    /// 将当前目标模式激活账号置顶第 1 位，另一端（App/CLI）活跃账号紧随第 2 位，其余账号按上次使用时间 (lastUsedAt) 倒序排列；尚无使用记录时优先展示已认证槽位
     static func sortedProfiles(
         _ profiles: [AGYProfile],
         mode: AccountTargetMode,
@@ -343,15 +316,13 @@ enum AccountSortOrder {
 }
 
 enum KeychainDriftPolicy {
-    /// 主动切号后重启桌面端时的保护时间窗（秒）：防止刚拉起的 language_server 在旧 app_storage 尚未落盘前把预期账号翻回旧值
+
     static let desktopAppAuthSwitchProtectionWindow: TimeInterval = 30.0
 
-    /// 切号进行中或上一轮 CLI 状态刷新尚未结束时跳过本轮轮询，防止并发读写状态文件误报错配
     static func shouldSkipCLIStateRefresh(isRefreshing: Bool, isAppSwitchInProgress: Bool) -> Bool {
         isRefreshing || isAppSwitchInProgress
     }
 
-    /// 在尚未单独写入 app_expected.json 时，识别仍有效的历史主动切号记录（支持同账号后续 CLI token refreshed）
     static func resolveExpectedSwitchState(
         expectedAppState: CLIAccountManager.CLIActiveState?,
         cliActiveState: CLIAccountManager.CLIActiveState?,
@@ -374,7 +345,6 @@ enum KeychainDriftPolicy {
         return nil
     }
 
-    /// 结合官方引导记录与 Agyhub 主动切号记录，返回当前预期的主应用账号（切号后 30 秒启动保护窗内保持主动切号目标）
     static func effectiveExpectedAppEmail(
         appStorageEmail: String,
         desktopAppAuthDate: Date?,
@@ -389,7 +359,6 @@ enum KeychainDriftPolicy {
         return appStorageEmail
     }
 
-    /// 若用户在桌面端 Antigravity.app 内手工登录了新账号（显式 Auth 时间晚于 app_expected.json 且超出 30 秒切号保护窗），推进持久化预期状态
     static func syncedExpectedAppStateAfterDesktopLogin(
         existingExpected: CLIAccountManager.CLIActiveState?,
         appStorageEmail: String,
@@ -410,7 +379,6 @@ enum KeychainDriftPolicy {
         return nil
     }
 
-    /// 仅当共享钥匙串并非由 Agyhub 主动切换，且实际持有者与预期主应用账号不一致（或发生了后台续期覆盖）时才判定为异常偏移
     static func isUnexpectedDrift(
         expectedAppEmail: String,
         resolution: CLIAccountManager.SharedKeychainResolution
@@ -426,8 +394,6 @@ enum KeychainDriftPolicy {
         return actual.lowercased() != expectedAppEmail.lowercased()
     }
 }
-
-// MARK: - 2.1 本地账号与认证探测工具 (Local Auth Discovery)
 
 struct DiscoveredAccount: Hashable {
     let email: String
@@ -445,7 +411,6 @@ enum LocalAccountDetector {
     }()
     private static var _discoveryLogs: [String] = []
 
-    /// 诊断与探测日志只读快照（所有读写经 logLock 保护，防止并发 Task 写入触发 Swift Array 内存损坏）
     static var discoveryLogs: [String] {
         snapshotDiscoveryLogs()
     }
@@ -482,7 +447,6 @@ enum LocalAccountDetector {
         print("[Agyhub][AccountDetector] \(msg)")
     }
 
-    /// 从指定 userDataDir 的 app_storage.json 中读取已登录的 Google 账号邮箱
     static func detectEmailFromUserDataDir(_ dir: String) -> String? {
         let expanded = (dir as NSString).expandingTildeInPath
         let storagePath = "\(expanded)/app_storage.json"
@@ -495,7 +459,6 @@ enum LocalAccountDetector {
         return email.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 从 Google Chrome / Edge / Brave 的 Local State 中探测所有已绑定的 Google 账号
     static func detectBrowserGoogleAccounts(homeDir: String) -> [DiscoveredAccount] {
         var results: [DiscoveredAccount] = []
         let browserConfigs = [
@@ -541,7 +504,6 @@ enum LocalAccountDetector {
         return results
     }
 
-    /// 从 Antigravity IDE 的 state.vscdb 中探测已登录邮箱
     static func detectIDEAccountEmail(homeDir: String) -> String? {
         let dbPath = "\(homeDir)/Library/Application Support/Antigravity IDE/User/globalStorage/state.vscdb"
         guard FileManager.default.fileExists(atPath: dbPath) else { return nil }
@@ -571,20 +533,17 @@ enum LocalAccountDetector {
         return detectedEmail
     }
 
-    /// 全面扫描本地所有可用账号并建立诊断日志
     static func detectAllAccounts(homeDir: String) -> [DiscoveredAccount] {
         clearDiscoveryLogs()
         appendLog("=== 开始执行本地账号与环境全量扫描 ===")
 
         var accountMap: [String: DiscoveredAccount] = [:]
 
-        // 1. 扫描浏览器 Google 账号 (Chrome / Edge / Brave)
         let browserAccounts = detectBrowserGoogleAccounts(homeDir: homeDir)
         for acc in browserAccounts {
             accountMap[acc.email.lowercased()] = acc
         }
 
-        // 2. 扫描 Antigravity 主目录
         let defaultAntigravityUserData = "\(homeDir)/Library/Application Support/Antigravity"
         if let mainEmail = detectEmailFromUserDataDir(defaultAntigravityUserData) {
             appendLog("Antigravity 官方主应用目录探测到活跃认证邮箱: \(mainEmail)")
@@ -597,7 +556,6 @@ enum LocalAccountDetector {
             accountMap[mainEmail.lowercased()] = acc
         }
 
-        // 3. 扫描 Antigravity IDE
         if let ideEmail = detectIDEAccountEmail(homeDir: homeDir) {
             appendLog("Antigravity IDE 探测到历史已认证邮箱: \(ideEmail)")
             if accountMap[ideEmail.lowercased()] == nil {
@@ -616,7 +574,6 @@ enum LocalAccountDetector {
     }
 }
 
-/// Antigravity CLI (~/.local/bin/agy) 凭证保险箱与授权切换管理器（仅经用户明确授权后在本机 Keychain 间迁移字节，零明文落盘、零联网）
 enum CLIAccountManager {
     static let activeService = "gemini"
     static let activeAccount = "antigravity"
@@ -635,7 +592,6 @@ enum CLIAccountManager {
         return "agy"
     }
 
-    /// 仅检索属性元数据判断活跃凭证是否存在（绝不访问 kSecReturnData，不触发 SecurityAgent）
     static func hasActiveCredential() -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -648,7 +604,6 @@ enum CLIAccountManager {
         return SecItemCopyMatching(query as CFDictionary, &ref) == errSecSuccess
     }
 
-    /// 列出已缓存的 CLI 邮箱槽位（仅读属性列表）
     static func savedVaultAccounts() -> Set<String> {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -670,7 +625,6 @@ enum CLIAccountManager {
         return accounts
     }
 
-    /// 通过系统签名的 /usr/bin/security 读取凭证字节（不落盘、不走网络）
     static func readKeychainData(service: String, account: String) -> Data? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -693,7 +647,6 @@ enum CLIAccountManager {
         }
     }
 
-    /// 通过 /usr/bin/security -i 标准输入管道写入十六进制字节（命令行参数零暴露，剥离控制字符防指令注入）
     private static func writeKeychainData(_ data: Data, service: String, account: String) -> Bool {
         let hex = data.map { String(format: "%02x", $0) }.joined()
         let sanitize: (String) -> String = { raw in
@@ -739,12 +692,10 @@ enum CLIAccountManager {
         proc.waitUntilExit()
     }
 
-    /// 清除单个保险箱槽位（绝不影响当前正在生效的 ("gemini", "antigravity")）
     static func deleteVaultAccount(_ email: String) {
         deleteKeychainItem(service: vaultService, account: email.lowercased())
     }
 
-    /// 取消授权时清空全部 Agyhub 保险箱缓存条目与状态标记（保留用户当前 CLI 登录态不受影响）
     static func clearAllVaultAccounts(profilesRootDir: String) {
         for acc in savedVaultAccounts() {
             deleteKeychainItem(service: vaultService, account: acc)
@@ -752,7 +703,6 @@ enum CLIAccountManager {
         writeActiveStateFile(email: nil, profilesRootDir: profilesRootDir)
     }
 
-    /// 共享钥匙串归属来源，用于区分主动切号、桌面端登录、旧 CLI 后台续期
     enum SharedKeychainSource: String {
         case agyhubSwitch
         case desktopApp
@@ -830,7 +780,6 @@ enum CLIAccountManager {
         }
     }
 
-    /// 仅读取钥匙串属性元数据中的最后修改时间（绝不读取 Secret，不会触发密码弹窗）
     static func keychainModificationDate(
         service: String = activeService,
         account: String = activeAccount
@@ -851,18 +800,16 @@ enum CLIAccountManager {
             ?? (attrs[kSecAttrCreationDate as String] as? Date)
     }
 
-    /// 解析 Google glog 行内真实时间戳（如 "I1112 15:50:22.932874 ..."），避免拿文件 mtime 误判登录时间
     static func parseGlogTimestamp(_ line: String, fallbackDate: Date) -> Date? {
         let chars = Array(line)
         let cal = Calendar(identifier: .gregorian)
         let refYear = cal.component(.year, from: fallbackDate)
 
-        // 搜索形如 I/W/E/F + MMDD HH:MM:SS 的时间戳起点（兼容前面带 "ERROR: logging before google.Init: " 前缀）
         for i in 0..<chars.count {
             let level = chars[i]
             guard level == "I" || level == "W" || level == "E" || level == "F" else { continue }
             guard i + 14 < chars.count else { break }
-            // MMDD HH:MM:SS 至少占 14 个字符
+
             guard chars[i + 5] == " ", chars[i + 8] == ":", chars[i + 11] == ":" else { continue }
 
             let slice = String(chars[(i + 1)...(i + 13)])
@@ -880,7 +827,6 @@ enum CLIAccountManager {
                 continue
             }
 
-            // 读取紧随其后的微秒部分以便精确排序
             var nanosecond = 0
             if i + 14 < chars.count && chars[i + 14] == "." {
                 var fracDigits = ""
@@ -905,7 +851,6 @@ enum CLIAccountManager {
             comps.nanosecond = nanosecond
             guard var candidate = cal.date(from: comps) else { continue }
 
-            // 处理跨年日志：若比参考时间超出 180 天，退回一年
             if candidate.timeIntervalSince(fallbackDate) > 180 * 86400 {
                 comps.year = refYear - 1
                 candidate = cal.date(from: comps) ?? candidate
@@ -963,14 +908,13 @@ enum CLIAccountManager {
         return nil
     }
 
-    /// 扫描 CLI 日志中最后一次实际写钥匙串的事件（区分首次登录、token refreshed 续期、退出登录），全程使用日志行真实时间戳
     static func detectLatestLogKeychainWriteEvent(homeDir: String) -> LogKeychainWriteEvent? {
         let candidates = candidateCLILogFiles(homeDir: homeDir)
         var bestEvent: LogKeychainWriteEvent? = nil
 
         for entry in candidates {
             guard let text = try? String(contentsOf: entry.url, encoding: .utf8) else { continue }
-            // 排除无头模式/文件 token 存储日志：该会话仅读写独立 token 文件，绝不修改系统钥匙串
+
             if text.contains("Using file-based token storage") {
                 continue
             }
@@ -1019,14 +963,13 @@ enum CLIAccountManager {
         return bestEvent
     }
 
-    /// 从 ~/.gemini/antigravity-cli 的最近日志中解析最后一次显式 OAuth 登录邮箱与行内真实时间（若随后已退出则返回 nil）
     static func detectLatestLogAuth(homeDir: String) -> (email: String, date: Date)? {
         let candidates = candidateCLILogFiles(homeDir: homeDir)
         var bestEvent: LogKeychainWriteEvent? = nil
 
         for entry in candidates {
             guard let text = try? String(contentsOf: entry.url, encoding: .utf8) else { continue }
-            // 排除无头模式/文件 token 存储日志：该会话仅读写独立 token 文件，绝不修改系统钥匙串
+
             if text.contains("Using file-based token storage") {
                 continue
             }
@@ -1066,7 +1009,6 @@ enum CLIAccountManager {
         return (email, latest.date)
     }
 
-    /// 只读逆向分块扫描 Antigravity 桌面端 language_server.log（从尾向前最多 16MB），防止海量日常日志将 "Auth succeeded" 推到 128KB 窗外导致漏判
     static func detectLatestDesktopAppAuthDate(homeDir: String) -> Date? {
         let logPath = "\(homeDir)/Library/Logs/Antigravity/language_server.log"
         let url = URL(fileURLWithPath: logPath)
@@ -1103,7 +1045,6 @@ enum CLIAccountManager {
         return nil
     }
 
-    /// 综合判断当前共享钥匙串 ("gemini", "antigravity") 的真实持有者账号，防止旧进程 mtime 误判与桌面端/CLI 相互覆写被掩盖
     static func resolveSharedKeychainOwner(
         homeDir: String,
         profilesRootDir: String,
@@ -1130,7 +1071,6 @@ enum CLIAccountManager {
 
         var candidates: [Candidate] = []
 
-        // 1) Agyhub 主动切号记录：仅当钥匙串没有在其之后被外力改写（预留 8 秒容差）时才算有效
         if let st = state {
             let switchDate = Date(timeIntervalSince1970: st.switchedAt)
             let invalidatedByExternalWrite = (kcMod != nil && kcMod!.timeIntervalSince1970 > st.switchedAt + 8.0)
@@ -1144,7 +1084,6 @@ enum CLIAccountManager {
             }
         }
 
-        // 2) CLI 登录 / 后台 token refreshed / 退出日志
         if let ce = cliEvent {
             let src: SharedKeychainSource = ce.isLogout ? .unknown : (ce.isTokenRefresh ? .cliRefresh : .cliLogin)
             candidates.append(Candidate(
@@ -1155,8 +1094,6 @@ enum CLIAccountManager {
             ))
         }
 
-        // 3) 桌面端 Antigravity.app 登录成功记录
-        // 若刚刚通过 Agyhub 执行过主动切号（且之后无外力改写钥匙串），切号 30 秒窗内残留的旧 appStorageEmail 登录时间不得覆盖切号归属
         if let ad = appAuthDate, let appEmail = appStorageEmail, !appEmail.isEmpty {
             let suppressedByRecentSwitch: Bool
             if let st = state,
@@ -1214,7 +1151,6 @@ enum CLIAccountManager {
         return .empty
     }
 
-    /// 统计当前后台运行的独立 agy CLI 进程数量（排除仅服务于编辑器通信的 --hub 辅助进程）
     static func runningBackgroundCLIProcessCount() -> Int {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
@@ -1238,7 +1174,6 @@ enum CLIAccountManager {
         }
     }
 
-    /// 裁决 CLI 当前实际生效账号：独立模式优先读独立 token 文件；无独立文件时回落共享钥匙串与 CLI 非文件认证日志，确保 CLI 标签可见
     static func resolveActiveCLIProfileEmail(
         tokenFileEmail: String?,
         sharedKeychainEmail: String?,
@@ -1260,8 +1195,6 @@ enum CLIAccountManager {
         return sharedKeychainEmail ?? cliLogEmail
     }
 
-    /// 识别当前 Antigravity CLI 生效账号：优先读文件 token 模式下的 token 文件归属，缺失时回落共享钥匙串与非文件 CLI 认证日志；
-    /// 已授权时顺带把共享钥匙串中归属确凿的 App 账号捕获入保险箱，并在独立模式下自动补全缺失或损坏的 token 文件，杜绝旧日志 mtime 串槽污染
     static func detectActiveCLIProfile(
         homeDir: String,
         profilesRootDir: String,
@@ -1293,7 +1226,6 @@ enum CLIAccountManager {
         )
     }
 
-    /// 判断是否允许根据共享钥匙串归属结果覆写 cli_active.json，防止切号竞态或后台 CLI 静默刷新污染状态文件
     static func shouldOverwriteActiveStateFile(
         currentState: CLIActiveState?,
         resolution: SharedKeychainResolution
@@ -1313,10 +1245,8 @@ enum CLIAccountManager {
         return eventTs > st.switchedAt + tolerance
     }
 
-    /// 防串槽日志去重键（同一不匹配状态只记录一次，避免 5 秒轮询刷爆日志）
     private static var lastCaptureMismatchLogKey: String = ""
 
-    /// 仅当共享钥匙串归属确凿且核验载荷内置 id_token_email 后，把凭证按真实邮箱捕获进保险箱，防止错将别号 Token 写入当前推断槽位
     static func captureSharedKeychainOwnerIntoVault(
         homeDir: String,
         profilesRootDir: String,
@@ -1340,7 +1270,6 @@ enum CLIAccountManager {
         let kcMod = keychainModDate ?? keychainModificationDate()
         let eventTs = resolution.eventDate?.timeIntervalSince1970 ?? 0
 
-        // 仅当该账号确实主导当前钥匙串写入（钥匙串并未比归属事件更晚被未知操作改写）时，才允许入库，防止串槽
         let keychainConsistentWithEvent = (kcMod == nil || resolution.eventDate == nil || kcMod!.timeIntervalSince1970 <= eventTs + 30.0)
         let slots = vault.list()
         var emailMatchesCredential = true
@@ -1369,13 +1298,11 @@ enum CLIAccountManager {
             }
         }
 
-        // 仅当钥匙串写入与事件一致、内置邮箱未冲突且通过竞争护栏校验时才同步 cli_active.json
         if keychainConsistentWithEvent && emailMatchesCredential && shouldOverwriteActiveStateFile(currentState: state, resolution: resolution) {
             writeActiveStateFile(email: email, profilesRootDir: profilesRootDir)
         }
     }
 
-    /// 将保险箱中缓存的账号凭证写回共享钥匙串 (gemini/antigravity)，仅用于「恢复桌面 App 账号」（写前按内置 id_token_email 存回原账号，写前再次核验目标槽位真实邮箱，拒绝串槽毒化）
     static func restoreSharedKeychainFromVault(
         homeDir: String,
         targetEmail: String,
@@ -1392,7 +1319,6 @@ enum CLIAccountManager {
             hasActiveKeychain: sharedStore.hasActive()
         ).email ?? currentActiveEmail
 
-        // 切换前先将共享钥匙串最新凭证按内置真实 id_token_email 存回其对应槽位，杜绝推断偏差覆盖错槽
         if let curData = sharedStore.read() {
             if let actualEmail = credentialEmail(curData) {
                 if let guessed = verifiedCurrent, !guessed.isEmpty,
@@ -1422,20 +1348,12 @@ enum CLIAccountManager {
             }
         }
 
-        // 目标账号尚未缓存过凭证：保持共享钥匙串不动（桌面 App 仍可用），由用户在 App 内重新登录
         LocalAccountDetector.appendLog("保险箱无「\(targetEmail)」缓存，共享钥匙串保持不变")
         return (false, vault.list())
     }
 
-    // MARK: CLI 文件 token 模式
-    // agy 检测到 SSH_CLIENT / SSH_TTY / SSH_CONNECTION 等变量时判定为无桌面环境，
-    // 改为读写 ~/.gemini/antigravity-cli/antigravity-oauth-token（纯 JSON），完全不访问系统钥匙串。
-    // 因此 CLI 账号可独立切换，不会再覆盖桌面 App 的 gemini/antigravity 钥匙串条目。
-
-    /// 让 agy 走文件 token 存储所需的环境变量（在 CLI 或编辑器环境变量中填写同一条）
     static let fileTokenModeEnv = "SSH_CLIENT=1"
 
-    /// 保险箱读写与清理抽象（生产用钥匙串，测试用内存实现），切号逻辑只经由它访问槽位
     struct CredentialVault {
         let read: (String) -> Data?
         let write: (Data, String) -> Bool
@@ -1455,21 +1373,18 @@ enum CLIAccountManager {
         }
     }
 
-    /// 共享钥匙串 ("gemini"/"antigravity") 读写抽象（生产用系统钥匙串，测试用内存替身）
     struct SharedCredentialStore {
         let hasActive: () -> Bool
         let read: () -> Data?
         let write: (Data) -> Bool
     }
 
-    /// 生产共享钥匙串：("gemini", "antigravity")
     static let systemSharedCredential = SharedCredentialStore(
         hasActive: { hasActiveCredential() },
         read: { readKeychainData(service: activeService, account: activeAccount) },
         write: { writeKeychainData($0, service: activeService, account: activeAccount) }
     )
 
-    /// 生产保险箱：com.antigravity.agyhub.cli-vault 钥匙串条目
     static let keychainVault = CredentialVault(
         read: { readKeychainData(service: vaultService, account: $0) },
         write: { writeKeychainData($0, service: vaultService, account: $1) },
@@ -1477,12 +1392,10 @@ enum CLIAccountManager {
         delete: { deleteVaultAccount($0) }
     )
 
-    /// agy 文件模式下的 CLI token 文件路径
     static func cliTokenFilePath(homeDir: String) -> String {
         "\(homeDir)/.gemini/antigravity-cli/antigravity-oauth-token"
     }
 
-    /// 剥离 go-keyring 写入钥匙串时附加的 "go-keyring-base64:" 前缀并解码；已是纯 JSON 则原样返回，解码失败返回 nil
     static func decodeCredentialJSON(_ data: Data) -> Data? {
         let prefix = "go-keyring-base64:"
         guard let text = String(data: data, encoding: .utf8) else { return nil }
@@ -1493,7 +1406,6 @@ enum CLIAccountManager {
         return data
     }
 
-    /// 从凭证（两种格式皆可）中读取 agy 记录的 id_token_email；无法解析时返回 nil
     static func credentialEmail(_ data: Data) -> String? {
         guard let json = decodeCredentialJSON(data),
               let obj = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
@@ -1504,7 +1416,6 @@ enum CLIAccountManager {
         return email
     }
 
-    /// 校验凭证内嵌的 id_token_email 是否与目标账号匹配（含 @ 时要求完整邮箱一致，无 @ 短名时匹配本地用户名）
     static func credentialMatchesEmail(_ data: Data, expectedEmail: String) -> Bool {
         guard let actual = credentialEmail(data)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1521,13 +1432,11 @@ enum CLIAccountManager {
         return actualShort == target
     }
 
-    /// 读取 CLI token 文件当前归属邮箱（文件不存在或损坏返回 nil）
     static func readCLITokenFileEmail(homeDir: String) -> String? {
         guard let data = FileManager.default.contents(atPath: cliTokenFilePath(homeDir: homeDir)) else { return nil }
         return credentialEmail(data)
     }
 
-    /// 检查 CLI token 文件是否存在且同时包含合法邮箱与有效 access_token
     static func isCLITokenFileHealthy(homeDir: String) -> Bool {
         guard let data = FileManager.default.contents(atPath: cliTokenFilePath(homeDir: homeDir)),
               credentialEmail(data) != nil,
@@ -1537,7 +1446,6 @@ enum CLIAccountManager {
         return true
     }
 
-    /// 唯一 CLI token 文件写盘入口：剥离 go-keyring 前缀并校验邮箱与 access_token 后，以 0600 权限创建同目录临时文件再 rename 原子替换，避免短暂权限暴露窗口
     static func writeValidatedTokenFile(_ credential: Data, toPath path: String) -> Bool {
         guard let json = decodeCredentialJSON(credential),
               credentialEmail(json) != nil,
@@ -1579,12 +1487,10 @@ enum CLIAccountManager {
         }
     }
 
-    /// 将凭证解码为纯 JSON 后原子写入默认 CLI token 文件，权限固定为 0600（自动创建父目录）
     static func writeCLITokenFile(_ credential: Data, homeDir: String) -> Bool {
         writeValidatedTokenFile(credential, toPath: cliTokenFilePath(homeDir: homeDir))
     }
 
-    /// 独立模式下兜底守护 token 文件：若文件缺失或损坏，按 cli_active.json -> 优先候选邮箱 -> 保险箱可用槽位 顺序自动恢复，零额外备份文件
     @discardableResult
     static func ensureCLITokenFileIfNeeded(
         homeDir: String,
@@ -1628,7 +1534,6 @@ enum CLIAccountManager {
         return nil
     }
 
-    /// 若当前 CLI token 文件归属的账号尚未入保险箱，则捕获入库；返回文件归属邮箱
     static func captureCLITokenFileIntoVault(homeDir: String, vault: CredentialVault) -> String? {
         guard let data = FileManager.default.contents(atPath: cliTokenFilePath(homeDir: homeDir)),
               let email = credentialEmail(data) else {
@@ -1641,7 +1546,6 @@ enum CLIAccountManager {
         return email
     }
 
-    /// 切换 CLI token 文件账号：先把文件里（可能已被 agy 刷新过的）当前凭证按文件内真实邮箱存回槽位，再写入目标凭证；目标未缓存则保留原文件不动等待 acp --login 覆写
     static func switchCLITokenFile(
         homeDir: String,
         targetEmail: String,
@@ -1672,7 +1576,6 @@ enum CLIAccountManager {
         return (false, vault.list())
     }
 
-    /// 清理 CLI 独立 token 文件，使 agy 回归系统原生钥匙串共享模式
     static func cleanupCLITokenFile(homeDir: String) {
         let path = cliTokenFilePath(homeDir: homeDir)
         if FileManager.default.fileExists(atPath: path) {
@@ -1682,19 +1585,15 @@ enum CLIAccountManager {
     }
 }
 
-// MARK: - 3.5 账号周配额监控模型与管理器 (Account Quota Manager)
-
-/// 单个模型组的周度配额与重置信息
 struct WeeklyQuotaBucket: Codable, Equatable {
-    var remainingFraction: Double      // 0.0 ~ 1.0 (例如 0.6226)
-    var resetTime: Date?               // 重置时间
-    var resetTimeStr: String?          // 原始 ISO8601 字符串
+    var remainingFraction: Double
+    var resetTime: Date?
+    var resetTimeStr: String?
 
     var percentage: Int {
         Int((remainingFraction * 100.0).rounded())
     }
 
-    /// 紧凑剩余倒计时描述 (例如 "3d", "5h", "25m", "重置" / "Reset")
     func remainingCountdown(from referenceDate: Date = Date(), language: AppLanguage.Resolved = .zhHans) -> String {
         guard let resetTime = resetTime else { return "" }
         let diff = resetTime.timeIntervalSince(referenceDate)
@@ -1712,23 +1611,21 @@ struct WeeklyQuotaBucket: Codable, Equatable {
     }
 }
 
-/// 用于前端 UI 展示的配额胶囊项
 struct QuotaDisplayItem: Identifiable, Equatable {
     var id: String { title }
-    let title: String                  // "Gemini" 或 "G" 或 "A"
-    let fullName: String              // "Gemini" 或 "Gemini 4 Argon"
-    let percentage: Int               // 0 ~ 100
+    let title: String
+    let fullName: String
+    let percentage: Int
     let remainingFraction: Double
-    let countdown: String             // "3d", "5h"
+    let countdown: String
     let resetTimeStr: String?
 }
 
-/// 账号维度的配额摘要
 struct AccountQuotaSummary: Codable, Equatable {
     var email: String
     var isUltra: Bool
     var geminiQuota: WeeklyQuotaBucket?
-    var argonQuota: WeeklyQuotaBucket?   // Gemini 4 Argon weekly bucket (gemini-argon-wtu-weekly)
+    var argonQuota: WeeklyQuotaBucket?
     var lastFetched: Date
 }
 
@@ -1737,7 +1634,7 @@ enum AccountQuotaManager {
     static let tokenEndpoint = "https://oauth2.googleapis.com/token"
     static let oauthClientIdEnvKey = "AGYHUB_OAUTH_CLIENT_ID"
     static let oauthClientSecretEnvKey = "AGYHUB_OAUTH_CLIENT_SECRET"
-    // 需模拟 Antigravity Hub 2.31.2+ User-Agent，否则后端不会返回 Gemini 4 Argon 配额组
+
     static let userAgent = "antigravity/hub/2.31.2 (os_type=darwin; arch=arm64)"
 
     struct OAuthClientConfig: Equatable {
@@ -1753,7 +1650,7 @@ enum AccountQuotaManager {
         var errorDescription: String? {
             switch self {
             case .missingCredentials:
-                return "未配置 OAuth 客户端凭证：请设置环境变量 \(oauthClientIdEnvKey) / \(oauthClientSecretEnvKey)，或创建 ~/.agy-profiles/oauth_client.json（包含 client_id 与 client_secret）。"
+                return "当前未配置外部 OAuth 刷新凭据，跳过直连静默续期。"
             case .invalidTokenResponse:
                 return "OAuth Token 刷新响应无效。"
             case .httpError(let statusCode):
@@ -1762,12 +1659,10 @@ enum AccountQuotaManager {
         }
     }
 
-    /// 返回本地 OAuth 客户端配置文件路径（~/.agy-profiles/oauth_client.json）
     static func oauthClientConfigPath(homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path) -> String {
         "\(homeDir)/.agy-profiles/oauth_client.json"
     }
 
-    /// 运行时加载 OAuth 客户端配置：环境变量（AGYHUB_OAUTH_CLIENT_ID / AGYHUB_OAUTH_CLIENT_SECRET）优先于 ~/.agy-profiles/oauth_client.json
     static func resolveOAuthClientConfig(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path
@@ -1797,7 +1692,6 @@ enum AccountQuotaManager {
         return OAuthClientConfig(clientId: clientId, clientSecret: clientSecret)
     }
 
-    /// 构造 retrieveUserQuotaSummary 请求（带认证头与 Hub 2.31.2+ User-Agent）
     static func buildQuotaRequest(token: String) -> URLRequest? {
         guard let url = URL(string: endpoint) else { return nil }
         var request = URLRequest(url: url)
@@ -1809,7 +1703,6 @@ enum AccountQuotaManager {
         return request
     }
 
-    /// ISO8601 日期解析器
     static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1826,7 +1719,6 @@ enum AccountQuotaManager {
         isoFormatter.date(from: string) ?? fallbackIsoFormatter.date(from: string)
     }
 
-    /// 解析官方 retrieveUserQuotaSummary 响应
     static func parseQuotaSummary(data: Data, email: String, tier: String? = nil, now: Date = Date()) -> AccountQuotaSummary? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let groups = json["groups"] as? [[String: Any]] else {
@@ -1857,7 +1749,7 @@ enum AccountQuotaManager {
             let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
 
             let bucketId = (weeklyBucket["bucketId"] as? String) ?? ""
-            // "Gemini 4 Argon" 也包含 "gemini" 字样，必须优先于普通 Gemini 分组匹配；Claude/GPT (3p-weekly) 不再误映射为 Argon
+
             let isArgonGroup = bucketId.localizedCaseInsensitiveContains("argon") ||
                                displayName.localizedCaseInsensitiveContains("argon")
             let isGeminiGroup = !isArgonGroup && (
@@ -1883,12 +1775,11 @@ enum AccountQuotaManager {
         )
     }
 
-    /// 业务展示规则转换：Ultra 统一仅展示 Gemini，普通账号分别展示 Gemini 与 Argon
     static func displayItems(for summary: AccountQuotaSummary, language: AppLanguage.Resolved = .zhHans) -> [QuotaDisplayItem] {
         var items: [QuotaDisplayItem] = []
 
         if summary.isUltra {
-            // Ultra 账号配额共享统一，只需要展示 Gemini
+
             if let g = summary.geminiQuota {
                 items.append(QuotaDisplayItem(
                     title: "Gemini",
@@ -1900,7 +1791,7 @@ enum AccountQuotaManager {
                 ))
             }
         } else {
-            // 普通/Pro 账号分别展示 Gemini 与 Argon
+
             if let g = summary.geminiQuota {
                 items.append(QuotaDisplayItem(
                     title: "Gemini",
@@ -1932,44 +1823,110 @@ enum AccountQuotaManager {
         case sharedKeychain
     }
 
-    /// 从本地凭证存储中解析 Access Token 与 Refresh Token（全程校验 id_token_email 一致性），并附带原始凭证来源与数据以便刷新后回写持久化
-    static func resolveCredential(
+    struct ResolvedCredentialCandidate {
+        let accessToken: String
+        let refreshToken: String?
+        let expiry: Date?
+        let source: CredentialSource
+        let rawData: Data
+        let sourcePriority: Int
+    }
+
+    static func resolveCredentialCandidates(
         email: String,
         homeDir: String,
-        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault
-    ) -> (accessToken: String, refreshToken: String?, source: CredentialSource, rawData: Data)? {
+        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
+        readSharedKeychain: (() -> Data?)? = nil,
+        now: Date = Date()
+    ) -> [ResolvedCredentialCandidate] {
         let emailKey = email.lowercased()
         let shortKey = emailKey.components(separatedBy: "@").first ?? emailKey
+        var candidates: [ResolvedCredentialCandidate] = []
 
-        // 1. 优先检查 CLI token 文件
         let tokenPath = CLIAccountManager.cliTokenFilePath(homeDir: homeDir)
         if let data = FileManager.default.contents(atPath: tokenPath),
            CLIAccountManager.credentialMatchesEmail(data, expectedEmail: email),
            let cred = extractTokensFromCredentialData(data) {
-            return (cred.accessToken, cred.refreshToken, .cliTokenFile(path: tokenPath), data)
+            candidates.append(ResolvedCredentialCandidate(
+                accessToken: cred.accessToken,
+                refreshToken: cred.refreshToken,
+                expiry: extractTokenExpiryFromCredentialData(data),
+                source: .cliTokenFile(path: tokenPath),
+                rawData: data,
+                sourcePriority: 0
+            ))
         }
 
-        // 2. 检查保险箱 com.antigravity.agyhub.cli-vault（必须核对内置 id_token_email，防止串槽后张冠李戴）
+        let sharedData = readSharedKeychain?() ?? CLIAccountManager.readKeychainData(
+            service: CLIAccountManager.activeService,
+            account: CLIAccountManager.activeAccount
+        )
+        if let sharedData = sharedData,
+           CLIAccountManager.credentialMatchesEmail(sharedData, expectedEmail: email),
+           let cred = extractTokensFromCredentialData(sharedData) {
+            candidates.append(ResolvedCredentialCandidate(
+                accessToken: cred.accessToken,
+                refreshToken: cred.refreshToken,
+                expiry: extractTokenExpiryFromCredentialData(sharedData),
+                source: .sharedKeychain,
+                rawData: sharedData,
+                sourcePriority: 1
+            ))
+        }
+
         let vaultCandidates = (shortKey != emailKey) ? [emailKey, shortKey] : [emailKey]
         for account in vaultCandidates {
             if let vaultData = vault.read(account),
                CLIAccountManager.credentialMatchesEmail(vaultData, expectedEmail: email),
                let cred = extractTokensFromCredentialData(vaultData) {
-                return (cred.accessToken, cred.refreshToken, .vault(account: account), vaultData)
+                candidates.append(ResolvedCredentialCandidate(
+                    accessToken: cred.accessToken,
+                    refreshToken: cred.refreshToken,
+                    expiry: extractTokenExpiryFromCredentialData(vaultData),
+                    source: .vault(account: account),
+                    rawData: vaultData,
+                    sourcePriority: 2
+                ))
             }
         }
 
-        // 3. 检查系统原生共享钥匙串 gemini / antigravity
-        if let sharedData = CLIAccountManager.readKeychainData(service: CLIAccountManager.activeService, account: CLIAccountManager.activeAccount),
-           CLIAccountManager.credentialMatchesEmail(sharedData, expectedEmail: email),
-           let cred = extractTokensFromCredentialData(sharedData) {
-            return (cred.accessToken, cred.refreshToken, .sharedKeychain, sharedData)
+        let sorted = candidates.sorted { lhs, rhs in
+            switch (lhs.expiry, rhs.expiry) {
+            case let (lExp?, rExp?):
+                if lExp != rExp { return lExp > rExp }
+            case (let lExp?, nil):
+                let lFresh = lExp > now
+                return lFresh
+            case (nil, let rExp?):
+                let rFresh = rExp > now
+                return !rFresh
+            case (nil, nil):
+                break
+            }
+            return lhs.sourcePriority < rhs.sourcePriority
         }
 
-        return nil
+        var seenTokens: Set<String> = []
+        return sorted.filter { seenTokens.insert($0.accessToken).inserted }
     }
 
-    /// 将刷新后的新 access_token 与过期时间更新到原凭证载荷中，完整保留 refresh_token、id_token_email 与 go-keyring-base64 前缀
+    static func resolveCredential(
+        email: String,
+        homeDir: String,
+        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
+        readSharedKeychain: (() -> Data?)? = nil
+    ) -> (accessToken: String, refreshToken: String?, source: CredentialSource, rawData: Data)? {
+        guard let best = resolveCredentialCandidates(
+            email: email,
+            homeDir: homeDir,
+            vault: vault,
+            readSharedKeychain: readSharedKeychain
+        ).first else {
+            return nil
+        }
+        return (best.accessToken, best.refreshToken, best.source, best.rawData)
+    }
+
     static func updatingCredentialData(_ originalData: Data, newAccessToken: String, newExpiry: Date? = nil) -> Data? {
         guard !newAccessToken.isEmpty,
               let jsonData = CLIAccountManager.decodeCredentialJSON(originalData),
@@ -1997,7 +1954,6 @@ enum AccountQuotaManager {
         return updatedJSON
     }
 
-    /// 判断当前是否允许拉取账号配额：成功后 60 秒节流；失败后至少退避 300 秒，避免每轮 5 秒/60 秒重复撞击 OAuth /token
     static func shouldAttemptQuotaFetch(lastSuccess: Date?, lastFailure: Date?, now: Date = Date()) -> Bool {
         if let fail = lastFailure, now.timeIntervalSince(fail) < 300.0 {
             return false
@@ -2008,7 +1964,6 @@ enum AccountQuotaManager {
         return true
     }
 
-    /// 从原始凭证 Data 中提取 access_token 与 refresh_token
     static func extractTokensFromCredentialData(_ data: Data) -> (accessToken: String, refreshToken: String?)? {
         guard let json = CLIAccountManager.decodeCredentialJSON(data),
               let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
@@ -2021,13 +1976,23 @@ enum AccountQuotaManager {
         return (accessToken, refreshToken)
     }
 
+    static func extractTokenExpiryFromCredentialData(_ data: Data) -> Date? {
+        guard let json = CLIAccountManager.decodeCredentialJSON(data),
+              let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+              let tokenObj = root["token"] as? [String: Any],
+              let expiryStr = tokenObj["expiry"] as? String,
+              !expiryStr.isEmpty else {
+            return nil
+        }
+        return parseISO8601(expiryStr)
+    }
+
     private static let formValueAllowedCharacters: CharacterSet = {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&=+?")
         return allowed
     }()
 
-    /// 使用 refresh_token 刷新 access_token（返回明确结果；未配置 OAuth 凭证时优雅降级返回 .missingCredentials，不发无效请求）
     static func refreshAccessTokenResult(
         refreshToken: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -2081,7 +2046,6 @@ enum AccountQuotaManager {
         return .success((newAccessToken, expiresIn))
     }
 
-    /// 使用 refresh_token 刷新 access_token 并解析 expires_in
     static func refreshAccessTokenWithExpiry(
         refreshToken: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -2101,12 +2065,10 @@ enum AccountQuotaManager {
         }
     }
 
-    /// 使用 refresh_token 刷新 access_token
     static func refreshAccessToken(refreshToken: String) async -> String? {
         return await refreshAccessTokenWithExpiry(refreshToken: refreshToken)?.accessToken
     }
 
-    /// 将刷新后的新 token 回写至来源槽位（CLI token 文件或保险箱），故意不改写共享钥匙串 mtime 以免触发外部漂移误判
     private static func persistRefreshedCredential(
         newToken: String,
         expiresIn: TimeInterval?,
@@ -2120,7 +2082,7 @@ enum AccountQuotaManager {
         }
         switch source {
         case .cliTokenFile(let path):
-            // 仅当磁盘文件归属仍与本次刷新账号一致时才写回，并通过唯一写盘入口保留 0600 权限与格式校验
+
             let expectedEmail = CLIAccountManager.credentialEmail(updatedData)?.lowercased()
             if let diskData = FileManager.default.contents(atPath: path),
                let diskEmail = CLIAccountManager.credentialEmail(diskData)?.lowercased(),
@@ -2142,21 +2104,25 @@ enum AccountQuotaManager {
         case failed
     }
 
-    /// 拉取指定账号的周度配额数据（区分 .missingCredentials 导致的过期降级与一般失败，供 UI 展示温和提示）
     static func fetchAccountQuotaResult(
         email: String,
         tier: String?,
         homeDir: String,
         vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        readSharedKeychain: (() -> Data?)? = nil,
         requestQuota: ((String) async -> (Data?, Int))? = nil,
         refreshToken: ((String) async -> (String, TimeInterval?)?)? = nil
     ) async -> QuotaFetchResult {
-        guard let cred = resolveCredential(email: email, homeDir: homeDir, vault: vault) else {
+        let candidates = resolveCredentialCandidates(
+            email: email,
+            homeDir: homeDir,
+            vault: vault,
+            readSharedKeychain: readSharedKeychain
+        )
+        guard !candidates.isEmpty else {
             return .failed
         }
-
-        var tokenToUse = cred.accessToken
 
         func executeQuotaRequest(token: String) async -> (Data?, Int) {
             if let customRequest = requestQuota {
@@ -2171,51 +2137,192 @@ enum AccountQuotaManager {
             return (data, httpResp.statusCode)
         }
 
-        var (data, status) = await executeQuotaRequest(token: tokenToUse)
-
-        // 若返回 401 且存在 refresh_token，则静默刷新、立即持久化新 token 并重试
-        if status == 401 {
-            if let rToken = cred.refreshToken {
-                let refreshed: (accessToken: String, expiresIn: TimeInterval?)?
-                if let customRefresh = refreshToken {
-                    refreshed = await customRefresh(rToken).map { ($0.0, $0.1) }
-                } else {
-                    switch await refreshAccessTokenResult(refreshToken: rToken, environment: environment, homeDir: homeDir) {
-                    case .success(let val):
-                        refreshed = val
-                    case .failure(.missingCredentials):
-                        return .tokenExpiredMissingOAuth
-                    case .failure:
-                        refreshed = nil
-                    }
-                }
-                if let refreshed = refreshed {
-                    tokenToUse = refreshed.accessToken
-                    persistRefreshedCredential(
-                        newToken: refreshed.accessToken,
-                        expiresIn: refreshed.expiresIn,
-                        originalData: cred.rawData,
-                        source: cred.source,
-                        vault: vault
-                    )
-                    let retryResult = await executeQuotaRequest(token: tokenToUse)
-                    data = retryResult.0
-                    status = retryResult.1
-                }
-            } else {
-                return .tokenExpiredMissingOAuth
+        var saw401 = false
+        for candidate in candidates {
+            let (data, status) = await executeQuotaRequest(token: candidate.accessToken)
+            if status == 200, let validData = data,
+               let summary = parseQuotaSummary(data: validData, email: email, tier: tier) {
+                return .success(summary)
             }
-        }
-
-        guard status == 200, let validData = data,
-              let summary = parseQuotaSummary(data: validData, email: email, tier: tier) else {
+            if status == 401 {
+                saw401 = true
+                continue
+            }
             return .failed
         }
 
-        return .success(summary)
+        if saw401 {
+            guard let refreshCandidate = candidates.first(where: { $0.refreshToken != nil }),
+                  let rToken = refreshCandidate.refreshToken else {
+                return .tokenExpiredMissingOAuth
+            }
+
+            let refreshed: (accessToken: String, expiresIn: TimeInterval?)?
+            if let customRefresh = refreshToken {
+                refreshed = await customRefresh(rToken).map { ($0.0, $0.1) }
+            } else {
+                switch await refreshAccessTokenResult(refreshToken: rToken, environment: environment, homeDir: homeDir) {
+                case .success(let val):
+                    refreshed = val
+                case .failure(.missingCredentials):
+                    return .tokenExpiredMissingOAuth
+                case .failure:
+                    refreshed = nil
+                }
+            }
+            if let refreshed = refreshed {
+                persistRefreshedCredential(
+                    newToken: refreshed.accessToken,
+                    expiresIn: refreshed.expiresIn,
+                    originalData: refreshCandidate.rawData,
+                    source: refreshCandidate.source,
+                    vault: vault
+                )
+                let (retryData, retryStatus) = await executeQuotaRequest(token: refreshed.accessToken)
+                if retryStatus == 200, let validData = retryData,
+                   let summary = parseQuotaSummary(data: validData, email: email, tier: tier) {
+                    return .success(summary)
+                }
+            }
+        }
+
+        return .failed
     }
 
-    /// 拉取指定账号的周度配额数据（若 Access Token 失效自动静默刷新并持久化新 Token）
+    enum NativeRenewalTarget: Equatable {
+        case activeApp
+        case activeCLI
+    }
+
+    private static let nativeRenewalLock = NSLock()
+    private static let nativeRenewalCooldown: TimeInterval = 1800.0
+
+    static func quotaCachePath(homeDir: String) -> String {
+        "\(homeDir)/.agy-profiles/quota_cache.json"
+    }
+
+    static func saveQuotaCache(_ summariesByEmail: [String: AccountQuotaSummary], homeDir: String) {
+        let normalized = summariesByEmail.reduce(into: [String: AccountQuotaSummary]()) { acc, pair in
+            let email = pair.value.email.lowercased()
+            guard email.contains("@") else { return }
+            acc[email] = pair.value
+        }
+        guard !normalized.isEmpty else { return }
+
+        let path = quotaCachePath(homeDir: homeDir)
+        let dir = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(normalized) else { return }
+
+        let tmpPath = "\(path).tmp.\(UUID().uuidString)"
+        if FileManager.default.createFile(atPath: tmpPath, contents: data, attributes: [.posixPermissions: 0o600]) {
+            _ = rename(tmpPath, path)
+        }
+    }
+
+    static func loadQuotaCache(homeDir: String) -> [String: AccountQuotaSummary] {
+        let path = quotaCachePath(homeDir: homeDir)
+        guard let data = FileManager.default.contents(atPath: path) else { return [:] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([String: AccountQuotaSummary].self, from: data)) ?? [:]
+    }
+
+    static func nativeRenewalTarget(
+        for email: String,
+        activeAppEmail: String?,
+        activeCLIEmail: String?,
+        isCLIIndependentMode: Bool
+    ) -> NativeRenewalTarget? {
+        let targetEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !targetEmail.isEmpty else { return nil }
+
+        let cliEmail = activeCLIEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let appEmail = activeAppEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if isCLIIndependentMode, let cliEmail = cliEmail, !cliEmail.isEmpty, cliEmail == targetEmail {
+            return .activeCLI
+        }
+        if let appEmail = appEmail, !appEmail.isEmpty, appEmail == targetEmail {
+            return .activeApp
+        }
+        return nil
+    }
+
+    static func shouldAttemptNativeRenewal(lastAttempt: Date?, force: Bool, now: Date = Date()) -> Bool {
+        if force { return true }
+        if let last = lastAttempt, now.timeIntervalSince(last) < nativeRenewalCooldown {
+            return false
+        }
+        return true
+    }
+
+    static func resolveOfficialAGYBinary(homeDir: String) -> String? {
+        let candidates = [
+            "/usr/local/bin/agy",
+            "/opt/homebrew/bin/agy",
+            "\(homeDir)/.local/bin/agy",
+            "\(homeDir)/.antigravity/bin/agy",
+            "\(homeDir)/bin/agy"
+        ]
+        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
+            return path
+        }
+        return nil
+    }
+
+    static func renewActiveSlotViaOfficialCLI(target: NativeRenewalTarget, homeDir: String) async -> Bool {
+        guard let agyPath = resolveOfficialAGYBinary(homeDir: homeDir) else {
+            return false
+        }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                nativeRenewalLock.lock()
+                defer { nativeRenewalLock.unlock() }
+
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: agyPath)
+                proc.arguments = ["models"]
+
+                var env = ProcessInfo.processInfo.environment
+                env["HOME"] = homeDir
+                switch target {
+                case .activeApp:
+                    env.removeValue(forKey: "SSH_CLIENT")
+                    env.removeValue(forKey: "SSH_TTY")
+                    env.removeValue(forKey: "SSH_CONNECTION")
+                case .activeCLI:
+                    env["SSH_CLIENT"] = "1"
+                }
+                proc.environment = env
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError = FileHandle.nullDevice
+
+                do {
+                    try proc.run()
+                } catch {
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                let deadline = Date().addingTimeInterval(15.0)
+                while proc.isRunning && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+                if proc.isRunning {
+                    proc.terminate()
+                    continuation.resume(returning: false)
+                    return
+                }
+                continuation.resume(returning: proc.terminationStatus == 0)
+            }
+        }
+    }
+
     static func fetchAccountQuota(
         email: String,
         tier: String?,

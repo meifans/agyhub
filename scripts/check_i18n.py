@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-Deterministic I18N Guardrail for Agyhub (CI + build_app.sh gate).
-
-Checks:
-1. Swift (`Sources/*.swift`):
-   - Every `L10nKey` has a `.en` translation containing zero CJK characters.
-   - No UI string literal (`Text("...")`, `.help("...")`, `Button("...")`, `Label("...")`,
-     `Toggle("...")`, `Picker("...")`, `TextField("...")`, `NSMenuItem(title: "...")`)
-     outside comments / logs / L10n dictionaries / testing code contains raw CJK characters.
-2. Python (`agy-monitor.py`):
-   - `build_json_payload(..., lang="en")`, `build_menubar_summary(..., lang="en")`,
-     `analyze_session_diagnostics(..., lang="en")`, and `--daemon` `snapshot` / `analyze_session`
-     requests with `lang="en"` produce zero CJK characters in any UI-facing field.
-"""
 
 from __future__ import annotations
 
@@ -32,9 +18,8 @@ UI_LITERAL_RE = re.compile(
     r'|NSMenuItem\(\s*title:\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 )
 
-
 def _strip_swift_comments(src: str) -> list[str]:
-    """Return lines with Swift // and /* ... */ comments blanked out (preserving line numbers)."""
+
     out: list[str] = []
     in_block = False
     for raw in src.splitlines():
@@ -67,7 +52,6 @@ def _strip_swift_comments(src: str) -> list[str]:
         out.append("".join(chars))
     return out
 
-
 def _check_single_swift_file(swift_path: str, display_name: str | None = None) -> tuple[list[str], bool]:
     with open(swift_path, "r", encoding="utf-8") as fh:
         src = fh.read()
@@ -75,7 +59,6 @@ def _check_single_swift_file(swift_path: str, display_name: str | None = None) -
     lines = _strip_swift_comments(src)
     errors: list[str] = []
 
-    # 1. Verify no hardcoded CJK literals in SwiftUI views outside L10n/testing/logs
     in_l10n = False
     in_testing = False
     for lineno, line in enumerate(lines, 1):
@@ -100,7 +83,6 @@ def _check_single_swift_file(swift_path: str, display_name: str | None = None) -
             if CJK_RE.search(lit):
                 errors.append(f"{label}:{lineno}: hardcoded CJK UI literal: {lit!r}")
 
-    # 2. Check L10nKey coverage inside localizedPair switch (if present)
     found_l10n_key = False
     enum_match = re.search(r"enum L10nKey:.*?\{(.*?)\n\}", src, re.DOTALL)
     if enum_match:
@@ -124,7 +106,6 @@ def _check_single_swift_file(swift_path: str, display_name: str | None = None) -
 
     return errors, found_l10n_key
 
-
 def check_swift_sources(sources_dir: str) -> list[str]:
     swift_files = sorted(glob.glob(os.path.join(sources_dir, "*.swift")))
     if not swift_files:
@@ -142,7 +123,6 @@ def check_swift_sources(sources_dir: str) -> list[str]:
         errors.append("Sources/*.swift: could not locate enum L10nKey in any Swift source file")
     return errors
 
-
 def check_swift_source(swift_path: str) -> list[str]:
     if os.path.isdir(swift_path):
         return check_swift_sources(swift_path)
@@ -152,7 +132,6 @@ def check_swift_source(swift_path: str) -> list[str]:
             return check_swift_sources(sources_dir)
     errors, _ = _check_single_swift_file(swift_path)
     return errors
-
 
 def _walk_check_no_cjk(obj: object, path: str, skip_keys: set[str], errors: list[str]) -> None:
     if isinstance(obj, dict):
@@ -166,7 +145,6 @@ def _walk_check_no_cjk(obj: object, path: str, skip_keys: set[str], errors: list
     elif isinstance(obj, str):
         if CJK_RE.search(obj):
             errors.append(f"agy-monitor.py(lang=en) {path}: leaked CJK text -> {obj!r}")
-
 
 def check_python_backend_en(monitor_path: str) -> list[str]:
     spec = importlib.util.spec_from_file_location("agy_monitor", monitor_path)
@@ -254,7 +232,6 @@ def check_python_backend_en(monitor_path: str) -> list[str]:
             for item in child_steps:
                 fh.write(json.dumps(item) + "\n")
 
-        # Require lang parameter on both analyze_session_diagnostics and build_json_payload
         try:
             diag = mod.analyze_session_diagnostics(parent_id, data_dir=base, lang="en")
         except TypeError as exc:
@@ -270,7 +247,6 @@ def check_python_backend_en(monitor_path: str) -> list[str]:
 
     return errors
 
-
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     swift_errors = check_swift_sources(os.path.join(root, "Sources"))
@@ -283,7 +259,6 @@ def main() -> int:
         return 1
     print("✅ I18N Guardrail passed (0 leaked CJK UI strings in Swift & Python lang=en outputs)")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

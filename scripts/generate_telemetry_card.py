@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Local, privacy-safe generator for Agyhub README build-telemetry cards (SVG + 3x PNG).
-
-Reads local Antigravity conversation transcripts (read-only), aggregates anonymous
-project-level metrics (human-AI turns, total tokens, cache hit rate, estimated API bill),
-writes bilingual SVGs with the Hakimi cat emblem, and renders 3x Retina PNGs via
-headless Chrome (auto-detecting local LXGW WenKai font if installed).
-
-No usernames, emails, absolute local paths, or private session contents are ever written.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +13,6 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ASSETS_DIR = REPO_ROOT / "assets"
 DEFAULT_KEYWORDS = ("agyhub", "agy-hub", "agy-monitor", "agyhub.swift")
@@ -32,9 +21,8 @@ DEFAULT_CHROME_CANDIDATES = (
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
 )
 
-
 def _load_monitor_module():
-    """Dynamically import agy-monitor.py from the repository root."""
+
     monitor_path = REPO_ROOT / "agy-monitor.py"
     spec = importlib.util.spec_from_file_location("agy_monitor", str(monitor_path))
     if spec is None or spec.loader is None:
@@ -43,9 +31,8 @@ def _load_monitor_module():
     spec.loader.exec_module(mod)
     return mod
 
-
 def _find_lxgw_font() -> str | None:
-    """Locate an installed LXGW WenKai font file under standard macOS font folders."""
+
     patterns = [
         os.path.expanduser("~/Library/Fonts/LXGWWenKai*Regular*.ttf"),
         os.path.expanduser("~/Library/Fonts/LXGWWenKai*.ttf"),
@@ -57,9 +44,8 @@ def _find_lxgw_font() -> str | None:
             return matches[0]
     return None
 
-
 def _find_chrome() -> str | None:
-    """Locate a headless-capable Chrome/Chromium binary."""
+
     env_chrome = os.environ.get("AGYHUB_CHROME_BIN", "").strip()
     if env_chrome and os.path.isfile(env_chrome):
         return env_chrome
@@ -68,9 +54,8 @@ def _find_chrome() -> str | None:
             return cand
     return None
 
-
 def collect_local_metrics(keywords: Iterable[str]) -> dict:
-    """Aggregate anonymous telemetry metrics across matching local Antigravity sessions."""
+
     mod = _load_monitor_module()
     kw_lower = tuple(k.lower() for k in keywords if k.strip())
     kw_bytes = tuple(k.encode("utf-8") for k in kw_lower)
@@ -136,7 +121,6 @@ def collect_local_metrics(keywords: Iterable[str]) -> dict:
         "cost_usd": total_cost,
     }
 
-
 def _format_tokens(tokens: int) -> str:
     if tokens >= 1_000_000_000:
         return f"{tokens / 1_000_000_000:.2f}B"
@@ -146,9 +130,8 @@ def _format_tokens(tokens: int) -> str:
         return f"{tokens / 1_000:.1f}K"
     return str(tokens)
 
-
 def _hakimi_cat_emblem_svg() -> str:
-    """Minimal line-art sketch cat emblem with signature asymmetric glare (left squint, right glare)."""
+
     return """  <!-- Right Minimal Line-Art Cat Emblem (Hakimi Sketch) -->
   <g transform="translate(742, 13)" aria-label="Hakimi Line-Art Cat">
     <!-- Clean Cat Head Outline -->
@@ -166,9 +149,8 @@ def _hakimi_cat_emblem_svg() -> str:
           stroke="#475569" stroke-width="1.0" stroke-linecap="round"/>
   </g>"""
 
-
 def build_svg(lang: str, turns: int, tokens: int, cache_hit_pct: float, cost_usd: float) -> str:
-    """Build bilingual precision-instrument SVG card with aligned 3-column layout."""
+
     tokens_str = _format_tokens(tokens)
     turns_str = f"{turns:,}"
     cost_str = f"${cost_usd:.2f}"
@@ -346,9 +328,8 @@ def build_svg(lang: str, turns: int, tokens: int, cache_hit_pct: float, cost_usd
 </svg>
 """
 
-
 def render_svg_to_png(svg_text: str, out_png: Path, chrome_bin: str, font_path: str | None) -> None:
-    """Render an SVG string to a 3x Retina transparent PNG via headless Chrome."""
+
     font_css = ""
     if font_path and os.path.isfile(font_path):
         font_css = f"""
@@ -386,7 +367,6 @@ def render_svg_to_png(svg_text: str, out_png: Path, chrome_bin: str, font_path: 
     finally:
         if os.path.exists(html_path):
             os.unlink(html_path)
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate Agyhub README build-telemetry SVG & 3x PNG cards.")
@@ -431,7 +411,6 @@ def main() -> int:
         render_svg_to_png(zh_svg, out_dir / "build-telemetry-zh.png", chrome, font_path)
         print(f"Rendered 3x PNGs -> {out_dir / 'build-telemetry.png'}, {out_dir / 'build-telemetry-zh.png'}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -1,12 +1,5 @@
-//
-//  Localization.swift
-//  Agyhub — 国际化双语引擎 (AppLanguage & L10n)
-//
-
 import Foundation
 import SwiftUI
-
-// MARK: - 0. 国际化双语引擎 (AppLanguage & L10n)
 
 enum AppLanguage: String, CaseIterable, Identifiable, Codable, Equatable {
     case system = "system"
@@ -81,7 +74,7 @@ extension EnvironmentValues {
 }
 
 enum L10nKey: String, CaseIterable {
-    // Header & Footer
+
     case headerTodayLabel
     case refreshDataTooltip
     case openStandaloneTooltip
@@ -89,7 +82,6 @@ enum L10nKey: String, CaseIterable {
     case settingsTitle
     case closeSettingsTooltip
 
-    // Accounts Section
     case accountsSectionTitle
     case notSignedIn
     case switchDesktopAppTooltip
@@ -117,12 +109,10 @@ enum L10nKey: String, CaseIterable {
     case cliCachedSlotHelp
     case cliFirstLoginHelp
 
-    // Quota
     case quotaExpiredBadge
     case quotaExpiredHint
     case quotaResetNow
 
-    // Today & Sessions
     case todaySectionTitle
     case estimatedCost
     case sessionsSectionTitle
@@ -141,7 +131,6 @@ enum L10nKey: String, CaseIterable {
     case statContext
     case statCacheHit
 
-    // Diagnostics
     case diagTabPhases
     case diagTabSources
     case diagLoading
@@ -157,7 +146,6 @@ enum L10nKey: String, CaseIterable {
     case diagCenterAttributed
     case diagRecommendationsTitle
 
-    // Usage Analytics
     case usageRangeToday
     case usageRange7Days
     case usageRange30Days
@@ -172,7 +160,6 @@ enum L10nKey: String, CaseIterable {
     case usageLoadingHistory
     case usageNoModelData
 
-    // Create Profile & Discovery Logs Sheets
     case createProfileTitle
     case createProfileSubtitle
     case createProfileAccountLabel
@@ -186,7 +173,6 @@ enum L10nKey: String, CaseIterable {
     case closeAction
     case logsEmpty
 
-    // Settings
     case languageSettingLabel
     case launchAtLoginToggle
     case unifyMonitoringToggle
@@ -211,7 +197,6 @@ enum L10nKey: String, CaseIterable {
     case quitAgyhubButton
     case quitAgyhubTooltip
 
-    // Menus
     case menuAboutAgyhub
     case menuHideAgyhub
     case menuHideOthers
@@ -230,7 +215,6 @@ enum L10nKey: String, CaseIterable {
     case statusMenuRefreshNow
     case statusMenuSettings
 
-    // Banners
     case bannerCopiedLogs
     case bannerCLIModeShared
     case bannerCLIModeIndependent
@@ -250,7 +234,7 @@ enum L10nKey: String, CaseIterable {
 
     private var localizedPair: (String, String) {
         switch self {
-        // Header & Footer
+
         case .headerTodayLabel: return ("Today", "Today")
         case .refreshDataTooltip: return ("刷新数据", "Refresh Data")
         case .openStandaloneTooltip: return ("在新窗口中固定打开", "Open in Standalone Window")
@@ -258,7 +242,6 @@ enum L10nKey: String, CaseIterable {
         case .settingsTitle: return ("设置", "Settings")
         case .closeSettingsTooltip: return ("关闭设置", "Close Settings")
 
-        // Accounts Section
         case .accountsSectionTitle: return ("ACCOUNTS", "ACCOUNTS")
         case .notSignedIn: return ("未登录", "Not Signed In")
         case .switchDesktopAppTooltip: return ("切换桌面 App 主应用账号", "Switch Desktop App Account")
@@ -286,12 +269,10 @@ enum L10nKey: String, CaseIterable {
         case .cliCachedSlotHelp: return ("从本地已授权槽位自动切换此 CLI 账号", "Switch CLI to this cached account from local vault")
         case .cliFirstLoginHelp: return ("首次切换：退出旧槽位并在终端启动 agy 完成一次登录后即可自动互切", "First switch: opens agy in Terminal to sign in once, then enables auto-switching")
 
-        // Quota
         case .quotaExpiredBadge: return ("已过期", "Expired")
         case .quotaExpiredHint: return ("凭证已过期，切换后自动更新", "Token expired — switch to refresh")
         case .quotaResetNow: return ("重置", "Reset")
 
-        // Today & Sessions
         case .todaySectionTitle: return ("TODAY", "TODAY")
         case .estimatedCost: return ("预估账单", "Est. Cost")
         case .sessionsSectionTitle: return ("SESSIONS", "SESSIONS")
@@ -310,7 +291,6 @@ enum L10nKey: String, CaseIterable {
         case .statContext: return ("上下文", "Context")
         case .statCacheHit: return ("缓存率", "Cache Hit")
 
-        // Diagnostics
         case .diagTabPhases: return ("按工作阶段", "By Phase")
         case .diagTabSources: return ("按上下文来源", "By Source")
         case .diagLoading: return ("正在本地解析上下文与缓存失效原因（零 Token 消耗）…", "Analyzing context & cache misses locally (0 tokens)…")
@@ -326,7 +306,6 @@ enum L10nKey: String, CaseIterable {
         case .diagCenterAttributed: return ("已归因", "Attributed")
         case .diagRecommendationsTitle: return ("针对性优化建议", "Recommendations")
 
-        // Usage Analytics
         case .usageRangeToday: return ("今天", "Today")
         case .usageRange7Days: return ("最近 7 天", "Last 7 Days")
         case .usageRange30Days: return ("最近一个月", "Last 30 Days")
@@ -341,7 +320,6 @@ enum L10nKey: String, CaseIterable {
         case .usageLoadingHistory: return ("正在扫描本地历史消耗统计...", "Scanning local usage history...")
         case .usageNoModelData: return ("无记录", "No data")
 
-        // Create Profile & Discovery Logs Sheets
         case .createProfileTitle: return ("新建环境", "New Profile")
         case .createProfileSubtitle: return ("自动创建隔离目录并共享插件以节省空间。", "Creates an isolated directory and shares extensions to save disk space.")
         case .createProfileAccountLabel: return ("账号邮箱或标识", "Account Email or Identifier")
@@ -355,7 +333,6 @@ enum L10nKey: String, CaseIterable {
         case .closeAction: return ("关闭", "Close")
         case .logsEmpty: return ("暂无日志记录", "No log entries yet")
 
-        // Settings
         case .languageSettingLabel: return ("界面语言", "Language")
         case .launchAtLoginToggle: return ("开机自动启动", "Launch at Login")
         case .unifyMonitoringToggle: return ("统一监控活跃会话", "Monitor All Active Sessions")
@@ -380,7 +357,6 @@ enum L10nKey: String, CaseIterable {
         case .quitAgyhubButton: return ("退出 Agyhub", "Quit Agyhub")
         case .quitAgyhubTooltip: return ("彻底退出常驻菜单栏的 Agyhub 进程", "Quit Agyhub completely")
 
-        // Menus
         case .menuAboutAgyhub: return ("关于 Agyhub", "About Agyhub")
         case .menuHideAgyhub: return ("隐藏 Agyhub", "Hide Agyhub")
         case .menuHideOthers: return ("隐藏其他", "Hide Others")
@@ -399,7 +375,6 @@ enum L10nKey: String, CaseIterable {
         case .statusMenuRefreshNow: return ("立即刷新", "Refresh Now")
         case .statusMenuSettings: return ("设置...", "Settings...")
 
-        // Banners
         case .bannerCopiedLogs: return ("📋 已复制日志到剪贴板", "📋 Logs copied to clipboard")
         case .bannerCLIModeShared: return ("ℹ️ 已切换为原生共享模式：CLI 与桌面 App 共用钥匙串", "ℹ️ Shared keychain mode enabled: CLI & App share credentials")
         case .bannerCLIModeIndependent: return ("⚡️ 已开启 CLI 独立模式：CLI 读写独立 token 文件", "⚡️ Isolated CLI mode enabled: CLI uses separate token file")
@@ -651,7 +626,6 @@ enum L10n {
         lang == .zhHans ? "今日 \(label)" : "Today \(label)"
     }
 
-    // Banner Helpers
     static func bannerRemovedCLISlot(_ email: String, _ lang: AppLanguage.Resolved) -> String {
         lang == .zhHans ? "🗑️ 已清除 CLI 槽位：\(email)" : "🗑️ Cleared CLI slot: \(email)"
     }
@@ -734,7 +708,6 @@ enum L10n {
         lang == .zhHans ? "📋 已复制 `\(cmd)` 到剪贴板并唤醒终端" : "📋 Copied `\(cmd)` to clipboard and opened Terminal"
     }
 
-    // Backend-string localizers (non-destructive display translation for agy-monitor.py outputs)
     static func localizeMenubarText(_ raw: String, language: AppLanguage.Resolved) -> String {
         guard language == .en else { return raw }
         return raw

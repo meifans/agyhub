@@ -1,17 +1,9 @@
-//
-//  MonitorRuntime.swift
-//  Agyhub — 常驻 Daemon 客户端、FSEvents 监听、轮询策略与核心状态管理 (AGYHubStore)
-//
-
 import AppKit
 import Combine
 import CoreServices
 import Foundation
 import ServiceManagement
 
-// MARK: - 3.8 常驻 Python Daemon 客户端与 FSEvents 目录防抖监听
-
-/// 线程安全的防抖合并触发器（支持最大等待上限，避免持续流式写入时饥饿）
 final class DebouncedTrigger: @unchecked Sendable {
     private let lock = NSLock()
     private let debounceInterval: TimeInterval
@@ -33,7 +25,6 @@ final class DebouncedTrigger: @unchecked Sendable {
         self.action = action
     }
 
-    /// 触发一次事件信号：在防抖窗口内合并突发调用并在稳定后执行一次回调
     func signal() {
         lock.lock()
         pendingWorkItem?.cancel()
@@ -69,7 +60,6 @@ final class DebouncedTrigger: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
-    /// 取消尚未触发的待执行回调并重置状态
     func cancel() {
         lock.lock()
         pendingWorkItem?.cancel()
@@ -83,7 +73,6 @@ final class DebouncedTrigger: @unchecked Sendable {
     }
 }
 
-/// 基于 macOS FSEvents 的会话目录监听器（仅监听存在目录、防抖合并写入、兼容后期新建目录）
 final class SessionDirectoryWatcher: @unchecked Sendable {
     private final class CallbackBox {
         weak var watcher: SessionDirectoryWatcher?
@@ -106,7 +95,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
     private var missingTimer: DispatchSourceTimer?
     private var isStarted: Bool = false
 
-    /// 返回默认监控的会话目录列表（App 与 CLI 的 brain 目录，去重保序）
     static func defaultCandidatePaths(homeDir: String, extraDataDirs: [String] = []) -> [String] {
         var raw = [
             "\(homeDir)/.gemini/antigravity/brain",
@@ -127,7 +115,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
         return result
     }
 
-    /// 将候选目录划分为当前已存在（可注册 FSEvents）与尚未创建两组
     static func partitionWatchTargets(
         _ candidatePaths: [String],
         fileManager: FileManager = .default
@@ -173,7 +160,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
         )
     }
 
-    /// 启动 FSEvents 目录监听与缺失目录延迟创建探测
     func start() {
         lock.lock()
         if isStarted {
@@ -186,7 +172,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// 更新候选监控目录列表（例如切换非统一监控的隔离目录时）
     func updateCandidatePaths(_ newCandidates: [String]) {
         lock.lock()
         guard newCandidates != candidatePaths else {
@@ -201,7 +186,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// 停止监听并释放 FSEvents 流与定时器资源
     func stop() {
         lock.lock()
         isStarted = false
@@ -213,7 +197,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
         debouncer.cancel()
     }
 
-    /// 重新核对候选目录存在状态：若发现原本缺失的目录已被创建，自动纳管并可选触发刷新
     @discardableResult
     func reconcileWatchedDirectories(triggerOnNewDirectory: Bool = true) -> Bool {
         lock.lock()
@@ -365,7 +348,6 @@ final class SessionDirectoryWatcher: @unchecked Sendable {
     }
 }
 
-/// 常驻 Python agy-monitor.py --daemon NDJSON 客户端（含 if_none_match、超时/崩溃退避自愈、EOF 优雅退出）
 final class MonitorDaemonClient: @unchecked Sendable {
     enum DaemonError: Error, Equatable {
         case shutDown
@@ -515,7 +497,6 @@ final class MonitorDaemonClient: @unchecked Sendable {
         }
     }
 
-    /// 关闭 stdin 触发 daemon EOF 优雅退出，超时未退则强行终止，彻底杜绝孤儿进程
     func shutdown() {
         let detached: (proc: Process?, stdin: FileHandle?, stdout: FileHandle?, stderr: FileHandle?)
         let waiters: [(Result<Data, DaemonError>) -> Void]
@@ -706,7 +687,6 @@ final class MonitorDaemonClient: @unchecked Sendable {
         proc.standardOutput = outPipe
         proc.standardError = errPipe
 
-        // 持续排空 stderr，防止子进程写满 64KB 管道缓冲区引发死锁
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             _ = handle.availableData
         }
@@ -767,7 +747,6 @@ final class MonitorDaemonClient: @unchecked Sendable {
             }
         }
 
-        // EOF：清理当前代进程并唤醒所有悬而未决的等待者
         var waitersToFail: [(Result<Data, DaemonError>) -> Void] = []
         var detached: (proc: Process?, stdin: FileHandle?, stdout: FileHandle?, stderr: FileHandle?)? = nil
         var exitCode: Int32 = 0
@@ -847,8 +826,6 @@ final class MonitorDaemonClient: @unchecked Sendable {
     }
 }
 
-// MARK: - 4. 核心状态与后台轮询管理器 (AppStore)
-
 @MainActor
 final class AGYHubStore: ObservableObject {
     nonisolated static let defaultRefreshInterval: Double = 5.0
@@ -903,6 +880,7 @@ final class AGYHubStore: ObservableObject {
     private var lastLoggedMismatchKey: String = ""
     private var lastQuotaFetchTimes: [String: Date] = [:]
     private var lastQuotaFailureTimes: [String: Date] = [:]
+    private var lastNativeRenewalTimes: [String: Date] = [:]
     private(set) var fetchingQuotaEmails: Set<String> = []
     private var observedActiveAppEmail: String? = nil
     private var observedActiveCLIEmail: String? = nil
@@ -950,8 +928,22 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
+    private func loadPersistedQuotaCache() {
+        let cached = AccountQuotaManager.loadQuotaCache(homeDir: homeDir)
+        for (email, summary) in cached {
+            let key = email.lowercased()
+            let short = key.components(separatedBy: "@").first ?? key
+            accountQuotas[key] = summary
+            accountQuotas[short] = summary
+        }
+    }
+
     func refreshQuotasIfNeeded(force: Bool = false) {
         let hDir = homeDir
+        let activeApp = resolvedExpectedAppEmail
+        let activeCLI = activeCLIProfileName
+        let cliIndependent = isCLIIndependentMode
+
         for profile in profiles {
             let email = (profile.email ?? profile.name).lowercased()
             guard !email.isEmpty, email.contains("@") else { continue }
@@ -967,13 +959,37 @@ final class AGYHubStore: ObservableObject {
             fetchingQuotaEmails.insert(email)
 
             let tier = profile.tier
+            let renewalTarget = AccountQuotaManager.nativeRenewalTarget(
+                for: email,
+                activeAppEmail: activeApp,
+                activeCLIEmail: activeCLI,
+                isCLIIndependentMode: cliIndependent
+            )
+            let allowNativeRenewal = renewalTarget != nil && AccountQuotaManager.shouldAttemptNativeRenewal(
+                lastAttempt: lastNativeRenewalTimes[email],
+                force: force
+            )
+
             Task.detached(priority: .utility) { [weak self] in
-                let result = await AccountQuotaManager.fetchAccountQuotaResult(email: email, tier: tier, homeDir: hDir)
+                var result = await AccountQuotaManager.fetchAccountQuotaResult(email: email, tier: tier, homeDir: hDir)
+                var didAttemptNativeRenewal = false
+                if result == .tokenExpiredMissingOAuth, allowNativeRenewal, let target = renewalTarget {
+                    didAttemptNativeRenewal = true
+                    let renewed = await AccountQuotaManager.renewActiveSlotViaOfficialCLI(target: target, homeDir: hDir)
+                    if renewed {
+                        result = await AccountQuotaManager.fetchAccountQuotaResult(email: email, tier: tier, homeDir: hDir)
+                    }
+                }
+                let finalResult = result
+                let attemptedRenewal = didAttemptNativeRenewal
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
                     self.fetchingQuotaEmails.remove(email)
+                    if attemptedRenewal {
+                        self.lastNativeRenewalTimes[email] = Date()
+                    }
                     let short = email.components(separatedBy: "@").first ?? email
-                    switch result {
+                    switch finalResult {
                     case .success(let summary):
                         self.accountQuotas[email] = summary
                         self.accountQuotas[short] = summary
@@ -981,6 +997,7 @@ final class AGYHubStore: ObservableObject {
                         self.expiredQuotaEmails.remove(short)
                         self.lastQuotaFetchTimes[email] = Date()
                         self.lastQuotaFailureTimes.removeValue(forKey: email)
+                        AccountQuotaManager.saveQuotaCache(self.accountQuotas, homeDir: hDir)
                     case .tokenExpiredMissingOAuth:
                         self.expiredQuotaEmails.insert(email)
                         self.lastQuotaFailureTimes[email] = Date()
@@ -996,7 +1013,6 @@ final class AGYHubStore: ObservableObject {
         expectedAppEmail.isEmpty ? appStorageEmail : expectedAppEmail
     }
 
-    /// 预期主应用账号与当前共享钥匙串实际生效账号发生非预期偏移时返回 true（用户在 Agyhub 内主动切号不触发）
     var hasSharedKeychainMismatch: Bool {
         KeychainDriftPolicy.isUnexpectedDrift(
             expectedAppEmail: resolvedExpectedAppEmail,
@@ -1004,7 +1020,6 @@ final class AGYHubStore: ObservableObject {
         )
     }
 
-    /// 当前所有正在运行的活跃会话（含子 Agent）中的最长等待/卡顿时间（秒）；无会话或非运行态返回 0.0
     var maxSessionStallSeconds: Double {
         SessionLookup.maxStallSeconds(in: payload.sessions)
     }
@@ -1046,7 +1061,6 @@ final class AGYHubStore: ObservableObject {
         activeDiagnosticSessionUUID = nil
     }
 
-    /// 异步调用 agy-monitor.py --analyze-session 对单个会话进行零 Token 上下文与缓存失效诊断（优先走常驻 daemon）
     func fetchSessionDiagnostics(uuid: String, force: Bool = false) {
         if !force, sessionDiagnosticsByUUID[uuid] != nil {
             return
@@ -1100,6 +1114,7 @@ final class AGYHubStore: ObservableObject {
         self.userDefaults = userDefaults
         self.homeDir = homeDir
         self.appLanguage = AppLanguage.load(from: userDefaults)
+        loadPersistedQuotaCache()
         loadProfiles()
         checkLaunchAtLoginStatus()
         if startMonitoring {
@@ -1112,12 +1127,10 @@ final class AGYHubStore: ObservableObject {
         backgroundResources.shutdownAll()
     }
 
-    /// 当前是否有运行中主会话或子 Agent
     private var hasActiveMonitorSessions: Bool {
         payload.activeCount > 0 || payload.sessions.contains(where: \.isActivelyWorking)
     }
 
-    /// 结合窗口可见性与活跃会话状态计算当前生效的后台兜底轮询间隔
     var effectivePollingInterval: Double {
         PollingSchedulePolicy.effectiveInterval(
             userRefreshInterval: refreshInterval,
@@ -1126,7 +1139,6 @@ final class AGYHubStore: ObservableObject {
         )
     }
 
-    /// 同步弹窗/独立窗口可见性：收起时自动降频至 15s/60s，切回可见时立即刷新并恢复高频轮询
     func setDashboardVisible(_ visible: Bool) {
         let wasVisible = isDashboardVisible
         guard wasVisible != visible else { return }
@@ -1140,7 +1152,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 根据当前监控状态判定并应用 payload 更新；展示字段未实质变化时跳过 @Published 赋值，避免 SwiftUI 整树重绘
     @discardableResult
     func applyMonitorPayloadIfChanged(_ incoming: MonitorPayload, now: Date = Date()) -> Bool {
         let shouldApply = MonitorPayloadEquivalencePolicy.shouldUpdatePayload(
@@ -1158,7 +1169,6 @@ final class AGYHubStore: ObservableObject {
         return true
     }
 
-    /// 优雅关闭后台 daemon 子进程、FSEvents 监听与定时器（在应用退出前调用）
     func shutdownBackgroundWorkers() {
         timer?.invalidate()
         timer = nil
@@ -1224,7 +1234,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    // MARK: 定时静默轮询 + FSEvents 驱动 (零网络请求)
     func startPolling() {
         guard isMonitoringEnabled else { return }
         ensureDirectoryWatcherStarted()
@@ -1241,7 +1250,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 开启或关闭「CLI 账号独立模式」：开启时读写独立 token 文件，关闭时回归原生共享钥匙串
     func toggleCLIIndependentMode(_ enabled: Bool) {
         isCLIIndependentMode = enabled
         UserDefaults.standard.set(enabled, forKey: "agyhub.cliIndependentMode")
@@ -1259,17 +1267,17 @@ final class AGYHubStore: ObservableObject {
     }
 
     func resolveMonitorScriptPath() -> String {
-        // 1. 优先使用打包在 Agyhub.app/Contents/Resources/ 内的 agy-monitor.py
+
         if let bundled = Bundle.main.path(forResource: "agy-monitor", ofType: "py"),
            FileManager.default.fileExists(atPath: bundled) {
             return bundled
         }
-        // 2. 其次检查用户 ~/.gemini/config/tools/agy-monitor.py
+
         let userToolPath = "\(homeDir)/.gemini/config/tools/agy-monitor.py"
         if FileManager.default.fileExists(atPath: userToolPath) {
             return userToolPath
         }
-        // 3. 回退到当前工作目录
+
         return "./agy-monitor.py"
     }
 
@@ -1353,7 +1361,6 @@ final class AGYHubStore: ObservableObject {
                 return
             }
 
-            // Daemon 不可用或处于退避窗口时自动降级为单次 --json 调用，确保监控绝不中断
             if let data = Self.runOneShotMonitorProcess(
                 pythonBin: pythonBin,
                 arguments: [scriptPath, "--json", "--data-dir", dataDir, "--lang", langCode]
@@ -1379,7 +1386,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 每 5 分钟异步扫描一次最近 1 小时内的 503 报错总次数（优先走常驻 daemon，不可用时回退 --recent-503）
     func refreshRecent503IfNeeded(force: Bool = false) {
         guard Recent503Policy.shouldRefresh(
             lastFetchedAt: lastRecent503FetchTime,
@@ -1426,7 +1432,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 打开或收起顶部 Today 用量统计大图面板
     func toggleUsageDashboard() {
         isUsageDashboardPresented.toggle()
         if isUsageDashboardPresented {
@@ -1438,7 +1443,6 @@ final class AGYHubStore: ObservableObject {
         isUsageDashboardPresented = false
     }
 
-    /// 异步拉取近 30 天逐日、今日分时与分模型用量统计（优先走常驻 daemon，不可用时回退 --usage-history）
     func fetchUsageHistory(days: Int = 30, force: Bool = false) {
         if !force, let last = lastUsageHistoryFetchTime, Date().timeIntervalSince(last) < 15.0 {
             return
@@ -1495,15 +1499,12 @@ final class AGYHubStore: ObservableObject {
         return f
     }()
 
-    // MARK: - 模块二：安全多账号隔离与切换 (Profile Manager)
-
     func loadProfiles() {
         let fm = FileManager.default
         if !fm.fileExists(atPath: profilesRootDir) {
             try? fm.createDirectory(atPath: profilesRootDir, withIntermediateDirectories: true)
         }
 
-        // 0. 预先加载历史持久化配置，确保重新扫描账号时不丢失 lastUsedAt 等使用顺序元数据
         var savedByKey: [String: AGYProfile] = [:]
         var savedCustomProfiles: [AGYProfile] = []
         if fm.fileExists(atPath: profilesConfigPath),
@@ -1520,10 +1521,8 @@ final class AGYHubStore: ObservableObject {
 
         var detectedProfiles: [AGYProfile] = []
 
-        // 1. 全量扫描本机可用 Google 账号 (Chrome / Edge / Brave / Antigravity)
         let allDiscovered = LocalAccountDetector.detectAllAccounts(homeDir: homeDir)
 
-        // 2. 识别 Antigravity 官方主应用已登录的本地认证账号
         let defaultAntigravityUserData = "\(homeDir)/Library/Application Support/Antigravity"
         let detectedStorageEmail = LocalAccountDetector.detectEmailFromUserDataDir(defaultAntigravityUserData)
         appStorageEmail = detectedStorageEmail ?? ""
@@ -1550,7 +1549,6 @@ final class AGYHubStore: ObservableObject {
         )
         detectedProfiles.append(mainProfile)
 
-        // 3. 将本地探测到的全部独立 Google 账号自动加入隔离环境列表
         for acc in allDiscovered {
             if !defaultEmail.isEmpty, acc.email.lowercased() == defaultEmail.lowercased() { continue }
             let isolatedDir = "\(profilesRootDir)/\(acc.email)"
@@ -1569,7 +1567,6 @@ final class AGYHubStore: ObservableObject {
             detectedProfiles.append(profile)
         }
 
-        // 4. 读取用户保存的自定义隔离账号配置 (兼容修复旧版本错误指向 IDE 目录的脏配置)
         for custom in savedCustomProfiles where !custom.isDefaultProfile {
             let fixedDir = custom.userDataDir.contains("Antigravity IDE")
                 ? "\(profilesRootDir)/\(custom.name)"
@@ -1581,7 +1578,6 @@ final class AGYHubStore: ObservableObject {
             }
         }
 
-        // 5. 扫描 ~/.agy-profiles/ 下已创建的真实隔离物理目录
         if let subdirs = try? fm.contentsOfDirectory(atPath: profilesRootDir) {
             for sub in subdirs {
                 if sub.hasPrefix(".") || sub == "profiles.json" { continue }
@@ -1630,7 +1626,6 @@ final class AGYHubStore: ObservableObject {
 
     private var isRefreshingCLIState = false
 
-    /// 异步更新 Antigravity CLI 当前账号与共享钥匙串归属状态（仅在 isCLIVaultAuthorized 为 true 且非切号进行中时才捕获与刷新）
     func refreshCLIAccountState() {
         guard !KeychainDriftPolicy.shouldSkipCLIStateRefresh(
             isRefreshing: isRefreshingCLIState,
@@ -1767,7 +1762,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 一次性授权 CLI 本机钥匙串槽位自动切换（之后每次均自动切换）
     func authorizeCLIVault() {
         UserDefaults.standard.set(true, forKey: "agyhub.cliVaultAuthorized")
         isCLIVaultAuthorized = true
@@ -1776,7 +1770,6 @@ final class AGYHubStore: ObservableObject {
         showBanner(L10n.t(.bannerCLIAuthEnabled, resolvedLanguage))
     }
 
-    /// 取消 CLI 钥匙串切换授权并清空所有本地保险箱槽位（不影响当前生效 CLI 登录）
     func revokeCLIVaultAuthorization() {
         UserDefaults.standard.set(false, forKey: "agyhub.cliVaultAuthorized")
         isCLIVaultAuthorized = false
@@ -1793,7 +1786,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 删除单个已缓存的 CLI 邮箱槽位
     func removeCLISlot(_ email: String) {
         savedCLISlots.remove(email.lowercased())
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1808,17 +1800,14 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 构造终端里以文件 token 模式强制登录并覆写独立 token 文件的命令（带 SSH_CLIENT=1 与 acp --login，保留旧文件直到新登录成功）
     nonisolated static func buildCLIFileModeLoginCommand(homeDir: String) -> String {
         "\(CLIAccountManager.fileTokenModeEnv) \(CLIAccountManager.cliBinaryPath(homeDir: homeDir)) acp --login"
     }
 
-    /// 终端里以文件 token 模式启动 agy 登录的命令（带 SSH_CLIENT=1，登录结果写入 token 文件而非系统钥匙串）
     var cliFileModeCommand: String {
         Self.buildCLIFileModeLoginCommand(homeDir: homeDir)
     }
 
-    /// 切换 CLI 账号：仅改写 CLI token 文件（文件 token 模式），桌面 App 的共享钥匙串保持不动；未授权或目标未缓存时保留原文件并在终端走 acp --login 覆写
     func switchCLIProfile(_ profile: AGYProfile) {
         let targetEmail = profile.email ?? profile.name
         let loginCommand = cliFileModeCommand
@@ -1861,7 +1850,7 @@ final class AGYHubStore: ObservableObject {
                     ) {
                         self.saveProfiles()
                     }
-                    // 运行中的 agy 进程内存里仍持有旧 token，到期刷新时会把旧账号写回文件，需重开会话才生效
+
                     self.showBanner(L10n.bannerCLISwitched(targetEmail, bgCount: bgCount, self.resolvedLanguage))
                 } else {
                     if let currentFileEmail = currentFileEmail {
@@ -1876,7 +1865,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 当后台旧 CLI（未带 SSH_CLIENT 的进程）续期导致共享钥匙串与预期主应用账号不一致时，一键从保险箱恢复预期主应用账号
     func restoreAppKeychainAccount() {
         let targetEmail = resolvedExpectedAppEmail
         guard !targetEmail.isEmpty else { return }
@@ -1963,7 +1951,6 @@ final class AGYHubStore: ObservableObject {
         showBanner(L10n.bannerProfileDeleted(profile.name, resolvedLanguage))
     }
 
-    /// 创建独立 Profile 目录并自动软链插件目录、同步主环境高清视口缩放配置 (Preferences)
     func ensureProfileDirectoryAndExtensionsSymlink(profile: AGYProfile) {
         if profile.isDefaultProfile { return }
         let fm = FileManager.default
@@ -1972,23 +1959,18 @@ final class AGYHubStore: ObservableObject {
             try? fm.createDirectory(atPath: expandedProfileDir, withIntermediateDirectories: true)
         }
 
-        // 确保主目录 ~/.antigravity/extensions 存在
         if !fm.fileExists(atPath: sharedExtensionsDir) {
             try? fm.createDirectory(atPath: sharedExtensionsDir, withIntermediateDirectories: true)
         }
 
-        // 在 Profile 目录下建立 extensions 软链接指向 ~/.antigravity/extensions
         let profileExtLink = "\(expandedProfileDir)/extensions"
         if !fm.fileExists(atPath: profileExtLink) {
             try? fm.createSymbolicLink(atPath: profileExtLink, withDestinationPath: sharedExtensionsDir)
         }
 
-        // 彻底根除视口污染：清理旧逻辑残留的、带有动态端口 zoom 缩放的 Preferences 文件
-        // 确保即使在并排双开独立目录场景下，也直接继承 macOS 系统 Retina 2x 原生显示
         AntigravityLaunchConfig.cleanZoomContamination(in: expandedProfileDir)
     }
 
-    /// 切换模式 (Switch)：优雅请求退出 + 钥匙串热切换 + 原生官方方式拉起，彻底杜绝 --user-data-dir 破坏视口分辨率
     func switchToProfile(_ profile: AGYProfile) {
         ensureProfileDirectoryAndExtensionsSymlink(profile: profile)
         let targetEmail = profile.email ?? profile.name
@@ -2019,7 +2001,6 @@ final class AGYHubStore: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
-            // 1. 若目标账号在保险箱中已有凭证，切换前先将凭证安全写回共享钥匙串
             let vaultRes = CLIAccountManager.restoreSharedKeychainFromVault(
                 homeDir: hDir,
                 targetEmail: targetEmail,
@@ -2032,7 +2013,6 @@ final class AGYHubStore: ObservableObject {
                 LocalAccountDetector.appendLog("保险箱尚未缓存「\(targetEmail)」，保持原钥匙串，拉起后在 App 内登录一次即可自动归档")
             }
 
-            // 2. 查找并遵循 macOS 原生方式优雅关闭主应用（只向 .regular 主应用发 terminate，绝不提前打断 Helper；严格排除 Agyhub 自身！）
             let currentPid = ProcessInfo.processInfo.processIdentifier
             let allRunningApps = NSWorkspace.shared.runningApplications
             let primaryApps = allRunningApps.filter { app in
@@ -2063,7 +2043,6 @@ final class AGYHubStore: ObservableObject {
                 app.terminate()
             }
 
-            // 等待最多 gracefulShutdownTimeoutSeconds（8.0 秒）让 Electron 主进程、Helper 与 language_server 安全刷盘退出
             let maxWaitLoops = Int(AntigravityLaunchConfig.gracefulShutdownTimeoutSeconds / 0.1)
             var waitLoops = 0
             while waitLoops < maxWaitLoops {
@@ -2075,7 +2054,6 @@ final class AGYHubStore: ObservableObject {
                 waitLoops += 1
             }
 
-            // 3. 强力兜底：仅当超过优雅退出等待上限仍卡死时，才终结残留主实例/辅助/language_server，确保释放单例锁与端口
             var didForceKill = false
             for app in primaryApps where !app.isTerminated {
                 LocalAccountDetector.appendLog("主实例 PID \(app.processIdentifier) 超过 \(AntigravityLaunchConfig.gracefulShutdownTimeoutSeconds)s 仍未退出，执行 SIGKILL 终结")
@@ -2096,18 +2074,15 @@ final class AGYHubStore: ObservableObject {
                 Thread.sleep(forTimeInterval: 0.2)
             }
 
-            // 等待全部旧进程完全退出后，再清理默认主环境与隔离目录残留的孤儿单例锁文件 (SingletonLock / SingletonSocket / SingletonCookie)
             let mainDir = "\(hDir)/Library/Application Support/Antigravity"
             AntigravityLaunchConfig.cleanupStaleLocks(in: mainDir)
             let targetDir = (profile.userDataDir as NSString).expandingTildeInPath
             AntigravityLaunchConfig.cleanupStaleLocks(in: targetDir)
 
-            // 确认旧实例已完全退出落盘后，再同步更新 app_storage.json 的 lastLoginUsername，避免与 Electron 'before-quit' 写盘冲突
             if vaultRes.switchedImmediately {
                 AntigravityLaunchConfig.syncOnboardingUsername(targetEmail, in: mainDir)
             }
 
-            // 4. 调用官方原生方式（无 -n、无 --user-data-dir 且剥离脏环境变量）拉起主环境，彻底恢复原生配置与 Retina 视口
             LocalAccountDetector.appendLog("以官方原生模式拉起 Antigravity 实例 [\(profile.name)]")
             Self.launchAntigravityProcess(for: profile, sharedExtensionsDir: extDir, isParallelLaunch: false)
 
@@ -2129,7 +2104,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 并排双开模式 (Launch Parallel)：不关闭当前窗口，直接拉起新实例
     func launchParallelProfile(_ profile: AGYProfile) {
         ensureProfileDirectoryAndExtensionsSymlink(profile: profile)
         activeProfileName = profile.name
@@ -2149,7 +2123,6 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
-    /// 执行 open 命令拉起 Antigravity 进程（切换走官方原生单实例无参启动，并净化 LaunchServices 环境变量；双开走独立隔离目录）
     private nonisolated static func launchAntigravityProcess(
         for profile: AGYProfile,
         sharedExtensionsDir: String,
@@ -2173,9 +2146,6 @@ final class AGYHubStore: ObservableObject {
         proc.waitUntilExit()
     }
 
-    // MARK: - 终端命令执行器
-
-    /// POSIX 单引号安全转义（防止带空格路径失效或 shell 元字符注入）
     nonisolated static func shellSingleQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
@@ -2204,15 +2174,12 @@ final class AGYHubStore: ObservableObject {
             }
         }
 
-        // 兜底：复制命令到剪贴板并打开 Terminal
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(singleLine, forType: .string)
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
         showBanner(L10n.bannerCopiedTerminalFallback(singleLine, resolvedLanguage))
         return false
     }
-
-    // MARK: - 开机自启管理 (LaunchAgent + SMAppService)
 
     private var launchAgentPlistPath: String {
         "\(homeDir)/Library/LaunchAgents/com.antigravity.agyhub.plist"
@@ -2243,7 +2210,7 @@ final class AGYHubStore: ObservableObject {
                     return
                 }
             } catch {
-                // 回退至标准 LaunchAgents plist 方案（兼容未签名本地构建）
+
             }
         }
 

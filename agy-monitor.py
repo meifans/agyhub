@@ -30,7 +30,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-# 尝试导入 rich，支持优雅降级
 try:
     from rich.console import Console, Group
     from rich.live import Live
@@ -58,28 +57,24 @@ _INSPECT_MEM_CACHE: dict[str, dict] = {}
 _USAGE_MEM_CACHE: dict[str, dict] = {}
 _DESCRIPTOR_MEM_CACHE: dict[str, tuple[tuple, dict[str, dict]]] = {}
 
-
 def clear_runtime_caches() -> None:
-    """清空进程内内存缓存（主要用于单元测试隔离）。"""
+
     _INSPECT_MEM_CACHE.clear()
     _USAGE_MEM_CACHE.clear()
     _DESCRIPTOR_MEM_CACHE.clear()
 
-
 def _is_cache_disabled() -> bool:
-    """判断是否通过环境变量 AGYHUB_DISABLE_CACHE 禁用了增量缓存。"""
+
     return os.environ.get("AGYHUB_DISABLE_CACHE", "").strip().lower() in ("1", "true", "yes")
 
-
 def _resolve_inspect_cache_path(cache_path: str | None = None) -> str:
-    """解析会话增量缓存文件的磁盘路径。"""
+
     if cache_path:
         return os.path.expanduser(cache_path)
     env_path = os.environ.get("AGYHUB_INSPECT_CACHE_PATH", "").strip()
     if env_path:
         return os.path.expanduser(env_path)
     return DEFAULT_INSPECT_CACHE_PATH
-
 
 def _empty_inspect_cache() -> dict:
     return {
@@ -88,7 +83,6 @@ def _empty_inspect_cache() -> dict:
         "models": {},
     }
 
-
 def _file_stat_sig(path: str) -> tuple[int, int] | None:
     try:
         st = os.stat(path)
@@ -96,9 +90,8 @@ def _file_stat_sig(path: str) -> tuple[int, int] | None:
     except OSError:
         return None
 
-
 def _atomic_write_json(path: str, payload: dict) -> bool:
-    """原子写盘 JSON，先写同目录临时文件再 os.replace，避免并发半写损坏。"""
+
     tmp_path = f"{path}.tmp.{os.getpid()}"
     try:
         parent = os.path.dirname(os.path.abspath(path))
@@ -115,9 +108,8 @@ def _atomic_write_json(path: str, payload: dict) -> bool:
             pass
         return False
 
-
 def _get_inspect_cache(cache_path: str | None = None) -> tuple[dict, str, bool]:
-    """加载进程内/磁盘会话解析缓存；损坏或 schema 不匹配时自动返回空缓存并标记需重建。"""
+
     resolved = _resolve_inspect_cache_path(cache_path)
     disk_sig = _file_stat_sig(resolved)
     mem_entry = _INSPECT_MEM_CACHE.get(resolved)
@@ -148,10 +140,8 @@ def _get_inspect_cache(cache_path: str | None = None) -> tuple[dict, str, bool]:
     _INSPECT_MEM_CACHE[resolved] = {"disk_sig": disk_sig, "data": data}
     return data, resolved, needs_rebuild
 
-
 def _save_inspect_cache(resolved_path: str, cache: dict) -> None:
-    """原子落盘会话增量缓存并刷新进程内磁盘签名。"""
-    # 防止长期积累过多已删除历史文件条目
+
     sessions = cache.get("sessions")
     if isinstance(sessions, dict) and len(sessions) > 1000:
         stale = [p for p in list(sessions.keys()) if not os.path.exists(p)]
@@ -168,17 +158,15 @@ def _save_inspect_cache(resolved_path: str, cache: dict) -> None:
             "data": cache,
         }
 
-
 def _get_rate_regime(now: datetime | None = None) -> list[bool]:
-    """提取影响定价阶梯的日期分界状态，避免跨定价生效日后旧费用缓存失效不更新。"""
+
     ref_now = now or datetime.now()
     if ref_now.tzinfo is not None:
         ref_now = ref_now.astimezone().replace(tzinfo=None)
     return [ref_now >= datetime(2026, 12, 1), ref_now >= datetime(2027, 1, 1)]
 
-
 def _db_fingerprint(db_path: str) -> list[int] | None:
-    """提取 SQLite 主库及可选 WAL 文件的 (mtime_ns, size) 指纹。"""
+
     try:
         st = os.stat(db_path)
     except OSError:
@@ -191,9 +179,8 @@ def _db_fingerprint(db_path: str) -> list[int] | None:
         pass
     return [st.st_mtime_ns, st.st_size, wal_mtime, wal_size]
 
-
 def connect_sqlite_ro(db_path: str) -> sqlite3.Connection:
-    """以 100% 纯只读方式打开本地 SQLite 数据库，绝不写入或加写锁"""
+
     abs_path = os.path.abspath(db_path)
     uri = f"file:{quote(abs_path)}?mode=ro"
     try:
@@ -201,9 +188,8 @@ def connect_sqlite_ro(db_path: str) -> sqlite3.Connection:
     except Exception:
         return sqlite3.connect(abs_path, timeout=1.5)
 
-
 def format_duration(seconds: float) -> str:
-    """人性化时间格式化，直观展示分与秒"""
+
     if seconds < 0:
         return "0秒"
     if seconds < 60:
@@ -216,26 +202,23 @@ def format_duration(seconds: float) -> str:
     rem_mins = int(minutes % 60)
     return f"{hours}小时{rem_mins}分"
 
-
 def fmt_tokens(n: int) -> str:
-    """Token 数量格式化，采用 K / M 表示"""
+
     if n >= 1_000_000:
         return f"{n/1_000_000:.1f}M"
     elif n >= 1_000:
         return f"{n/1_000:.0f}k"
     return str(n)
 
-
 def _normalize_lang(lang: str | None) -> str:
-    """将语言参数规范化为 'en' 或 'zh'。"""
+
     low = (lang or "").strip().lower()
     if low.startswith("en"):
         return "en"
     return "zh"
 
-
 def _localize_duration_units_en(text: str) -> str:
-    """将中文时长/维度标记转为简洁英文，用于 snapshot projection。"""
+
     return (
         text.replace("小时", "h")
         .replace("分", "m")
@@ -246,9 +229,8 @@ def _localize_duration_units_en(text: str) -> str:
         .replace("云端 ", "Cloud ")
     )
 
-
 def _localize_session_dict_en(s: dict) -> None:
-    """原地将单条会话投影字典及子 Agent 的展示文案转为英文（不触碰增量缓存本体）。"""
+
     if not isinstance(s, dict):
         return
     if s.get("title") == "未知会话":
@@ -338,9 +320,8 @@ def _localize_session_dict_en(s: dict) -> None:
     for sub in s.get("subagents") or []:
         _localize_session_dict_en(sub)
 
-
 def _resolve_model_rates(model_name: str, ctx_tokens: int, now: datetime | None = None) -> tuple[float, float, float]:
-    """根据官方公布定价与上下文阶梯返回 (input_per_1M, cache_read_per_1M, output_per_1M) USD。"""
+
     model_lower = (model_name or "").lower()
     ref_now = now or datetime.now()
     if ref_now.tzinfo is not None:
@@ -380,9 +361,7 @@ def _resolve_model_rates(model_name: str, ctx_tokens: int, now: datetime | None 
             return (2.50, 0.25, 15.00)
         return (1.25, 0.125, 10.00)
 
-    # 其他 Flash 族（如 Gemini 2.5 / 3 Flash）默认现行基准
     return (0.30, 0.03, 2.50)
-
 
 def calculate_step_cost(
     model_name: str,
@@ -391,36 +370,21 @@ def calculate_step_cost(
     out_tokens: int,
     now: datetime | None = None,
 ) -> float:
-    """
-    根据各供应商官方定价标准精确计算单步实际消费账单 (USD)
-    参考:
-    - Google AI Studio / Vertex AI Pricing (https://ai.google.dev/pricing):
-      * Gemini 4 Hydrogen: 全程 1M 平价 Input $1.50/1M, Cache Read $0.075/1M (5%), Output $7.50/1M
-      * Gemini 4 Argon / Carbon: 2026-12-01 前首发 $2.00 / $0.10 / $10.00; 之后 $4.00 / $0.20 / $20.00
-      * Gemini 3.8 Flash: 2027-01-01 前优惠 $0.75 / $0.075 / $3.75; 之后 $1.50 / $0.15 / $7.50
-      * Gemini Pro: <=200k $1.25 / $0.125 / $10.00; >200k $2.50 / $0.25 / $15.00
-      * 其他 Flash 默认: $0.30 / $0.03 / $2.50
-    - Anthropic Claude API Pricing (https://claude.com/pricing):
-      * Claude Sonnet 5.5: $2.00 / $0.10 / $10.00; Claude Opus 5.5: $4.00 / $0.20 / $20.00
-      * Claude Sonnet 4.6: $3.00 / $0.30 / $15.00; Claude Opus 4.6: $5.00 / $0.50 / $25.00
-    - GPT-OSS 120B (Vertex AI): $0.09 / $0.009 / $0.36
-    """
+
     ctx_tokens = in_tokens + cache_tokens
     price_in, price_cache, price_out = _resolve_model_rates(model_name, ctx_tokens, now=now)
     return (in_tokens * price_in + cache_tokens * price_cache + out_tokens * price_out) / 1_000_000.0
 
-
 def fmt_cost(cost_usd: float) -> str:
-    """美金账单格式化"""
+
     if cost_usd <= 0:
         return "$0.00"
     if cost_usd < 0.01:
         return f"${cost_usd:.3f}"
     return f"${cost_usd:.2f}"
 
-
 def fmt_hms_units(seconds: float) -> str:
-    """紧凑单位格式化 (如 1h2m3s, 14m22s, 28s)，彻底告别冒号视觉疲劳"""
+
     if seconds <= 0:
         return "0s"
     s = int(seconds)
@@ -433,7 +397,6 @@ def fmt_hms_units(seconds: float) -> str:
         return f"{m}m{sec}s"
     return f"{sec}s"
 
-
 def parse_iso_dt(s: str) -> datetime:
     if not s:
         return datetime.now(timezone.utc)
@@ -443,13 +406,12 @@ def parse_iso_dt(s: str) -> datetime:
     except Exception:
         return datetime.now(timezone.utc)
 
-
 def _query_session_model_from_db(db_path: str) -> str:
-    """实际读取单个会话 SQLite gen_metadata 表提取底层端点模型标识。"""
+
     try:
         conn = connect_sqlite_ro(db_path)
         cur = conn.cursor()
-        # 优先读取较小的元数据记录（过滤掉包含整段 prompt 的大包，直取后端返回的 RPC Serving Metadata）
+
         cur.execute("SELECT data FROM gen_metadata WHERE length(data) < 25000 ORDER BY idx DESC LIMIT 8")
         candidates = []
         for (data,) in cur.fetchall():
@@ -462,7 +424,6 @@ def _query_session_model_from_db(db_path: str) -> str:
                     candidates.append(s)
         conn.close()
 
-        # 优先匹配真正的后端实际端点标识 (如 gemini-3.8-flash-n 或 -tiered 等真实服务标识，排除前端配置的 -medium/-low/-high)
         for c in candidates:
             if c.endswith("-n") or "-tiered" in c:
                 return c
@@ -475,17 +436,13 @@ def _query_session_model_from_db(db_path: str) -> str:
         pass
     return "-"
 
-
 def get_session_model(
     uuid: str,
     conversations_dir: str | None = None,
     _inspect_cache: dict | None = None,
     _cache_dirty: list[bool] | None = None,
 ) -> str:
-    """
-    从会话私有数据库的 gen_metadata 表中提取实际后端返回并记录的底层端点模型标识
-    (提取真正的实际端点如 gemini-3.8-flash-n，而非用户前端选择的 gemini-3.8-flash-medium)
-    """
+
     conv_dir = conversations_dir or CONVERSATIONS_DIR
     db_path = os.path.abspath(os.path.join(conv_dir, f"{uuid}.db"))
     fp = _db_fingerprint(db_path)
@@ -517,9 +474,8 @@ def get_session_model(
         _save_inspect_cache(resolved_path, cache)
     return model
 
-
 def extract_recent_steps(parsed_steps: list, limit: int = 12) -> list:
-    """提取最近 N 步交互时序流水（供单会话详情与 GUI 展开钻取使用）"""
+
     history = []
     for i in range(max(0, len(parsed_steps) - limit), len(parsed_steps)):
         st = parsed_steps[i]
@@ -562,9 +518,8 @@ def extract_recent_steps(parsed_steps: list, limit: int = 12) -> list:
         })
     return history
 
-
 def _read_subagent_descriptors(brain_dir: str, parent_uuid: str) -> dict[str, dict]:
-    """读取父会话 .system_generated/subagents/*.json，补充子 Agent 的可读角色名与类型。"""
+
     sub_dir = os.path.join(brain_dir, parent_uuid, ".system_generated", "subagents")
     descriptors: dict[str, dict] = {}
     if not os.path.isdir(sub_dir):
@@ -610,17 +565,15 @@ def _read_subagent_descriptors(brain_dir: str, parent_uuid: str) -> dict[str, di
         _DESCRIPTOR_MEM_CACHE[sub_dir] = (fp, dict(descriptors))
     return descriptors
 
-
 def _get_summary_columns(conn: sqlite3.Connection) -> set[str]:
-    """探测 conversation_summaries 表可用列，兼容精简测试库与旧版本库。"""
+
     try:
         return {r[1] for r in conn.execute("PRAGMA table_info(conversation_summaries)").fetchall()}
     except Exception:
         return set()
 
-
 def _resolve_root_parent(uuid: str, parent_map: dict[str, str]) -> str:
-    """沿 parent_conversation_id 向上追溯根会话 UUID（带防环保护）。"""
+
     curr = uuid
     visited = {curr}
     while True:
@@ -631,13 +584,12 @@ def _resolve_root_parent(uuid: str, parent_map: dict[str, str]) -> str:
         curr = pid
     return curr
 
-
 def _parse_session_transcript_static(
     target_path: str,
     session_model: str,
     now_dt: datetime | None = None,
 ) -> dict:
-    """解析单个会话 transcript.jsonl 的全部纯静态内容与原始最后步时间戳（严禁写入任何依赖 now 的动态耗时或健康状态）。"""
+
     all_steps = []
     try:
         with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -667,7 +619,6 @@ def _parse_session_transcript_static(
     tot_output_consumed = 0
     recent_gen_samples: list[tuple[int, float]] = []
 
-    # 预先单调递增校准时间戳：防止排队消息时间戳早于前置事件导致后续时差暴增
     step_times = []
     last_dt = None
     for s in all_steps:
@@ -698,7 +649,6 @@ def _parse_session_transcript_static(
         t2 = step_times[i]
         step_gap = max(0.0, (t2 - t1).total_seconds())
 
-        # 排除空闲待命与等待外部事件时间：上一轮助手最终回答待命（无未决工具调用）或报错后等待用户/系统恢复
         is_idle_wait = (
             (prev_s.get("type") == "PLANNER_RESPONSE" and not prev_s.get("tool_calls"))
             or (prev_s.get("type") == "ERROR_MESSAGE" and curr_s.get("type") in ("USER_INPUT", "SYSTEM_MESSAGE"))
@@ -713,11 +663,10 @@ def _parse_session_transcript_static(
             and 0.05 <= step_gap <= 180.0
         ):
             step_out = int(curr_s.get("output_tokens") or 0)
-            # 过滤 1 秒整秒落盘抖动或排队批量写入造成的物理不可能尖峰（>500 t/s）
+
             if (step_out / step_gap) <= 500.0:
                 recent_gen_samples.append((step_out, step_gap))
 
-        # 统计本地工具执行
         if curr_s.get("type") == "GENERIC" and curr_s.get("content"):
             c = curr_s.get("content")
             m1 = re.search(r"Created At: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2})", c)
@@ -730,13 +679,11 @@ def _parse_session_transcript_static(
                 except Exception:
                     pass
 
-        # 统计异常排队重试
         if curr_s.get("type") == "ERROR_MESSAGE":
             tot_err += step_gap
 
     tot_remote = max(0.0, tot_active - tot_local - tot_err)
 
-    # 优先用最近 5 次正常生成步计算当前 Token 生成速率 (TPS)，避免被历史报错/长等待摊薄失真
     if recent_gen_samples:
         tail_samples = recent_gen_samples[-5:]
         sample_out = sum(x[0] for x in tail_samples)
@@ -747,7 +694,6 @@ def _parse_session_transcript_static(
     else:
         tps = 0.0
 
-    # 构造人性化全轮次分布摘要 (严格方案 A: 仅保留 本地 与 云端 两个绝对物理确凿维度)
     local_str = format_duration(tot_local)
     remote_str = format_duration(tot_remote)
     active_str = format_duration(tot_active)
@@ -760,7 +706,7 @@ def _parse_session_transcript_static(
 
     recent_error = None
     error_code = None
-    # 仅在最近一次正常模型输出之后仍未恢复时，才展示基础设施故障 (503 / EOF / 429)
+
     for step in reversed(all_steps[-10:]):
         if step.get("type") == "PLANNER_RESPONSE" and (step.get("output_tokens") or 0) > 0:
             break
@@ -869,9 +815,8 @@ def _parse_session_transcript_static(
         "history_steps": extract_recent_steps(all_steps, limit=12),
     }
 
-
 def _apply_dynamic_session_fields(res: dict, static_data: dict, brief: bool, now_utc: datetime) -> None:
-    """结合当前 now_utc 与最新 DB 运行态，在缓存命中后实时重算所有动态字段与健康灯。"""
+
     for k in (
         "interactions",
         "input_tokens",
@@ -908,7 +853,6 @@ def _apply_dynamic_session_fields(res: dict, static_data: dict, brief: bool, now
     else:
         res["current_stall"] = 0.0
 
-    # 判定健康度与体感标签
     if res["current_phase"] == "待命 (已输出回复)" and not res["is_running"]:
         res["health"] = "⏸️"
         res["health_code"] = "idle"
@@ -947,7 +891,6 @@ def _apply_dynamic_session_fields(res: dict, static_data: dict, brief: bool, now
     if not brief:
         res["history_steps"] = [dict(st) for st in (static_data.get("history_steps") or [])]
 
-
 def inspect_session(
     uuid: str,
     brief: bool = True,
@@ -962,7 +905,7 @@ def inspect_session(
     _preloaded_summary: tuple | None = None,
     _preloaded_descriptors: dict[str, dict] | None = None,
 ) -> dict:
-    """毫秒级逆向探测单会话状态与性能指标"""
+
     active_db_path = db_path or DB_PATH
     active_brain_dir = brain_dir or BRAIN_DIR
     active_conv_dir = conversations_dir or CONVERSATIONS_DIR
@@ -1011,7 +954,7 @@ def inspect_session(
         "subagent_count": 0,
         "active_subagent_count": 0,
         "active_subagent_tps": 0.0,
-        # 全轮次累计时间分布字段
+
         "total_active_sec": 0.0,
         "total_local_sec": 0.0,
         "total_remote_sec": 0.0,
@@ -1030,7 +973,7 @@ def inspect_session(
         res["parent_conversation_id"] = str(parent_v or "").strip()
         res["agent_name"] = str(agent_v or "").strip()
     elif os.path.exists(active_db_path):
-        # 尝试从 DB 补全标题、运行状态与父子归属关系
+
         try:
             conn = connect_sqlite_ro(active_db_path)
             cols = _get_summary_columns(conn)
@@ -1133,16 +1076,14 @@ def inspect_session(
     _apply_dynamic_session_fields(res, static_data, brief=brief, now_utc=now_utc)
     return res
 
-
 def _group_sessions_tree(raw_sessions: list[dict], limit: int) -> list[dict]:
-    """将子 Agent 会话收折归属到顶层父会话的 subagents 列表，并计算动态工作数与汇总 t/s。"""
+
     by_id: dict[str, dict] = {s["uuid"]: s for s in raw_sessions}
     parent_map: dict[str, str] = {
         s["uuid"]: str(s.get("parent_conversation_id") or "").strip()
         for s in raw_sessions
     }
 
-    # 重置父节点汇聚槽位，确保 App/CLI 二次合并后不重复累加
     for s in raw_sessions:
         s["subagents"] = []
         s["subagent_count"] = 0
@@ -1161,7 +1102,7 @@ def _group_sessions_tree(raw_sessions: list[dict], limit: int) -> list[dict]:
         if root_id != uid and root_id in by_id:
             children_by_root.setdefault(root_id, []).append(s)
         elif s.get("is_running"):
-            # 若父记录已不可见但子 Agent 仍在活跃，兜底保留以防漏监控
+
             roots.append(s)
 
     for r in roots:
@@ -1190,7 +1131,6 @@ def _group_sessions_tree(raw_sessions: list[dict], limit: int) -> list[dict]:
     )
     return roots[:limit]
 
-
 def _load_conversations_from_dir(
     base_dir: str,
     include_steps: bool = False,
@@ -1201,7 +1141,7 @@ def _load_conversations_from_dir(
     _inspect_cache: dict | None = None,
     _cache_dirty: list[bool] | None = None,
 ) -> list:
-    """从指定数据目录的 SQLite 中加载会话并附带最后修改时间与父子关系"""
+
     db_path = os.path.join(base_dir, "conversation_summaries.db")
     brain_dir = os.path.join(base_dir, "brain")
     conv_dir = os.path.join(base_dir, "conversations")
@@ -1221,7 +1161,7 @@ def _load_conversations_from_dir(
         agent_expr = "COALESCE(agent_name, '')" if has_agent else "''"
 
         if has_parent:
-            # 1) 先捞满 limit 个顶层主会话，避免子 Agent 挤占主会话列表配额
+
             top_cond = "COALESCE(parent_conversation_id, '') = ''" + (" AND COALESCE(nesting_depth, 0) = 0" if has_depth else "")
             cur.execute(
                 f"""
@@ -1236,7 +1176,6 @@ def _load_conversations_from_dir(
             top_rows = cur.fetchall()
             rows_by_id = {r[0]: r for r in top_rows}
 
-            # 2) 再抓取所有子 Agent（包含正在跑或最近活跃的），若活跃子 Agent 的父会话不在前 limit 内也一并补拉回来
             cur.execute(
                 f"""
                 SELECT conversation_id, title, status, not_fully_idle, last_modified_time, {parent_expr}, {agent_expr}
@@ -1255,7 +1194,6 @@ def _load_conversations_from_dir(
                 if is_child_running and pid and pid not in rows_by_id:
                     missing_active_parents.add(pid)
 
-            # 补齐活跃子 Agent 对应的父/祖先会话
             while missing_active_parents:
                 placeholders = ",".join("?" for _ in missing_active_parents)
                 cur.execute(
@@ -1290,7 +1228,6 @@ def _load_conversations_from_dir(
     except Exception:
         return []
 
-    # 预先缓存各父会话的 .system_generated/subagents/*.json 描述，避免重复扫盘
     descriptor_cache: dict[str, dict[str, dict]] = {}
     root_ids = {r[0] for r in rows if not str(r[5] or "").strip()}
     for rid in root_ids:
@@ -1310,7 +1247,7 @@ def _load_conversations_from_dir(
     for r in rows:
         cid, title, status, idle_flag, mod_time, parent_id, agent_name = r
         parent_id_clean = str(parent_id or "").strip()
-        # 兜底：若旧 DB 行缺 parent_conversation_id，尝试从已扫到的父会话 subagents/*.json 反查
+
         if not parent_id_clean:
             for cand_root, descs in descriptor_cache.items():
                 if cid in descs:
@@ -1364,15 +1301,13 @@ def _load_conversations_from_dir(
         return sessions
     return _group_sessions_tree(sessions, limit=limit)
 
-
 def _strip_internal_time_keys(sessions: list[dict]) -> None:
-    """递归移除输出前的内部排序时间戳字段。"""
+
     for s in sessions:
         s.pop("_last_modified_time", None)
         s.pop("_effective_mod_time", None)
         if s.get("subagents"):
             _strip_internal_time_keys(s["subagents"])
-
 
 def load_conversations(
     include_steps: bool = False,
@@ -1381,7 +1316,7 @@ def load_conversations(
     include_cli: bool = True,
     now_dt: datetime | None = None,
 ) -> list:
-    """从 SQLite 中加载所有运行中及最近活跃的顶层会话列表（默认合并 App 与 CLI 并折叠子 Agent）"""
+
     base_dir = os.path.expanduser(data_dir) if data_dir else DEFAULT_GEMINI_DIR
     is_cli_only = "antigravity-cli" in os.path.basename(base_dir)
     primary_type = "cli" if is_cli_only else "app"
@@ -1394,7 +1329,6 @@ def load_conversations(
         cache_obj, resolved_cache_path, needs_rebuild = _get_inspect_cache()
         dirty[0] = needs_rebuild
 
-    # 若扫描默认主目录且开启 CLI 合并，先拿全量原始列表并去重后再执行父子收折与 Limit 裁剪
     cli_dir_norm = os.path.normpath(DEFAULT_CLI_DIR)
     base_dir_norm = os.path.normpath(base_dir)
     if include_cli and not is_cli_only and base_dir_norm == os.path.normpath(DEFAULT_GEMINI_DIR) and os.path.exists(cli_dir_norm):
@@ -1422,7 +1356,7 @@ def load_conversations(
         for s in raw_app + raw_cli:
             uid = s["uuid"]
             prev = by_uuid.get(uid)
-            # 当 App 与 CLI DB 同时存在同步元数据行时，优先保留真实存在日志文件的那一方
+
             if prev is None or (s.get("exists") and not prev.get("exists")):
                 by_uuid[uid] = s
         sessions = _group_sessions_tree(list(by_uuid.values()), limit=limit)
@@ -1442,7 +1376,6 @@ def load_conversations(
 
     _strip_internal_time_keys(sessions)
     return sessions
-
 
 _MODEL_BYTES_RE = re.compile(rb"(gemini-[\w\.\-]+|claude-[\w\.\-]+|gpt-[\w\.\-]+|[\w\.\-]*(?:argon|carbon|neon)[\w\.\-]*)")
 _TRAILING_EFFORT_SUFFIX_RE = re.compile(r"(?:-tiered|-xhigh|-medium|-high|-low|-fast|-trial|-n|-q)+$")
@@ -1467,18 +1400,16 @@ _MODEL_DISPLAY_NAMES = {
     "unknown": "Other / Unknown",
 }
 
-
 def normalize_model_key(raw_model: str) -> str:
-    """规范化模型标识：剥离端点调度与思考深度后缀以便同族模型聚合统计。"""
+
     cleaned = (raw_model or "").strip().lower()
     if not cleaned or cleaned == "-":
         return "unknown"
     stripped = _TRAILING_EFFORT_SUFFIX_RE.sub("", cleaned)
     return stripped or cleaned
 
-
 def format_model_display_name(model_key: str) -> str:
-    """将规范化模型标识转换为适合图表与列表展示的可读名称。"""
+
     key = (model_key or "").strip().lower()
     if not key or key == "unknown":
         return "Other / Unknown"
@@ -1489,7 +1420,7 @@ def format_model_display_name(model_key: str) -> str:
     i = 0
     while i < len(parts):
         p = parts[i]
-        # 合并 claude 中的 5-5 / 4-6 为 5.5 / 4.6
+
         if p.isdigit() and i + 1 < len(parts) and parts[i + 1].isdigit():
             formatted.append(f"{p}.{parts[i + 1]}")
             i += 2
@@ -1503,9 +1434,8 @@ def format_model_display_name(model_key: str) -> str:
         i += 1
     return " ".join(formatted)
 
-
 def _extract_ordered_gen_models(db_path: str) -> list[str]:
-    """按生成顺序从 conversations/<uuid>.db 读取每步实际响应模型列表。"""
+
     if not db_path or not os.path.exists(db_path):
         return []
     models: list[str] = []
@@ -1530,9 +1460,8 @@ def _extract_ordered_gen_models(db_path: str) -> list[str]:
         return []
     return models
 
-
 def _match_planner_step_models(planner_count: int, gm_models: list[str], fallback_model: str) -> list[str]:
-    """将 gen_metadata 模型序列与 PLANNER_RESPONSE 步骤对齐，仅过滤末尾自动命名用的 flash-low 行。"""
+
     if planner_count <= 0:
         return []
     fb = fallback_model if fallback_model and fallback_model != "-" else "unknown"
@@ -1546,9 +1475,8 @@ def _match_planner_step_models(planner_count: int, gm_models: list[str], fallbac
     n_gm = len(trimmed)
     return [trimmed[min(n_gm - 1, int(i * n_gm / planner_count))] for i in range(planner_count)]
 
-
 def _merge_stat_bucket(target: dict[str, list], key: str, cost: float, inp: int, cache: int, out: int, calls: int) -> None:
-    """累加统计桶：[cost, input_tokens, cache_tokens, output_tokens, calls]。"""
+
     cur = target.get(key)
     if cur is None:
         target[key] = [cost, inp, cache, out, calls]
@@ -1559,9 +1487,8 @@ def _merge_stat_bucket(target: dict[str, list], key: str, cost: float, inp: int,
         cur[3] += out
         cur[4] += calls
 
-
 def _parse_transcript_usage_entry(tf_path: str, db_path: str) -> dict:
-    """解析单个会话日志的逐日/逐小时分模型用量，返回可缓存的紧致摘要。"""
+
     planner_steps = []
     try:
         with open(tf_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1611,17 +1538,15 @@ def _parse_transcript_usage_entry(tf_path: str, db_path: str) -> dict:
 
     return {"days": days_map, "hours": hours_map}
 
-
 def _resolve_usage_cache_path(cache_path: object = _UNSET) -> str | None:
-    """解析用量缓存文件路径（优先使用显式参数，其次环境变量 AGYHUB_USAGE_CACHE_PATH）。"""
+
     if cache_path is not _UNSET:
         return cache_path
     env_path = os.environ.get("AGYHUB_USAGE_CACHE_PATH", "").strip()
     return os.path.expanduser(env_path) if env_path else DEFAULT_USAGE_CACHE_PATH
 
-
 def _load_usage_cache(cache_path: str | None) -> dict:
-    """加载增量用量解析缓存；命中进程内签名缓存时零磁盘读取，损坏则安全返回空缓存。"""
+
     if not cache_path:
         return {"version": 4, "entries": {}}
     disk_sig = _file_stat_sig(cache_path)
@@ -1642,9 +1567,8 @@ def _load_usage_cache(cache_path: str | None) -> dict:
         pass
     return {"version": 4, "entries": {}}
 
-
 def _save_usage_cache(cache_path: str | None, cache: dict) -> None:
-    """原子落盘增量用量解析缓存并同步更新进程内缓存签名。"""
+
     if not cache_path:
         return
     if _atomic_write_json(cache_path, cache) and not _is_cache_disabled():
@@ -1653,9 +1577,8 @@ def _save_usage_cache(cache_path: str | None, cache: dict) -> None:
             "data": cache,
         }
 
-
 def _discover_transcript_targets(base_dir: str, include_cli: bool) -> list[tuple[str, str, str]]:
-    """发现 App（及可选 CLI）数据目录下的所有会话日志与对应 DB 路径并按 UUID 去重。"""
+
     dirs_to_scan = [base_dir]
     cli_dir_norm = os.path.normpath(DEFAULT_CLI_DIR)
     base_dir_norm = os.path.normpath(base_dir)
@@ -1699,9 +1622,8 @@ def _discover_transcript_targets(base_dir: str, include_cli: bool) -> list[tuple
 
     return [(uid, tf_path, db_path) for uid, (tf_path, db_path, _) in by_uuid.items()]
 
-
 def _build_model_list(model_map: dict[str, list]) -> list[dict]:
-    """将 {model_key: [cost, in, cache, out, calls]} 转换为按成本降序的列表。"""
+
     items = []
     for mkey, vals in model_map.items():
         cost, inp, cache, out, calls = vals
@@ -1721,14 +1643,13 @@ def _build_model_list(model_map: dict[str, list]) -> list[dict]:
     items.sort(key=lambda x: (-x["cost_usd"], -x["total_tokens"], x["model"]))
     return items
 
-
 def _backfill_from_archive(
     archive_path: str | None,
     date_strings: list[str],
     daily_model_map: dict[str, dict[str, list]],
     earliest_local_date: str | None,
 ) -> None:
-    """仅针对早于本地 transcript 覆盖起始日且当天无本地记录的日期，从历史归档补齐。"""
+
     if not archive_path or not os.path.exists(archive_path):
         return
     try:
@@ -1775,9 +1696,8 @@ def _backfill_from_archive(
                 inp = int(agy.get("totalTokens") or 0)
             _merge_stat_bucket(target, "unknown", cost, inp, cache, out, calls)
 
-
 def _load_conversation_meta_map(base_dir: str, include_cli: bool) -> dict[str, dict]:
-    """只读读取 App（及可选 CLI）conversation_summaries.db 中的标题、父会话与来源端映射。"""
+
     dirs_to_scan = [(base_dir, "cli" if "antigravity-cli" in os.path.basename(os.path.normpath(base_dir)) else "app")]
     cli_dir_norm = os.path.normpath(DEFAULT_CLI_DIR)
     base_dir_norm = os.path.normpath(base_dir)
@@ -1822,9 +1742,8 @@ def _load_conversation_meta_map(base_dir: str, include_cli: bool) -> dict[str, d
             continue
     return meta
 
-
 def _build_session_list(session_map: dict[str, dict], meta_map: dict[str, dict], limit: int = 50) -> list[dict]:
-    """将单日根会话统计字典整理为按费用降序的会话列表。"""
+
     items = []
     for root_uid, acc in session_map.items():
         tot = acc["inp"] + acc["cache"] + acc["out"]
@@ -1851,7 +1770,6 @@ def _build_session_list(session_map: dict[str, dict], meta_map: dict[str, dict],
     items.sort(key=lambda x: (-x["cost_usd"], -x["total_tokens"], x["uuid"]))
     return items[:limit]
 
-
 def build_usage_history_payload(
     days: int = 30,
     data_dir: str | None = None,
@@ -1861,7 +1779,7 @@ def build_usage_history_payload(
     now_dt: datetime | None = None,
     include_sessions: bool = True,
 ) -> dict:
-    """增量扫描本地会话日志并按日（含今日 24 小时、分模型及分对话明细）聚合近 N 天用量统计。"""
+
     clamped_days = max(1, min(int(days or 30), 365))
     local_now = now_dt.astimezone() if now_dt is not None else datetime.now().astimezone()
     today_date = local_now.date()
@@ -1918,7 +1836,7 @@ def build_usage_history_payload(
         ):
             parsed = cached.get("data") or {}
         else:
-            # 既未命中缓存、修改时间也早于统计窗口的陈旧归档文件可直接跳过扫描
+
             if cached is None and tf_st.st_mtime < cutoff_epoch:
                 continue
             parsed = _parse_transcript_usage_entry(tf_path, db_path)
@@ -2035,7 +1953,6 @@ def build_usage_history_payload(
         "today_hourly": hourly_list,
     }
 
-
 def get_today_token_stats(
     sessions: list | None = None,
     anchor_path: str | None = None,
@@ -2044,10 +1961,7 @@ def get_today_token_stats(
     cache_path: object = _UNSET,
     now_dt: datetime | None = None,
 ) -> dict:
-    """
-    获取今日全量 Token 消耗与缓存命中宏观大盘数据。
-    优先使用增量本地日志逐日统计保证与历史趋势面板 100% 口径一致，绝不再误加多日历史会话总和。
-    """
+
     target_anchor = anchor_path or COLLECTOR_ANCHOR_PATH
     stats = {
         "total_tokens": 0,
@@ -2096,7 +2010,7 @@ def get_today_token_stats(
         try:
             with open(target_anchor, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # 仅当外部锚点日期严格等于今日时采信，严禁回退历史会话全量累计值
+
             date_key = data.get("dateKey", "")
             today_node = data.get("today", {})
             if date_key == today_str and today_node:
@@ -2120,14 +2034,13 @@ def get_today_token_stats(
 
     return stats
 
-
 def count_recent_503_errors(
     data_dir: str | None = None,
     include_cli: bool = True,
     window_seconds: int = 3600,
     now_dt: datetime | None = None,
 ) -> dict:
-    """快速统计最近 N 秒（默认 1 小时）内本地 App/CLI 会话日志中出现的 503 报错次数。"""
+
     local_now = now_dt.astimezone() if now_dt is not None else datetime.now().astimezone()
     win_sec = max(60, int(window_seconds))
     cutoff_dt = local_now - timedelta(seconds=win_sec)
@@ -2173,9 +2086,8 @@ def count_recent_503_errors(
         "checked_at": local_now.isoformat(timespec="seconds"),
     }
 
-
 def _find_session_transcript_file(uuid: str, base_dir: str) -> str | None:
-    """定位指定会话的 transcript 文件，优先使用未截断的 transcript_full.jsonl。"""
+
     candidate_roots = [os.path.join(base_dir, "brain", uuid)]
     if os.path.normpath(base_dir) == os.path.normpath(DEFAULT_GEMINI_DIR):
         candidate_roots.append(os.path.join(DEFAULT_CLI_DIR, "brain", uuid))
@@ -2187,9 +2099,8 @@ def _find_session_transcript_file(uuid: str, base_dir: str) -> str | None:
                 return path
     return None
 
-
 def _classify_command_source(cmd: str) -> str:
-    """按命令语义将终端命令输出归入测试/E2E、搜索/Git、构建或其他类别。"""
+
     low = (cmd or "").lower()
     if any(k in low for k in ("playwright", "e2e", "pytest", "vitest", "jest", "npm test", "npm run test", "swiftc", "test_")):
         return "测试/E2E"
@@ -2199,9 +2110,8 @@ def _classify_command_source(cmd: str) -> str:
         return "编译/构建"
     return "其他命令"
 
-
 def _classify_phase_for_planner(tool_calls: list) -> str:
-    """根据本轮工具调用将 PLANNER_RESPONSE 归类为五大工作阶段之一。"""
+
     if not tool_calls:
         return "总结/文字输出"
     names = [str(tc.get("name") or "") for tc in tool_calls if isinstance(tc, dict)]
@@ -2219,9 +2129,8 @@ def _classify_phase_for_planner(tool_calls: list) -> str:
         return "调度/看板协作"
     return "调研/检索"
 
-
 def _format_miss_time(ts_str: str) -> str:
-    """将 ISO 时间戳格式化为本地 HH:MM:SS。"""
+
     if not ts_str:
         return "--:--:--"
     try:
@@ -2229,9 +2138,8 @@ def _format_miss_time(ts_str: str) -> str:
     except Exception:
         return "--:--:--"
 
-
 def _format_duration_compact(sec: float) -> str:
-    """将秒数格式化为可读的紧凑时长（如 6h14m / 6m41s / 35s）。"""
+
     total = max(0, int(round(sec)))
     if total >= 3600:
         h = total // 3600
@@ -2242,7 +2150,6 @@ def _format_duration_compact(sec: float) -> str:
         s = total % 60
         return f"{m}m{s}s" if s > 0 else f"{m}m"
     return f"{total}s"
-
 
 _DIAG_PHASE_EN = {
     "调研/检索": "Research / Search",
@@ -2275,7 +2182,6 @@ _DIAG_CAUSE_EN = {
     "停顿/等待续聊过期": "Idle TTL expiration",
 }
 
-
 def _build_diagnostic_recommendations(
     sources: list[dict],
     cache_miss: dict,
@@ -2283,7 +2189,7 @@ def _build_diagnostic_recommendations(
     bloat_hints: list[str] | None = None,
     lang: str = "zh",
 ) -> list[str]:
-    """根据实测瓶颈生成极简、直接可落地的短句建议（最多 2 条，原生支持 zh/en）。"""
+
     is_en = _normalize_lang(lang) == "en"
     recs: list[str] = []
     source_map = {s["name"]: s for s in sources}
@@ -2346,9 +2252,8 @@ def _build_diagnostic_recommendations(
             )
     return recs[:2]
 
-
 def _collect_descendant_subagents(db_path: str, root_uuid: str) -> list[tuple[str, str]]:
-    """递归获取指定会话下的全部后代子 Agent (uuid, display_label)。"""
+
     if not os.path.isfile(db_path):
         return []
     try:
@@ -2379,14 +2284,13 @@ def _collect_descendant_subagents(db_path: str, root_uuid: str) -> list[tuple[st
         queue.extend(children_map.get(cid, []))
     return descendants
 
-
 def _analyze_single_session_raw(
     uuid: str,
     base_dir: str,
     agent_label: str = "主会话",
     lang: str = "zh",
 ) -> dict:
-    """解析单个会话的原始阶段、上下文来源、缓存失效与文件读取统计。"""
+
     is_en = _normalize_lang(lang) == "en"
     db_path = os.path.join(base_dir, "conversation_summaries.db")
     conversations_dir = os.path.join(base_dir, "conversations")
@@ -2432,7 +2336,6 @@ def _analyze_single_session_raw(
     step_models = _match_planner_step_models(len(planner_indices), gm_models, fallback_model)
     planner_model_map = {idx: step_models[pos] for pos, idx in enumerate(planner_indices)}
 
-    # 跟踪后台任务 ID -> 原始 CommandLine，以便归因后续 SYSTEM_MESSAGE 回传
     bg_task_commands: dict[str, str] = {}
     last_tool_calls: list[dict] = []
 
@@ -2544,8 +2447,6 @@ def _analyze_single_session_raw(
             pb["output_tokens"] += out_t
             pb["cost_usd"] += step_cost
 
-            # 显著缓存失效判定：上一轮已存在 >= 50k 缓存上下文，且本轮 cache_read_tokens 丢失超过 50%
-            # （若本轮完整命中了 prev_ctx，只是刚读入大量新文件导致 input_tokens 变大，属于正常新增输入，绝不误报）
             if prev_ctx is not None and prev_ctx >= 50_000 and cache_t < (prev_ctx * 0.50):
                 r_in, r_cache, _ = _resolve_model_rates(model_name, ctx_t, now=step_dt)
                 had_err = last_error_step > last_planner_step
@@ -2670,7 +2571,7 @@ def _analyze_single_session_raw(
 
         if stype == "GENERIC":
             chars = len(content)
-            # 绑定后台任务启动返回的 task id
+
             m_tid = task_id_re.search(content)
             if m_tid:
                 tid = m_tid.group(1)
@@ -2830,14 +2731,13 @@ def _analyze_single_session_raw(
         "cmd_char_totals": cmd_char_totals,
     }
 
-
 def analyze_session_diagnostics(
     uuid: str,
     data_dir: str | None = None,
     include_subagents: bool = True,
     lang: str = "zh",
 ) -> dict:
-    """对会话（及其后代子 Agent）执行纯本地确定性上下文、工作阶段与缓存失效聚合诊断（原生支持 zh/en）。"""
+
     is_en = _normalize_lang(lang) == "en"
     base_dir = os.path.expanduser(data_dir) if data_dir else DEFAULT_GEMINI_DIR
     db_path = os.path.join(base_dir, "conversation_summaries.db")
@@ -3043,23 +2943,12 @@ def analyze_session_diagnostics(
         "recommendations": recommendations,
     }
 
-
 def _is_session_actively_working(session: dict) -> bool:
-    """判定会话或其旗下任意子 Agent 是否正在工作中。"""
+
     return bool(session.get("is_running") or (session.get("active_subagent_count", 0) or 0) > 0)
 
-
 def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -> dict:
-    """
-    构建 macOS 右上角状态栏实时微缩文案 (Menu Bar Summary)
-    例如:
-    - 正常生成中: "🟢 42t/s | $0.45"
-    - 503 算力不足: "🔴 503 | 排队 45s"
-    - 429 频控限流: "⚠️ 429 | 排队 32s"
-    - 严重排队 (>90s): "🔴 排队 1m35s | $0.45"
-    - 稍慢排队 (30-90s): "🟡 排队 42s | $0.45"
-    - 空闲待命: "🟢 待命 | $0.45"
-    """
+
     is_en = _normalize_lang(lang) == "en"
     idle_label = "Idle" if is_en else "待命"
     queue_label = "Queue" if is_en else "排队"
@@ -3070,7 +2959,7 @@ def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -
     running_sessions = [s for s in sessions if _is_session_actively_working(s) and s.get("exists")]
 
     if not running_sessions:
-        # 若无运行中会话，展示最近一个有效会话的速率或待命状态
+
         existing = [s for s in sessions if s.get("exists")]
         latest_tps = existing[0].get("tps", 0.0) if existing else 0.0
         if latest_tps > 0:
@@ -3087,7 +2976,6 @@ def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -
             "active_count": 0,
         }
 
-    # 优先挑选处于告警/排队状态的活跃会话，否则取第一个活跃会话
     alert_sessions = [
         s for s in running_sessions
         if s.get("error_code") in ("503", "429", "EOF") or s.get("current_stall", 0) >= 30
@@ -3146,7 +3034,6 @@ def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -
         "active_count": len(running_sessions),
     }
 
-
 def build_json_payload(
     target_uuid: str = "",
     data_dir: str | None = None,
@@ -3154,7 +3041,7 @@ def build_json_payload(
     now_dt: datetime | None = None,
     lang: str = "zh",
 ) -> dict:
-    """生成供 AGY-Hub GUI 直接消费的完整 JSON 载荷（支持 zh/en 输出）。"""
+
     norm_lang = _normalize_lang(lang)
     base_dir = os.path.expanduser(data_dir) if data_dir else DEFAULT_GEMINI_DIR
     sessions = load_conversations(include_steps=True, data_dir=base_dir, limit=15, now_dt=now_dt)
@@ -3217,13 +3104,11 @@ def build_json_payload(
         "detail_session": detail_session,
     }
 
-
 def compute_snapshot_etag(payload: dict) -> str:
-    """基于快照稳定业务内容（剔除 wall-clock timestamp）计算确定性 ETag。"""
+
     stable = {k: v for k, v in payload.items() if k != "timestamp"}
     encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
-
 
 def handle_daemon_request(
     req: dict,
@@ -3232,7 +3117,7 @@ def handle_daemon_request(
     default_anchor_path: str | None = None,
     default_days: int = 30,
 ) -> dict:
-    """分发并执行单条 NDJSON Daemon 命令，严格保证单条异常不影响常驻循环。"""
+
     req_id = req.get("id")
     cmd = str(req.get("cmd") or "").strip()
     req_lang = _normalize_lang(req.get("lang"))
@@ -3273,14 +3158,13 @@ def handle_daemon_request(
 
     return {"id": req_id, "ok": False, "error": f"unknown cmd: {cmd}"}
 
-
 def run_daemon(
     default_target: str = "",
     default_data_dir: str | None = None,
     default_anchor_path: str | None = None,
     default_days: int = 30,
 ) -> int:
-    """常驻 NDJSON Daemon 主循环：逐行读取 stdin 命令，输出单行 JSON 并立即 flush，EOF 干净退出。"""
+
     while True:
         try:
             raw_line = sys.stdin.readline()
@@ -3316,14 +3200,11 @@ def run_daemon(
             break
     return 0
 
-
-# ===================== Rich 渲染模式 =====================
-
 def render_rich_overview(sessions: list) -> Panel:
     active_count = sum(1 for s in sessions if s["is_running"])
     total_roundtrips = sum(s["interactions"] for s in sessions)
     has_alert = any("🔴" in s["health"] or "⚠️" in s["health"] for s in sessions if s["is_running"])
-    
+
     header_title = Text()
     header_title.append(" ⚡ Antigravity 实时性能看板 (AGY-TOP) ", style="bold white on blue")
     header_title.append(f"  [活跃会话: {active_count} | 累计远端交互: {total_roundtrips} 次]  ", style="bold cyan")
@@ -3345,11 +3226,11 @@ def render_rich_overview(sessions: list) -> Panel:
     for s in sessions:
         if not s["exists"]:
             continue
-            
+
         short_id = s["short_id"]
         title = s["title"]
         rounds = f"{s['interactions']}轮"
-        
+
         ctx = s["context_tokens"]
         tot_tok = s.get("total_tokens_consumed", 0)
         tot_cost = s.get("total_cost_usd", 0.0)
@@ -3379,7 +3260,6 @@ def render_rich_overview(sessions: list) -> Panel:
         else:
             ctx_cell = "-"
 
-        # 1. Token/s 速率：总耗时左边，展现模型生成吞吐速率
         tps = s.get("tps", 0.0)
         if tps > 0:
             tps_val = f"{tps:.0f} t/s" if tps >= 10 else f"{tps:.1f} t/s"
@@ -3394,7 +3274,6 @@ def render_rich_overview(sessions: list) -> Panel:
         else:
             tps_cell = "[dim]-[/dim]"
 
-        # 2. 总耗时 (本地)：形如 1h26m32s (3m43s)，省去云端单列
         tot_act = s.get("total_active_sec", 0.0)
         tot_loc = s.get("total_local_sec", 0.0)
         if tot_act > 0:
@@ -3404,7 +3283,6 @@ def render_rich_overview(sessions: list) -> Panel:
         else:
             total_local_cell = "[dim]-[/dim]"
 
-        # 3. 状态：合并等待时间 + 状态圆点 (如 🟢 23s / 🟡 45s / 🔴 1m35s)，待命显示低调短横 -
         stall = s["current_stall"]
         if s["is_running"]:
             stall_txt = fmt_hms_units(stall)
@@ -3414,8 +3292,7 @@ def render_rich_overview(sessions: list) -> Panel:
                 time_part = f"[bold yellow]{stall_txt}[/bold yellow]"
             else:
                 time_part = f"[green]{stall_txt}[/green]"
-            
-            # 若有明确异常代号（如 503 / 429），以明确代号显示
+
             if s.get("recent_error") and ("503" in s["recent_error"] or "429" in s["recent_error"]):
                 err_code = "503" if "503" in s["recent_error"] else "429"
                 status_cell = f"{s['health']} [bold red]{err_code}[/bold red]"
@@ -3424,7 +3301,6 @@ def render_rich_overview(sessions: list) -> Panel:
         else:
             status_cell = "[dim]-[/dim]"
 
-        # 4. 端点模型：排在最后，纯单行平铺，左对齐
         model_name = s.get("model", "-")
         if s["is_running"]:
             model_cell = f"[bold cyan]{model_name}[/bold cyan]"
@@ -3468,13 +3344,11 @@ def render_rich_overview(sessions: list) -> Panel:
 
     return Panel(body, title=header_title, subtitle="[dim]按 Ctrl+C 退出 | 提示: 敲 agy-top <uuid> 查看具体单会话详细时序[/dim]", border_style="blue")
 
-
 def render_rich_detail(s: dict) -> Panel:
     title_text = Text()
     title_text.append(f" 🔍 会话性能时序诊断: {s['uuid']} ", style="bold white on cyan")
     title_text.append(f" ({s['title']})", style="bold yellow")
 
-    # 基础概览
     ctx = s["context_tokens"]
     in_t = s["input_tokens"]
     cache_t = s["cache_tokens"]
@@ -3492,8 +3366,7 @@ def render_rich_detail(s: dict) -> Panel:
     tps_desc = f"{tps:.1f} tokens/s" if tps > 0 else "-"
     lines.append(f"• **Token 生成平均速率 (TPS)**: [bold green]{tps_desc}[/bold green] (输出 Tokens / 云端生成与思考时间)")
     lines.append(f"• **累计消耗与实际账单**: [bold yellow]{fmt_tokens(tot_tok)}[/bold yellow] ({tot_tok:,} tokens [dim]| 缓存命中: {fmt_tokens(tot_c_tok)} · {tot_c_pct:.1f}%[/dim]) | 累计账单: [bold green]{fmt_cost(s.get('total_cost_usd', 0.0))}[/bold green] (输入+输出+缓存加权)")
-    
-    # 增加全轮次物理耗时分布三段拆解
+
     tot_act = s.get("total_active_sec", 0.0)
     tot_loc = s.get("total_local_sec", 0.0)
     tot_rem = s.get("total_remote_sec", 0.0)
@@ -3531,9 +3404,6 @@ def render_rich_detail(s: dict) -> Panel:
     from rich.markdown import Markdown
     return Panel(Group(Markdown("\n".join(lines)), table), title=title_text, border_style="cyan")
 
-
-# ===================== 原生 ANSI 兜底模式 =====================
-
 def render_ansi_overview(sessions: list):
     os.system("clear" if os.name != "nt" else "cls")
     active_count = sum(1 for s in sessions if s["is_running"])
@@ -3541,7 +3411,7 @@ def render_ansi_overview(sessions: list):
 
     print("\033[1;37;44m === Antigravity (AGY) 实时性能看板 (ANSI 模式) === \033[0m")
     print(f"\033[1;36m活跃会话: {active_count} | 累计远端交互: {total_rounds} 次\033[0m")
-    
+
     today_stats = get_today_token_stats(sessions)
     if today_stats.get("has_data") and today_stats.get("total_tokens", 0) > 0:
         tot_str = fmt_tokens(today_stats["total_tokens"])
@@ -3563,7 +3433,7 @@ def render_ansi_overview(sessions: list):
         short_id = s["short_id"]
         title = (s["title"][:22] + "..") if len(s["title"]) > 22 else s["title"]
         rounds = f"{s['interactions']}轮"
-        
+
         ctx = s["context_tokens"]
         tot_tok = s.get("total_tokens_consumed", 0)
         tot_cost = s.get("total_cost_usd", 0.0)
@@ -3596,7 +3466,6 @@ def render_ansi_overview(sessions: list):
         print(f"{short_id:<9} {title:<24} {rounds:<8} {status_str:<10} {tps_str:<9} {ctx_str:<28} {tot_time_str:<18} {model}")
 
     print("\n\033[2m按 Ctrl+C 退出 | 提示: agy-top <uuid> 查看具体会话\033[0m")
-
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity 会话实时性能与排队监控器 (支持 AGY-Hub --json 模式)")
@@ -3649,7 +3518,6 @@ def main():
         print(json.dumps(diag, ensure_ascii=False))
         return
 
-    # JSON Sidecar 模式：直接输出结构化 JSON 到 stdout 并退出（除非未传 --once 且显式要求流式，默认 --json 单次输出供 GUI 轮询）
     if args.json:
         payload = build_json_payload(
             target_uuid=args.target.strip(),
@@ -3660,7 +3528,6 @@ def main():
         print(json.dumps(payload, ensure_ascii=False))
         return
 
-    # 针对 latest 或短 ID 前缀的解析
     target_uuid = args.target.strip()
     if target_uuid.lower() == "latest":
         sessions = load_conversations(data_dir=custom_data_dir)
@@ -3677,7 +3544,6 @@ def main():
 
     is_detail = bool(target_uuid)
 
-    # 若在非 TTY 管道环境中执行，给予更宽的默认宽高以防列被裁切
     term_width = None if sys.stdout.isatty() else 160
     term_height = None if sys.stdout.isatty() else 40
     console = Console(width=term_width, height=term_height) if HAVE_RICH else None
@@ -3704,7 +3570,6 @@ def main():
                 render_ansi_overview(sessions)
         return
 
-    # 动态刷新循环
     try:
         if HAVE_RICH:
             with Live(console=console, screen=True, refresh_per_second=2) as live:
@@ -3741,7 +3606,6 @@ def main():
                 time.sleep(args.interval)
     except KeyboardInterrupt:
         pass
-
 
 if __name__ == "__main__":
     main()

@@ -1,22 +1,6 @@
-//
-//  AppLifecycle.swift
-//  Agyhub (macOS 状态栏多账号隔离切换与实时监控工具)
-//
-//  架构说明：
-//  - macOS 13.0+ 原生 Swift + SwiftUI 状态栏常驻应用 (MenuBarExtra .window 样式)
-//  - 严格遵守防封号安全红线：
-//    1. 零网络请求（无任何 URLSession / Socket 调用，可通过 Little Snitch / Wireshark 验证）
-//    2. 零 OAuth 令牌提取或官方接口轮询
-//    3. 100% 纯本地文件读取（异步调用 agy-monitor.py --json 解析 SQLite 与 JSONL）
-//    4. 账号切换采用官方原生 --user-data-dir 物理目录隔离与 --extensions-dir 插件共享方案
-//
-
-
 import AppKit
 import Combine
 import SwiftUI
-
-// MARK: - 8. 毛玻璃视觉背景包装 (NSVisualEffectView)
 
 struct VisualEffectBlurView: NSViewRepresentable {
     var material: NSVisualEffectView.Material
@@ -36,9 +20,6 @@ struct VisualEffectBlurView: NSViewRepresentable {
     }
 }
 
-// MARK: - 8.1 原生标准 Mac 窗口与生命周期控制 (AGYMainWindow & Lifecycle)
-
-/// 主窗与独立窗的可拖拽尺寸上下限与持久化夹逼策略
 enum WindowSizePolicy {
     static let defaultMainSize = NSSize(width: 464, height: 520)
     static let defaultStandaloneSize = NSSize(width: 476, height: 560)
@@ -77,7 +58,6 @@ enum WindowSizePolicy {
     }
 }
 
-/// 顶部叉号关闭窗口策略：点叉只隐藏对应窗口，绝不终止常驻菜单栏进程
 enum WindowClosePolicy {
     enum Action: Equatable {
         case hideMainWindow
@@ -109,7 +89,6 @@ enum WindowClosePolicy {
     }
 }
 
-/// 可触发窗口边缘缩放的方向位掩码（AppKit 本地坐标，bottom=minY, top=maxY）
 struct WindowResizeEdges: OptionSet, Equatable {
     let rawValue: Int
     static let left = WindowResizeEdges(rawValue: 1 << 0)
@@ -118,13 +97,11 @@ struct WindowResizeEdges: OptionSet, Equatable {
     static let top = WindowResizeEdges(rawValue: 1 << 3)
 }
 
-/// 窗口四周热区与对边锚定缩放策略：扩大圆角内侧与四边命中范围（8pt 边 + 16pt 角），彻底解决 14pt 圆角外透明导致系统箭头极难选中的问题
 enum WindowResizeEdgePolicy {
     static let horizontalEdgeInset: CGFloat = 8.0
     static let verticalEdgeInset: CGFloat = 6.5
     static let cornerExtent: CGFloat = 16.0
 
-    /// 判断给定本地坐标是否落在四周缩放热区内；内部按钮/滚动条/正文区域返回 nil 以完全透传事件
     static func resizeEdge(at point: NSPoint, in bounds: NSRect) -> WindowResizeEdges? {
         guard bounds.width > cornerExtent * 2,
               bounds.height > cornerExtent * 2,
@@ -156,7 +133,6 @@ enum WindowResizeEdgePolicy {
         return edges.isEmpty ? nil : edges
     }
 
-    /// 返回用于 AppKit `addCursorRect` 的 8 个不重叠边缘/角热区矩形
     static func cursorZones(in bounds: NSRect) -> [(NSRect, WindowResizeEdges)] {
         let w = bounds.width
         let h = bounds.height
@@ -173,7 +149,6 @@ enum WindowResizeEdgePolicy {
         ]
     }
 
-    /// 根据命中的边缘或角位返回对应的原生缩放光标（macOS 15+ 使用官方 8 向 `frameResize` 斜向/双向箭头）
     static func cursor(for edges: WindowResizeEdges) -> NSCursor {
         if #available(macOS 15.0, *) {
             switch edges {
@@ -197,7 +172,6 @@ enum WindowResizeEdgePolicy {
         return .arrow
     }
 
-    /// 计算拖拽边缘后的新窗口 Frame：严密锚定对边/对角，夹逼到 minSize/maxSize 时也不会推动窗口整体位移
     static func resizedFrame(
         from startFrame: NSRect,
         edge: WindowResizeEdges,
@@ -229,7 +203,6 @@ enum WindowResizeEdgePolicy {
     }
 }
 
-/// 透明浮于窗口四周与四角的高容错缩放热区视图：非边缘坐标 hitTest 返回 nil，完全不拦截任何按钮、滚动条与面板交互
 final class WindowResizeEdgeView: NSView {
     private var trackingArea: NSTrackingArea?
 
@@ -256,7 +229,7 @@ final class WindowResizeEdgeView: NSView {
         if let existing = trackingArea {
             removeTrackingArea(existing)
         }
-        // 使用 activeAlways 确保即使当前焦点在其他 App，鼠标移到 Agyhub 边框时也能立刻亮出缩放箭头
+
         let area = NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect],
@@ -345,7 +318,6 @@ struct WindowResizeOverlay: NSViewRepresentable {
     func updateNSView(_ nsView: WindowResizeEdgeView, context: Context) {}
 }
 
-/// 右下角极简斜向抓手暗线提示，直观传递可自由拖拽调整大小的状态
 struct ResizeCornerGripView: View {
     var body: some View {
         Canvas { context, size in
@@ -364,7 +336,6 @@ struct ResizeCornerGripView: View {
     }
 }
 
-/// 原生标准应用窗口，具备完整 Key/Main 响应能力、可自由拖拽缩放、系统级阴影与 Cmd+Shift+4+空格截屏拾取能力
 final class AGYMainWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -402,7 +373,7 @@ final class AGYMainWindow: NSWindow {
 
         let hosting = NSHostingController(rootView: rootView)
         window.contentViewController = hosting
-        // 必须在挂载为 contentViewController 之后先清空 sizingOptions 再设 safeAreaRegions，否则任一提前访问都会在默认 sizingOptions 下触发 NSHostingView 初始化并导致 AutoLayout 死循环崩溃
+
         if #available(macOS 13.0, *) {
             hosting.sizingOptions = []
         }
@@ -414,7 +385,6 @@ final class AGYMainWindow: NSWindow {
     }
 }
 
-/// 失焦窗口唤醒保护：后台窗口被点击置前后的极短时间窗内拦截误触切号，防止点窗口查看数据时意外切号
 enum WindowActivationGuard {
     static let activationGraceWindow: TimeInterval = 0.35
     private static var lastFocusClickAt: Date = .distantPast
@@ -429,7 +399,6 @@ enum WindowActivationGuard {
     }
 }
 
-/// 挂载在主面板根层级，确保点击窗口内任意位置即刻激活应用并置前为 Key 窗口
 final class WindowLifecycleView: NSView {
     private var eventMonitor: Any?
 
@@ -472,7 +441,6 @@ struct WindowLifecycleConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: WindowLifecycleView, context: Context) {}
 }
 
-/// 允许按住顶部空白区或标题栏使用原生系统拖动（同时适配状态栏主窗口与独立窗口）
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DraggableNSView {
         DraggableNSView()
@@ -497,10 +465,8 @@ struct WindowDragArea: NSViewRepresentable {
     }
 }
 
-// MARK: - 9. 应用生命周期入口 (状态栏常驻 + 原生 NSWindow 调度)
-
 @MainActor
-/// 动态进程激活策略：有窗口打开时切换为 .regular 恢复完整的 Mac 顶部应用菜单与 Cmd+Tab，全部关闭后切回 .accessory 保持菜单栏常驻
+
 enum WindowActivationPolicy {
     nonisolated static func targetPolicy(hasVisibleWindows: Bool) -> NSApplication.ActivationPolicy {
         hasVisibleWindows ? .regular : .accessory
@@ -526,7 +492,6 @@ final class AGYAppDelegate: NSObject, NSApplicationDelegate {
     nonisolated static func buildMainMenu(target: AnyObject?, language: AppLanguage.Resolved = .zhHans) -> NSMenu {
         let mainMenu = NSMenu()
 
-        // 1. 应用菜单 (Agyhub)
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "Agyhub")
         appMenu.addItem(withTitle: L10n.t(.menuAboutAgyhub, language), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
@@ -540,7 +505,6 @@ final class AGYAppDelegate: NSObject, NSApplicationDelegate {
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // 2. 编辑菜单（确保弹窗输入框等原生支持 Cmd+C / Cmd+V / Cmd+A）
         let editMenuItem = NSMenuItem()
         let editMenu = NSMenu(title: L10n.t(.menuEdit, language))
         editMenu.addItem(withTitle: L10n.t(.menuCut, language), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
@@ -550,7 +514,6 @@ final class AGYAppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
-        // 3. 窗口菜单（确保 Cmd+W / Cmd+M 等原生窗口控制可用）
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: L10n.t(.menuWindow, language))
         windowMenu.addItem(withTitle: L10n.t(.closeWindow, language), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
@@ -635,7 +598,7 @@ final class AGYAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AGYAppDelegate.shared = self
         let activeStore = ensureStore()
-        // 挂载原生系统菜单栏；初始无窗口打开时保持 .accessory 常驻状态栏，开窗时自动升为 .regular
+
         NSApp.mainMenu = Self.buildMainMenu(target: self, language: activeStore.resolvedLanguage)
         NSApp.setActivationPolicy(.accessory)
 

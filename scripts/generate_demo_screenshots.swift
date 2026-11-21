@@ -2,9 +2,6 @@ import SwiftUI
 import AppKit
 import Foundation
 
-// MARK: - Demo Screenshot Generator (100% Fictional Data, Real Native SwiftUI Views)
-
-/// 构建完全隔离且零隐私泄露的演示 AGYHubStore，并渲染真实原生 SwiftUI 界面为 @2x Retina PNG。
 @MainActor
 enum DemoScreenshotRunner {
 
@@ -514,7 +511,6 @@ enum DemoScreenshotRunner {
         defaults.set(true, forKey: "agyhub.cliIndependentMode")
         defaults.set(true, forKey: "agyhub.cliVaultAuthorized")
 
-        // 同时写入 standard，因为 MainDashboardView 里的 @AppStorage 默认读 standard
         UserDefaults.standard.set(accountsCollapsed, forKey: "agyhub.collapse.accounts")
         UserDefaults.standard.set(false, forKey: "agyhub.collapse.sessions")
 
@@ -522,7 +518,7 @@ enum DemoScreenshotRunner {
         try? FileManager.default.createDirectory(atPath: fakeHome, withIntermediateDirectories: true)
 
         let store = AGYHubStore(startMonitoring: false, userDefaults: defaults, homeDir: fakeHome)
-        // 等待 init 中任何异步扫描结束，再注入演示数据，防止覆盖演示状态
+
         for _ in 0..<4 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.03))
         }
@@ -616,7 +612,7 @@ enum DemoScreenshotRunner {
         let canvasH = height + padding * 2
 
         let framed = ZStack {
-            // 极浅 macOS 展示画布底色 + 柔和原生窗口投影，在 GitHub 浅色/深色模式下都通透干净
+
             Color(nsColor: NSColor(calibratedRed: 0.955, green: 0.962, blue: 0.975, alpha: 1.0))
             rootView
                 .frame(width: width, height: height)
@@ -643,7 +639,6 @@ enum DemoScreenshotRunner {
         window.contentView = hostingView
         window.display()
 
-        // 让 SwiftUI 完成布局与绘图事务
         for i in 0..<10 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
             if i == 5 {
@@ -685,7 +680,6 @@ enum DemoScreenshotRunner {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
 
-        // 保存并恢复用户本机偏好，避免影响本机运行中的 Agyhub
         let origAccountsCollapsed = UserDefaults.standard.object(forKey: "agyhub.collapse.accounts")
         let origSessionsCollapsed = UserDefaults.standard.object(forKey: "agyhub.collapse.sessions")
         let origUsageRange = UserDefaults.standard.object(forKey: "agyhub.usage.selectedRange")
@@ -713,7 +707,7 @@ enum DemoScreenshotRunner {
         ]
 
         for (lang, suffix) in pairs {
-            // 1. Live Dashboard (展开 ACCOUNTS + 活跃会话 + 实时 t/s 速率 + 子Agent 徽标)
+
             let dashStore = makeDemoStore(lang: lang, accountsCollapsed: false)
             captureView(
                 MainDashboardView(store: dashStore, isStandaloneWindow: false)
@@ -723,7 +717,6 @@ enum DemoScreenshotRunner {
                 outputPath: "\(outputDir)/screenshot-dashboard\(suffix).png"
             )
 
-            // 2. Session Detail + Running Subagents + Token Breakdown Donut + Cache Miss Diagnostics
             let detailStore = makeDemoStore(lang: lang, accountsCollapsed: true)
             detailStore.selectedSessionUUID = "demo-sess-0001-webhook-pipeline"
             detailStore.sessionNavigationStack = ["demo-sess-0001-webhook-pipeline"]
@@ -735,7 +728,6 @@ enum DemoScreenshotRunner {
                 outputPath: "\(outputDir)/screenshot-detail\(suffix).png"
             )
 
-            // 3. Usage Analytics (7D Trend + Model Breakdown)
             let usageStore = makeDemoStore(lang: lang, accountsCollapsed: true)
             usageStore.isUsageDashboardPresented = true
             let demoUsage = makeDemoUsageHistory(lang: lang)

@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Agyhub 一键编译与打包脚本 (生成 macOS 原生 Agyhub.app 及可选 .dmg/.zip 安装包)
-# 适用系统: macOS 13.0+ (Ventura / Sonoma / Sequoia)
-# 依赖工具: Xcode Command Line Tools (swiftc, lipo, hdiutil)
-# ==============================================================================
 
 set -euo pipefail
 
@@ -71,7 +66,6 @@ echo "========================================================"
 echo " ⚡ 开始构建 ${APP_NAME}.app v${APP_VERSION} (macOS 原生状态栏应用)"
 echo "========================================================"
 
-# 1. 检查 macOS Swift 编译器环境
 if ! command -v swiftc >/dev/null 2>&1; then
     echo "❌ 未检测到 swiftc 编译器，请先执行: xcode-select --install"
     exit 1
@@ -79,17 +73,14 @@ fi
 
 SDK_PATH="$(xcrun --show-sdk-path --sdk macosx)"
 
-# 1.5 硬性确定性 I18N 门禁（构建前校验英文模式零中文残留）
 if [ -f "$SCRIPT_DIR/scripts/check_i18n.py" ] && command -v python3 >/dev/null 2>&1; then
     echo "🌐 正在执行确定性 I18N 护栏检查 (scripts/check_i18n.py)..."
     python3 "$SCRIPT_DIR/scripts/check_i18n.py"
 fi
 
-# 2. 清理并创建 .app Bundle 标准目录结构
 rm -rf "$APP_BUNDLE" "$SCRIPT_DIR/AGY-Hub.app" "$BUILD_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$BUILD_DIR"
 
-# 3. 生成 Info.plist (配置 LSUIElement=true 隐藏 Dock 图标，作为常驻 Menu Bar 应用运行)
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -125,7 +116,6 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
 </plist>
 EOF
 
-# 4. 嵌入应用图标、agy-monitor.py 与 agy-top 到 Resources 目录
 if [ -f "$SCRIPT_DIR/assets/AppIcon.icns" ]; then
     cp "$SCRIPT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
     echo "✅ 已内置应用图标 -> Contents/Resources/AppIcon.icns"
@@ -148,7 +138,6 @@ if [ -f "$SCRIPT_DIR/agy-top" ]; then
     echo "✅ 已内置 agy-top 终端启动器 -> Contents/Resources/agy-top"
 fi
 
-# 5. 编译原生 Swift + SwiftUI 代码 (支持单架构或 Universal Binary)
 compile_arch() {
     local target_arch="$1"
     local out_bin="$2"
@@ -186,13 +175,11 @@ fi
 
 chmod +x "$MACOS_DIR/${APP_NAME}"
 
-# 6. 执行本地 Ad-hoc 代码签名 (确保 macOS Gatekeeper 与通知/自启权限正常)
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1 || true
     echo "✅ 已完成本地 Ad-hoc 签名 (codesign)"
 fi
 
-# 7. 可选打包 .dmg 与 .zip 发布产物
 if [ "$BUILD_DMG" = true ]; then
     mkdir -p "$DIST_DIR"
     ARTIFACT_BASE="${APP_NAME}-v${APP_VERSION}-${ARCH_LABEL}"
@@ -223,7 +210,6 @@ if [ "$BUILD_DMG" = true ]; then
     echo "   - $DIST_DIR/SHA256SUMS.txt"
 fi
 
-# 8. 可选同步更新用户本地 ~/.gemini/config/tools/agy-monitor.py（仅在传入 --sync-tools 时执行）
 USER_TOOL_DIR="$HOME/.gemini/config/tools"
 if [ "$SYNC_TOOLS" = true ]; then
     if [ -d "$USER_TOOL_DIR" ] && [ -f "$SCRIPT_DIR/agy-monitor.py" ]; then
@@ -237,7 +223,6 @@ else
     echo "ℹ️  默认未覆盖 $USER_TOOL_DIR/agy-monitor.py（如需同步请传入 --sync-tools）"
 fi
 
-# 9. 初始化多账号物理隔离根目录 ~/.agy-profiles 及插件目录
 mkdir -p "$HOME/.agy-profiles" "$HOME/.antigravity/extensions"
 
 echo ""

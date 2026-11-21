@@ -1,13 +1,6 @@
-//
-//  Views.swift
-//  Agyhub — SwiftUI 视图组件层与品牌矢量图标
-//
-
 import AppKit
 import Charts
 import SwiftUI
-
-// MARK: - 4.1 精致原生交互按钮样式 (Native macOS Button Styles)
 
 struct ModernPrimaryButtonStyle: ButtonStyle {
     var isAccent: Bool = true
@@ -85,7 +78,6 @@ private struct ImpeccableIconButtonStyle: ButtonStyle {
     }
 }
 
-/// /impeccable 工具栏微交互图标按钮（显式命中层防止透明穿透，带悬停背景、按压缩放与手型光标）
 struct ImpeccableIconButton: View {
     let icon: String
     let tooltip: String
@@ -153,7 +145,6 @@ private struct ImpeccablePillButtonStyle: ButtonStyle {
     }
 }
 
-/// /impeccable 实体微交互动作按钮（带悬停渐变色、边框微光、按压回弹与手型光标）
 struct ImpeccableActionButton: View {
     let title: String
     var icon: String? = nil
@@ -243,7 +234,6 @@ private struct ImpeccableActionButtonStyle: ButtonStyle {
     }
 }
 
-/// /impeccable 刷新间隔微交互胶囊按钮
 struct ImpeccableIntervalPill: View {
     let title: String
     let isSelected: Bool
@@ -318,9 +308,6 @@ struct SectionCollapseToggleButton: View {
     }
 }
 
-// MARK: - 5. UI 视图组件层 (Native macOS HIG & Distilled Minimalist Design)
-
-/// 主面板与可拖拽窗口共用的全出血毛玻璃外壳修饰器（确保背景、圆角裁切与边框同样 ignoresSafeArea，不被顶部 32pt 标题栏安全区截掉 headerBar）
 enum MainDashboardWindowChrome {
     @ViewBuilder
     static func apply<Content: View>(to content: Content) -> some View {
@@ -329,13 +316,11 @@ enum MainDashboardWindowChrome {
             .background(WindowLifecycleConfigurator())
             .background(
                 ZStack {
-                    // 原生 macOS 晶莹毛玻璃材质底板 (遵循 z-apple-design 规范)
+
                     VisualEffectBlurView(material: .hudWindow, blendingMode: .behindWindow)
 
-                    // 纯净高对比度底衬 (不透明度 0.90)，彻底杜绝外部杂乱窗口与米黄网页透光发脏发暗
                     Color(nsColor: .windowBackgroundColor).opacity(0.90)
 
-                    // 极微弱漫反射高光层
                     LinearGradient(
                         gradient: Gradient(colors: [Color.white.opacity(0.06), Color.clear]),
                         startPoint: .top,
@@ -349,7 +334,7 @@ enum MainDashboardWindowChrome {
             .overlay(WindowResizeOverlay())
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
-                // Apple 发丝级外边框，完美贴合系统微阴影
+
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color(nsColor: .separatorColor).opacity(0.40), lineWidth: 0.75)
             )
@@ -381,14 +366,13 @@ struct MainDashboardView: View {
     var body: some View {
         MainDashboardWindowChrome.apply(to:
         VStack(spacing: 0) {
-            // 极简顶部工具栏（整合 Today 核心指标与拖动区）
+
             headerBar
 
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
                 .frame(height: 0.5)
 
-            // 临时状态通知条
             if let banner = store.statusBannerMessage {
                 HStack(spacing: 6) {
                     Text(banner)
@@ -419,7 +403,7 @@ struct MainDashboardView: View {
                 .transition(.opacity)
             } else {
                 VStack(spacing: 10) {
-                    // 区域一：账号隔离环境
+
                     profileManagerSection
 
                     Rectangle()
@@ -427,7 +411,6 @@ struct MainDashboardView: View {
                         .frame(height: 0.5)
                         .padding(.horizontal, 2)
 
-                    // 区域二：活跃会话列表或会话详情（Today 已精炼整合至顶部标题行）
                     if let session = store.activeSelectedSession {
                         SessionDetailCardView(
                             session: session,
@@ -464,7 +447,6 @@ struct MainDashboardView: View {
                 .fill(Color(nsColor: .separatorColor).opacity(0.35))
                 .frame(height: 0.5)
 
-            // 极简底部工具栏
             footerBar
         }
         )
@@ -490,7 +472,6 @@ struct MainDashboardView: View {
         }
     }
 
-    /// 弹窗左上角品牌小图标：优先展示透明无背景的方案 3 紧裁猫头，无 Bundle 环境回退同源矢量小猫
     private struct HakimiHeaderLogoView: View {
         var body: some View {
             if let catURL = Bundle.main.url(forResource: "header-cat", withExtension: "png"),
@@ -508,10 +489,9 @@ struct MainDashboardView: View {
         }
     }
 
-    // MARK: - 顶部工具栏 (Header Bar - 集成精简 Today 指标与拖拽区)
     private var headerBar: some View {
         HStack(spacing: 8) {
-            // 左侧标题及灵动指示灯
+
             HStack(spacing: 6) {
                 HakimiHeaderLogoView()
                 Text("Agyhub")
@@ -523,7 +503,6 @@ struct MainDashboardView: View {
                     .shadow(color: (store.payload.hasAlert ? Color.red : Color.green).opacity(0.55), radius: 2.5)
             }
 
-            // 中间弹性区域：承载可点击展开的精简 Today 数据指标，两侧留白保持原生窗口拖动区
             HStack(spacing: 0) {
                 Spacer(minLength: 4)
 
@@ -596,7 +575,6 @@ struct MainDashboardView: View {
             .contentShape(Rectangle())
             .background(WindowDragArea())
 
-            // 立即刷新
             ImpeccableIconButton(
                 icon: "arrow.clockwise",
                 tooltip: L10n.t(.refreshDataTooltip, lang),
@@ -613,7 +591,6 @@ struct MainDashboardView: View {
                 }
             }
 
-            // 独立主窗口
             if !isStandaloneWindow {
                 ImpeccableIconButton(
                     icon: "macwindow.on.rectangle",
@@ -625,7 +602,6 @@ struct MainDashboardView: View {
                 }
             }
 
-            // 右上角关闭当前窗口叉号（只关窗隐藏，不退出常驻菜单栏进程）
             ImpeccableIconButton(
                 icon: "xmark",
                 tooltip: WindowClosePolicy.headerCloseTooltip(language: lang),
@@ -645,7 +621,6 @@ struct MainDashboardView: View {
         .padding(.vertical, 7)
     }
 
-    // MARK: - 账号环境列表 (Profile Manager)
     private var profileManagerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
@@ -655,7 +630,6 @@ struct MainDashboardView: View {
                     }
                 }
 
-                // 折叠时仅展示简洁单行摘要（App / CLI 当前实际共享槽位状态）
                 if isAccountsCollapsed {
                     let effectiveApp = store.sharedKeychainResolution.email ?? store.activeProfileName
                     let appLabel = effectiveApp.split(separator: "@").first.map(String.init) ?? "-"
@@ -669,7 +643,6 @@ struct MainDashboardView: View {
 
                 Spacer(minLength: 4)
 
-                // App / CLI 目标端切换胶囊（仅在启用 CLI 独立模式时呈现；关闭时切一个相当于同时切，仅保留常规视图）
                 if !isAccountsCollapsed && store.isCLIIndependentMode {
                     HStack(spacing: 2) {
                         ForEach(AccountTargetMode.allCases, id: \.self) { mode in
@@ -901,7 +874,8 @@ struct MainDashboardView: View {
                                 onSwitchApp: { store.switchToProfile(profile) },
                                 onParallelApp: { store.launchParallelProfile(profile) },
                                 onSwitchCLI: { store.switchCLIProfile(profile) },
-                                onDelete: { store.deleteProfile(profile) }
+                                onDelete: { store.deleteProfile(profile) },
+                                onRefreshQuota: { store.refreshQuotasIfNeeded(force: true) }
                             )
                         }
                     }
@@ -912,7 +886,6 @@ struct MainDashboardView: View {
         }
     }
 
-    // MARK: - 今日大盘概览 (Today's Overview)
     private var todayOverviewSection: some View {
         let stats = store.payload.todayStats
         return VStack(alignment: .leading, spacing: 6) {
@@ -959,7 +932,6 @@ struct MainDashboardView: View {
         }
     }
 
-    // MARK: - 活跃会话实时列表 (Active Sessions)
     private var activeSessionsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -989,7 +961,6 @@ struct MainDashboardView: View {
                     .fixedSize()
                 }
 
-                // 需求 4：session 旁边实时显示单次最长等待耗时 tag (高对比度 WCAG AA 规范)
                 let maxStall = store.maxSessionStallSeconds
                 if maxStall > 0 || store.payload.activeCount > 0 {
                     let stallText = (maxStall < 1.0 && maxStall > 0) ? "<1s" : "\(Int(maxStall))s"
@@ -1024,7 +995,6 @@ struct MainDashboardView: View {
                     .help(L10n.maxWaitTooltip(maxStall, lang))
                 }
 
-                // 最近 1 小时 503 报错次数 tag（每 5 分钟自动刷新一次）
                 let count503 = store.recent503Count
                 let sev503 = Recent503Policy.severityLevel(count: count503)
                 let color503: Color = sev503 == .warning
@@ -1100,7 +1070,6 @@ struct MainDashboardView: View {
         }
     }
 
-    // MARK: - 底部状态栏 (Footer Bar)
     private var footerBar: some View {
         HStack {
             Text(L10n.updatedAt(store.lastUpdatedTimeStr, lang))
@@ -1109,7 +1078,6 @@ struct MainDashboardView: View {
 
             Spacer()
 
-            // 右下角设置按钮（从右上角移至此）
             ImpeccableIconButton(
                 icon: "gearshape",
                 tooltip: L10n.t(.settingsTitle, lang),
@@ -1125,7 +1093,6 @@ struct MainDashboardView: View {
         .padding(.vertical, 7)
     }
 
-    // MARK: - 新建账号隔离环境弹窗
     private var createProfileSheetView: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L10n.t(.createProfileTitle, lang))
@@ -1176,7 +1143,6 @@ struct MainDashboardView: View {
         .frame(width: 300)
     }
 
-    // MARK: - 本地账号探测与切换日志弹窗
     private var discoveryLogsSheetView: some View {
         let logSnapshot = LocalAccountDetector.snapshotDiscoveryLogs()
         return VStack(alignment: .leading, spacing: 10) {
@@ -1228,8 +1194,6 @@ struct MainDashboardView: View {
     }
 
 }
-
-// MARK: - 5.1 运行设置弹窗视图 (SettingsPopoverView)
 
 struct SettingsPopoverView: View {
     @ObservedObject var store: AGYHubStore
@@ -1301,7 +1265,6 @@ struct SettingsPopoverView: View {
             Toggle(L10n.t(.unifyMonitoringToggle, lang), isOn: $store.unifyLogMonitoring)
                 .font(.system(size: 11.5))
 
-            // 核心开关：CLI 与桌面 App 账号独立运行机制
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(L10n.t(.cliIndependentToggle, lang), isOn: Binding(
                     get: { store.isCLIIndependentMode },
@@ -1348,13 +1311,11 @@ struct SettingsPopoverView: View {
 
             Divider().opacity(0.3)
 
-            // 授权与访问范围明细（随时查看并可一键取消）
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.t(.permissionsSectionTitle, lang))
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(.secondary)
 
-                // 1. CLI 钥匙串槽位切换授权
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 7) {
                         Circle()
@@ -1457,7 +1418,6 @@ struct SettingsPopoverView: View {
                 .padding(9)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035)))
 
-                // 2. 桌面 App 隔离目录 & 本地只读监控范围
                 VStack(alignment: .leading, spacing: 3) {
                     Text(L10n.isolatedProfilesLine(store.profiles.filter { !$0.isDefaultProfile }.count, lang))
                         .font(.system(size: 9.5, design: .monospaced))
@@ -1522,8 +1482,6 @@ struct SettingsPopoverView: View {
     }
 }
 
-// MARK: - 5.9 配额微胶囊组件 (Quota Pill View)
-
 struct QuotaPillView: View {
     let item: QuotaDisplayItem
 
@@ -1570,15 +1528,12 @@ struct QuotaPillView: View {
     }
 }
 
-// MARK: - 6. 极简账号行视图 (CompactProfileRowView)
-
 enum ProfileRowActionPolicy {
-    /// 账号行不再显示「双开」按钮，节约横向空间并防止布局跳变
+
     static let showsParallelLaunchButton = false
-    /// 账号行不再显示「删除」按钮，节约横向空间并防止布局跳变
+
     static let showsDeleteButton = false
 
-    /// 仅当窗口处于激活 Key 状态且鼠标悬停时才展示切换按钮，避免后台露边悬停误触
     static func shouldShowSwitchButton(isHovered: Bool, isWindowKey: Bool) -> Bool {
         isHovered && isWindowKey
     }
@@ -1598,6 +1553,7 @@ struct CompactProfileRowView: View {
     let onParallelApp: () -> Void
     let onSwitchCLI: () -> Void
     let onDelete: () -> Void
+    var onRefreshQuota: (() -> Void)? = nil
 
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.agyLanguage) private var lang
@@ -1617,7 +1573,7 @@ struct CompactProfileRowView: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            // 状态指示点
+
             if isTargetActive {
                 Circle()
                     .fill(mode == .app ? Color.accentColor : Color.purple)
@@ -1639,7 +1595,6 @@ struct CompactProfileRowView: View {
                     .padding(.horizontal, 2.5)
             }
 
-            // 账号仅展示 @ 左侧 ID 与 App/CLI 当前激活徽章（完整邮箱悬浮提示）；允许尾部优雅截断，杜绝横向撑爆抖动
             HStack(spacing: 4) {
                 Text(shortAccountId)
                     .font(.system(size: 13, weight: isTargetActive ? .bold : .medium))
@@ -1674,7 +1629,6 @@ struct CompactProfileRowView: View {
             }
             .layoutPriority(0)
 
-            // 账号周额度微胶囊 (显示 Gemini / Argon 周度额度与重置时间，Ultra 账号仅展示单一 Gemini 额度；Token 过期时温和提示)
             if let quota = accountQuota {
                 let items = AccountQuotaManager.displayItems(for: quota, language: lang)
                 if !items.isEmpty {
@@ -1689,36 +1643,37 @@ struct CompactProfileRowView: View {
                     .help(AccountQuotaManager.quotaTooltip(items: items, isUltra: quota.isUltra, isExpired: isQuotaTokenExpired, language: lang))
                 }
             } else if isQuotaTokenExpired {
-                HStack(spacing: 3) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 8.5, weight: .medium))
-                    Text(L10n.quotaExpiredBadge(for: lang))
-                        .font(.system(size: 9.5, weight: .medium))
+                Button(action: { onRefreshQuota?() }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 8.5, weight: .medium))
+                        Text(L10n.quotaExpiredBadge(for: lang))
+                            .font(.system(size: 9.5, weight: .medium))
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 5.5)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                            )
+                    )
                 }
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 5.5)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Color.primary.opacity(0.04))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
-                        )
-                )
+                .buttonStyle(.plain)
                 .fixedSize()
                 .layoutPriority(2)
                 .help(L10n.quotaExpiredHint(for: lang))
             }
 
-            // 需求 1：账号中间空白拖拽区域，鼠标在空白区域按下可直接拖动窗口；降低布局优先级避免挤压左侧账号名
             Spacer(minLength: 2)
                 .frame(height: 24)
                 .contentShape(Rectangle())
                 .background(WindowDragArea())
                 .layoutPriority(-1)
 
-            // 操作动作 (激活项常态显示清晰深色标识，非激活项悬停即刻清晰展示精简切换按钮，杜绝淡入残影与行宽抖动)
             HStack(spacing: 4) {
                 if mode == .app {
                     if isAppActive {
@@ -1787,7 +1742,7 @@ struct CompactProfileRowView: View {
                         }
                     }
                 } else {
-                    // CLI 模式
+
                     if isCLIActive {
                         Text(L10n.t(.activeCLIBadge, lang))
                             .font(.system(size: 11, weight: .medium))
@@ -1865,10 +1820,8 @@ struct CompactProfileRowView: View {
     }
 }
 
-// MARK: - 6.8 会话列表数据源过滤器与查找策略 (Session List Filter & Lookup)
-
 enum SessionListFilter {
-    /// 返回用于界面滚动的顶层会话列表（自动剔除父会话已在列表中的泄漏子 Agent，保证收折完整性与全量滚动）
+
     static func sessionsForDisplay(_ sessions: [SessionItem]) -> [SessionItem] {
         let topIds = Set(sessions.map(\.uuid))
         return sessions.filter { item in
@@ -1878,7 +1831,7 @@ enum SessionListFilter {
 }
 
 enum SessionLookup {
-    /// 递归查找会话或其旗下嵌套的子 Agent，支持详情下钻后实时跟随轮询刷新
+
     static func findSession(uuid: String, in sessions: [SessionItem]) -> SessionItem? {
         for item in sessions {
             if item.uuid == uuid {
@@ -1891,7 +1844,6 @@ enum SessionLookup {
         return nil
     }
 
-    /// 计算所有运行中会话（包含收折的活跃子 Agent）中的最大排队/等待耗时
     static func maxStallSeconds(in sessions: [SessionItem]) -> Double {
         var maxVal = 0.0
         for item in sessions {
@@ -1905,7 +1857,7 @@ enum SessionLookup {
 }
 
 enum SessionDetailSubagentPolicy {
-    /// 将正在工作的子 Agent 排在前面，其余保持顺序以便快速查看活跃工作节点
+
     static func sortedSubagents(_ subagents: [SessionItem]) -> [SessionItem] {
         subagents.sorted { lhs, rhs in
             if lhs.isRunning != rhs.isRunning {
@@ -1915,7 +1867,6 @@ enum SessionDetailSubagentPolicy {
         }
     }
 
-    /// 优先展示真实角色名（agentName / agentRole），缺失时回退至清洗后的标题或短 ID
     static func displayName(for subagent: SessionItem, language: AppLanguage.Resolved = .zhHans) -> String {
         let trimmedName = subagent.agentName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedName.isEmpty {
@@ -1928,8 +1879,6 @@ enum SessionDetailSubagentPolicy {
         return SessionTitleCleaner.cleanTitle(subagent.title, fallbackUUID: subagent.uuid, language: language)
     }
 }
-
-// MARK: - 6.9 会话标题清洗工具 (Session Title Cleaner)
 
 enum SessionTitleCleaner {
     static func cleanTitle(_ rawTitle: String, fallbackUUID: String, language: AppLanguage.Resolved = .zhHans) -> String {
@@ -1945,7 +1894,6 @@ enum SessionTitleCleaner {
     }
 }
 
-/// 会话长标题悬浮跑马灯计算策略：仅当真实溢出容器宽度时开启平滑来回滚动
 enum SessionTitleMarqueePolicy {
     static let edgePauseDuration: Double = 0.25
     static let trailingRevealPadding: CGFloat = 10.0
@@ -1964,7 +1912,6 @@ enum SessionTitleMarqueePolicy {
         return max(1.2, Double(overflowDistance / speedPtsPerSec))
     }
 
-    /// 按时间轴计算周期性往返偏移：首端停顿 -> 匀速左移展示末尾 -> 尾端停顿 -> 匀速回位
     static func marqueeOffset(elapsed: TimeInterval, overflowDistance: CGFloat) -> CGFloat {
         guard overflowDistance > 0, elapsed >= 0 else { return 0.0 }
         let maxShift = overflowDistance + trailingRevealPadding
@@ -1987,7 +1934,6 @@ enum SessionTitleMarqueePolicy {
     }
 }
 
-/// 单行会话标题：默认尾部省略号截断，鼠标悬浮且发生截断时平滑自动横滚展示完整内容
 struct ScrollingSessionTitleView: View {
     let title: String
     let font: Font
@@ -2011,7 +1957,7 @@ struct ScrollingSessionTitleView: View {
     }
 
     var body: some View {
-        // 主视图决定紧凑布局尺寸（minWidth/idealWidth 均为 0），绝不把长文本的自然宽度向上传递撑爆弹窗
+
         Text(title)
             .font(font)
             .foregroundColor(foregroundColor)
@@ -2027,7 +1973,7 @@ struct ScrollingSessionTitleView: View {
                 }
             )
             .background(
-                // 用 GeometryReader 隔离测量子节点，阻断 .fixedSize() 理想宽度向上传导
+
                 GeometryReader { _ in
                     Text(title)
                         .font(font)
@@ -2075,9 +2021,6 @@ struct ScrollingSessionTitleView: View {
     }
 }
 
-// MARK: - 7. 极简会话行视图 (CompactSessionRowView)
-
-/// 会话行胶囊标签（模型、上下文）的文案规范、视觉配色与紧凑尺寸常量
 enum SessionRowBadgePolicy {
     static let modelFontSize: CGFloat = 9.5
     static let contextFontSize: CGFloat = 9.5
@@ -2085,7 +2028,6 @@ enum SessionRowBadgePolicy {
     static let contextColumnWidth: CGFloat = 42
     static let metricsColumnWidth: CGFloat = 72
 
-    /// 适应浅色/深色外观的冷静蓝灰上下文配色，确保与高饱和实时速率拉开主次
     static func contextForegroundColor(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
             ? Color(red: 0.56, green: 0.78, blue: 1.0)
@@ -2100,7 +2042,6 @@ enum SessionRowBadgePolicy {
         colorScheme == .dark ? Color.blue.opacity(0.28) : Color.blue.opacity(0.16)
     }
 
-    /// 裁剪模型名称前缀，将超长编排模型映射为短促胶囊标签并兜底空值
     static func modelBadgeText(_ rawModel: String) -> String {
         var clean = rawModel
         if clean.hasPrefix("gemini-") {
@@ -2120,18 +2061,15 @@ enum SessionRowBadgePolicy {
         return clean
     }
 
-    /// 仅在存在有效模型名时渲染胶囊，避免 "-" 占用空胶囊边框
     static func hasModel(_ rawModel: String) -> Bool {
         modelBadgeText(rawModel) != "-"
     }
 
-    /// 格式化单会话当前上下文长度（如 51k / 142k）；无上下文时返回 "-"
     static func contextBadgeText(contextTokens: Int) -> String {
         guard contextTokens > 0 else { return "-" }
         return Formatters.formatTokens(contextTokens)
     }
 
-    /// 构建上下文胶囊的悬停提示文案
     static func contextTooltip(contextTokens: Int, language: AppLanguage.Resolved = .zhHans) -> String {
         guard contextTokens > 0 else { return L10n.t(.contextEmptyTooltip, language) }
         return language == .zhHans
@@ -2139,19 +2077,16 @@ enum SessionRowBadgePolicy {
             : "Context: \(Formatters.formatTokens(contextTokens)) (\(contextTokens) tokens)"
     }
 
-    /// 外层会话列表空闲指标：仅展示当前会话自身总消耗与自身缓存率（详情页再汇总全部子 Agent）
     static func idleMetricsText(for session: SessionItem) -> String {
         let tokenStr = Formatters.formatTokens(session.totalTokensConsumed)
         let cacheStr = String(format: "%.0f%%", session.cachePct)
         return "\(tokenStr) \(cacheStr)"
     }
 
-    /// 是否存在正在干活的子 Agent，决定外层动态 Tag 的绿色活跃样式
     static func isSubagentBadgeActive(for session: SessionItem) -> Bool {
         session.effectiveActiveSubagentCount > 0
     }
 
-    /// 外层会话行动态 Agent Tag 文案：有活跃子 Agent 时展示 "<N> Agent · <t/s>"（无速率时显示"运行中"），全员待命时展示 "<总N> Agent"，无子 Agent 返回 nil
     static func subagentBadgeText(for session: SessionItem, language: AppLanguage.Resolved = .zhHans) -> String? {
         let total = session.effectiveSubagentCount
         guard total > 0 else { return nil }
@@ -2171,7 +2106,6 @@ enum SessionRowBadgePolicy {
         return "\(total) Agent"
     }
 
-    /// 动态 Agent Tag 悬浮提示文案
     static func subagentTooltip(for session: SessionItem, language: AppLanguage.Resolved = .zhHans) -> String {
         let total = session.effectiveSubagentCount
         let active = session.effectiveActiveSubagentCount
@@ -2191,7 +2125,6 @@ enum SessionRowBadgePolicy {
     }
 }
 
-/// 内容自适应胶囊标签组件，通过填充与描边区分模型（柔雾填充）与上下文（冷静蓝调微描边）
 struct SessionCapsuleBadge: View {
     let text: String
     let font: Font
@@ -2237,7 +2170,7 @@ struct CompactSessionRowView: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            // 状态呼吸小点（本人或旗下子 Agent 任一在干活均亮绿灯）
+
             if session.isActivelyWorking {
                 Circle()
                     .fill(Color.green)
@@ -2249,7 +2182,6 @@ struct CompactSessionRowView: View {
                     .frame(width: 5, height: 5)
             }
 
-            // 会话标题（全列表左侧严格对齐；悬浮时超长自动滚动；CLI 标记叠放在右上角红框区不占正文字宽）
             ScrollingSessionTitleView(
                 title: displayTitle,
                 font: .system(size: 12.5, weight: session.isActivelyWorking ? .bold : .medium),
@@ -2282,7 +2214,6 @@ struct CompactSessionRowView: View {
                 }
             }
 
-            // 动态子 Agent 聚合 Tag（干活数量 + t/s，或已收折子 Agent 数）
             if let badgeText = SessionRowBadgePolicy.subagentBadgeText(for: session, language: lang) {
                 let isActive = SessionRowBadgePolicy.isSubagentBadgeActive(for: session)
                 let activeFg = colorScheme == .dark
@@ -2311,7 +2242,6 @@ struct CompactSessionRowView: View {
                 .help(SessionRowBadgePolicy.subagentTooltip(for: session, language: lang))
             }
 
-            // 模型名称（内容自适应柔雾胶囊，右对齐固定 70pt 列槽；无模型时仅展示极轻占位符）
             Group {
                 if SessionRowBadgePolicy.hasModel(session.model) {
                     SessionCapsuleBadge(
@@ -2322,7 +2252,7 @@ struct CompactSessionRowView: View {
                         horizontalPadding: 6.5,
                         verticalPadding: 2
                     )
-                    // 仅锁定纵向尺寸，横向受外层 modelColumnWidth 约束以便超长未映射模型名自动省略，避免覆盖标题
+
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("—")
@@ -2333,7 +2263,6 @@ struct CompactSessionRowView: View {
             .frame(width: SessionRowBadgePolicy.modelColumnWidth, alignment: .trailing)
             .help(L10n.modelHelp(session.model, lang))
 
-            // 当前上下文规模胶囊（等宽圆体数字 + 冷静蓝调描边胶囊，右对齐固定 42pt 列槽）
             Group {
                 if session.contextTokens > 0 {
                     SessionCapsuleBadge(
@@ -2355,7 +2284,6 @@ struct CompactSessionRowView: View {
             .frame(width: SessionRowBadgePolicy.contextColumnWidth, alignment: .trailing)
             .help(SessionRowBadgePolicy.contextTooltip(contextTokens: session.contextTokens, language: lang))
 
-            // 核心动态指标 (固定列宽 72，严格向右对齐，垂直一条线)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if session.isRunning {
@@ -2385,8 +2313,6 @@ struct CompactSessionRowView: View {
         .onHover { isHovered = $0 }
     }
 }
-
-// MARK: - 8. 极简会话详情视图 (SessionDetailCardView)
 
 struct SessionDetailCardView: View {
     let session: SessionItem
@@ -2509,7 +2435,6 @@ struct SessionDetailCardView: View {
 
                     Divider().opacity(0.25)
 
-                    // 核心统计行（存在子 Agent 时汇总主会话与全部子 Agent 的账单、总 Token 与加权缓存率；上下文保持主会话自身窗口规模）
                     let hasSubagents = !session.subagents.isEmpty
                     let statHelpText: String = {
                         guard hasSubagents else { return "" }
@@ -2687,8 +2612,6 @@ struct SessionDetailCardView: View {
     }
 }
 
-// MARK: - 7.5 会话上下文与缓存失效内嵌诊断视图 (SessionDiagnosticsInlineSection)
-
 enum DiagnosticDistributionTab: String, CaseIterable {
     case phases = "按工作阶段"
     case sources = "按上下文来源"
@@ -2730,10 +2653,9 @@ struct SessionDiagnosticsInlineSection: View {
                 .cornerRadius(7)
             } else if let d = payload {
                 VStack(alignment: .leading, spacing: 8) {
-                    // 一、Token 与上下文分布（单张可切换饼图 + 实测元凶提示）
+
                     distributionSection(d)
 
-                    // 二、缓存失效诊断（可控 vs 平台 + 案发现场 + 可行动建议）
                     cacheMissSection(
                         d.cacheMiss,
                         recommendations: d.recommendations,
@@ -3090,8 +3012,6 @@ struct SessionDiagnosticsInlineSection: View {
     }
 }
 
-// MARK: - 8. 用量趋势大图与按模型统计视图 (UsageAnalyticsView)
-
 struct UsageAnalyticsView: View {
     @ObservedObject var store: AGYHubStore
     let onBack: () -> Void
@@ -3179,7 +3099,6 @@ struct UsageAnalyticsView: View {
 
                 Spacer()
 
-                // 右上角：费用 ($) / Tokens 视图指标切换
                 HStack(spacing: 2) {
                     ForEach(UsageMetricMode.allCases) { mode in
                         let isSelected = metricMode == mode
@@ -3267,7 +3186,7 @@ struct UsageAnalyticsView: View {
                     value: 0
                 ))
             } else {
-                // 先放主模型或按名称稳定排序，使堆叠顺序上下一致
+
                 for m in bar.models {
                     let val = metricMode == .cost ? m.costUsd : Double(m.totalTokens)
                     result.append(ChartSegment(
@@ -3621,16 +3540,13 @@ struct UsageAnalyticsView: View {
     }
 }
 
-
-// MARK: - 品牌矢量图标 (方案 3 同源半边脸拽猫 — Menu Bar 三态纯图标)
-
 extension AGYAppDelegate {
-    /// 顶部 Menu Bar 仅展示这只小猫的三态表情（不展示速度与金额文字，悬停通过 Tooltip 查看详情）
+
     enum HakimiBrandIcon {
         enum Status: Equatable {
-            case idle     // 待命：双目微闭小憩
-            case working  // 工作中：左眼斜压紧眯 + 右眼冷瞪（方案 3 同源监工神态）+ 翠绿微点
-            case alert    // 告警：双目警觉睁大 + 醒目红点
+            case idle
+            case working
+            case alert
         }
 
         static func resolveStatus(hasAlert: Bool, activeCount: Int) -> Status {
@@ -3639,11 +3555,10 @@ extension AGYAppDelegate {
             return .idle
         }
 
-        /// 生成 macOS 原生极简 18×18pt 实心剪影小猫图标（负空间镂空眼神：待命闭眼 / 工作中左眯右瞪 / 告警睁眼+红点）
         static func menuBarImage(state: Status) -> NSImage {
             let size = NSSize(width: 18, height: 18)
             let image = NSImage(size: size, flipped: true) { _ in
-                // 坐标系从 22×22 精准缩放到 18×18，保持宽润饱满的猫头比例
+
                 let scale = 18.0 / 22.0
                 guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
                 ctx.saveGState()
@@ -3652,7 +3567,6 @@ extension AGYAppDelegate {
                 let baseColor: NSColor = (state == .alert) ? NSColor.labelColor : NSColor.black
                 baseColor.setFill()
 
-                // 1. 饱满圆润的极简猫头剪影
                 let head = NSBezierPath()
                 head.move(to: NSPoint(x: 3.0, y: 12.2))
                 head.line(to: NSPoint(x: 3.4, y: 4.4))
@@ -3667,14 +3581,13 @@ extension AGYAppDelegate {
                 head.close()
                 head.fill()
 
-                // 2. 使用 .clear 负空间精确镂空三态眼神
                 ctx.setBlendMode(.clear)
                 NSColor.black.setStroke()
                 NSColor.black.setFill()
 
                 switch state {
                 case .idle:
-                    // 待命：两道温柔微弯闭眼弧线
+
                     let lEye = NSBezierPath()
                     lEye.move(to: NSPoint(x: 6.2, y: 12.2))
                     lEye.curve(to: NSPoint(x: 9.6, y: 12.2), controlPoint1: NSPoint(x: 7.4, y: 13.4), controlPoint2: NSPoint(x: 8.6, y: 13.4))
@@ -3690,7 +3603,7 @@ extension AGYAppDelegate {
                     rEye.stroke()
 
                 case .working:
-                    // 工作中：标志性不对称「左眼斜眯 + 右眼圆瞪」
+
                     let lSquint = NSBezierPath()
                     lSquint.move(to: NSPoint(x: 5.8, y: 11.4))
                     lSquint.line(to: NSPoint(x: 9.8, y: 12.6))
@@ -3701,12 +3614,11 @@ extension AGYAppDelegate {
                     NSBezierPath(ovalIn: NSRect(x: 12.55, y: 10.55, width: 3.5, height: 3.1)).fill()
 
                 case .alert:
-                    // 告警：双目圆睁
+
                     NSBezierPath(ovalIn: NSRect(x: 5.95, y: 10.35, width: 3.5, height: 3.5)).fill()
                     NSBezierPath(ovalIn: NSRect(x: 12.55, y: 10.35, width: 3.5, height: 3.5)).fill()
                 }
 
-                // 3. 告警态右耳尖醒目红点
                 if state == .alert {
                     ctx.setBlendMode(.normal)
                     NSColor(calibratedRed: 0.937, green: 0.267, blue: 0.267, alpha: 1.0).setFill()
@@ -3716,12 +3628,11 @@ extension AGYAppDelegate {
                 ctx.restoreGState()
                 return true
             }
-            // 待命与工作中启用 macOS 原生 Template 模式（自动完美适配亮/暗菜单栏），告警保留红点色彩
+
             image.isTemplate = (state != .alert)
             return image
         }
 
-        /// 生成悬停 Tooltip 文本（剥离状态圆点 emoji，保留清晰信息）
         static func formatTooltip(_ raw: String, language: AppLanguage.Resolved) -> String {
             var s = L10n.localizeMenubarText(raw, language: language)
             for prefix in ["🟢 ", "🟡 ", "🔴 ", "🟠 ", "⚪ ", "🟢", "🟡", "🔴", "🟠", "⚪"] {

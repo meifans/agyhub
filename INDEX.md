@@ -80,6 +80,7 @@ Agyhub/
 | [`AGENTS.md`](AGENTS.md) | 必读开发指南：App/CLI 双轨隔离契约、6 条不可破坏的稳定性底线、低开销监控链路说明与修改规范 |
 | [`docs/adr/ADR-001-cli-app-account-isolation.md`](docs/adr/ADR-001-cli-app-account-isolation.md) | 解释为什么共享钥匙串会被 `agy` 续期覆写，以及 `SSH_CLIENT=1` + `cli-vault` 物理隔离方案（根目录 [`ADR.md`](ADR.md) 软链指向此文件） |
 | [`docs/adr/ADR-002-low-overhead-incremental-monitoring.md`](docs/adr/ADR-002-low-overhead-incremental-monitoring.md) | 解释 P0 增量缓存、P1 可见性降频与等价防重绘、P2 常驻 `--daemon` + `FSEvents` 优化方案与实测对比 |
+| [`docs/architecture-notes.md`](docs/architecture-notes.md) | 工程实现细节与踩坑记录：桌面端启动与 SwiftUI/AppKit 坑、Keychain/配额协议细节、Daemon 与 Python 采集规则 |
 | [`scripts/check_i18n.py`](scripts/check_i18n.py) | 确定性 I18N 检查脚本：扫描 `Sources/*.swift` 的 `L10nKey` 与 UI 字面量，并校验 `agy-monitor.py` 在 `lang="en"` 下的输出零中文字符 |
 | [`scripts/generate_telemetry_card.py`](scripts/generate_telemetry_card.py) | 读取本地 Antigravity 会话日志生成脱敏开发统计卡（需要时调用本地 Chrome 无头渲染 3x PNG，可选自动探测 `~/Library/Fonts/LXGWWenKai*.ttf`） |
 | [`tests/AGYHubTests.swift`](tests/AGYHubTests.swift) | Swift 回归测试（3,760 行，72 个测试函数），通过 `-DAGYHUB_TESTING` 屏蔽 `@main` 并使用内存保险箱隔离本机环境 |
