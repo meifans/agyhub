@@ -176,6 +176,7 @@ enum L10nKey: String, CaseIterable {
     case languageSettingLabel
     case launchAtLoginToggle
     case unifyMonitoringToggle
+    case showSessionModelToggle
     case cliIndependentToggle
     case cliIndependentDesc
     case refreshIntervalLabel
@@ -336,6 +337,7 @@ enum L10nKey: String, CaseIterable {
         case .languageSettingLabel: return ("界面语言", "Language")
         case .launchAtLoginToggle: return ("开机自动启动", "Launch at Login")
         case .unifyMonitoringToggle: return ("统一监控活跃会话", "Monitor All Active Sessions")
+        case .showSessionModelToggle: return ("列表展示会话模型", "Show Model in Session List")
         case .cliIndependentToggle: return ("CLI 与桌面 App 账号独立", "Isolate CLI & Desktop App Accounts")
         case .cliIndependentDesc: return ("开启后 CLI 读写独立 token 文件，两端互不干扰；关闭后共用钥匙串，切号同步生效", "When enabled, CLI uses a separate token file without overwriting App keychain")
         case .refreshIntervalLabel: return ("刷新间隔:", "Refresh Interval:")

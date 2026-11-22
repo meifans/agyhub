@@ -931,6 +931,7 @@ final class AGYHubStore: ObservableObject {
     @Published var statusBannerMessage: String? = nil
     @Published var lastUpdatedTimeStr: String = "-"
     @Published var unifyLogMonitoring: Bool = true
+    @Published var showSessionModelColumn: Bool = false
     @Published var appLanguage: AppLanguage = .system
     @Published var accountQuotas: [String: AccountQuotaSummary] = [:]
     @Published var expiredQuotaEmails: Set<String> = []
@@ -1189,6 +1190,7 @@ final class AGYHubStore: ObservableObject {
         self.userDefaults = userDefaults
         self.homeDir = homeDir
         self.appLanguage = AppLanguage.load(from: userDefaults)
+        self.showSessionModelColumn = userDefaults.bool(forKey: SessionRowBadgePolicy.showModelDefaultsKey)
         loadPersistedQuotaCache()
         loadProfiles()
         checkLaunchAtLoginStatus()
@@ -1334,6 +1336,11 @@ final class AGYHubStore: ObservableObject {
             fetchMonitorData()
             reschedulePollingTimerIfNeeded()
         }
+    }
+
+    func toggleSessionModelColumn(_ enabled: Bool) {
+        showSessionModelColumn = enabled
+        userDefaults.set(enabled, forKey: SessionRowBadgePolicy.showModelDefaultsKey)
     }
 
     func toggleCLIIndependentMode(_ enabled: Bool) {

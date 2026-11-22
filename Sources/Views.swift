@@ -996,36 +996,38 @@ struct MainDashboardView: View {
                 }
 
                 let count503 = store.recent503Count
-                let sev503 = Recent503Policy.severityLevel(count: count503)
-                let color503: Color = sev503 == .warning
-                    ? Color.red
-                    : (sev503 == .caution ? Color(red: 0.85, green: 0.35, blue: 0.0) : Color.primary.opacity(0.65))
-                let bg503: Color = sev503 == .warning
-                    ? Color.red.opacity(0.10)
-                    : (sev503 == .caution ? Color.orange.opacity(0.12) : Color.primary.opacity(0.05))
-                let border503: Color = sev503 == .warning
-                    ? Color.red.opacity(0.35)
-                    : (sev503 == .caution ? Color.orange.opacity(0.35) : Color.primary.opacity(0.10))
+                if Recent503Policy.shouldShowBadge(count: count503) {
+                    let sev503 = Recent503Policy.severityLevel(count: count503)
+                    let color503: Color = sev503 == .warning
+                        ? Color.red
+                        : (sev503 == .caution ? Color(red: 0.85, green: 0.35, blue: 0.0) : Color.primary.opacity(0.65))
+                    let bg503: Color = sev503 == .warning
+                        ? Color.red.opacity(0.10)
+                        : (sev503 == .caution ? Color.orange.opacity(0.12) : Color.primary.opacity(0.05))
+                    let border503: Color = sev503 == .warning
+                        ? Color.red.opacity(0.35)
+                        : (sev503 == .caution ? Color.orange.opacity(0.35) : Color.primary.opacity(0.10))
 
-                HStack(spacing: 3) {
-                    if sev503 != .normal {
-                        Image(systemName: "bolt.slash.fill")
-                            .font(.system(size: 8.5, weight: .semibold))
+                    HStack(spacing: 3) {
+                        if sev503 != .normal {
+                            Image(systemName: "bolt.slash.fill")
+                                .font(.system(size: 8.5, weight: .semibold))
+                        }
+                        Text(Recent503Policy.badgeText(count: count503))
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     }
-                    Text(Recent503Policy.badgeText(count: count503))
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(color503)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(bg503)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                            .strokeBorder(border503, lineWidth: 0.5)
+                    )
+                    .cornerRadius(3.5)
+                    .fixedSize()
+                    .help(L10n.recent503Tooltip(count503, lang))
                 }
-                .foregroundColor(color503)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2.5)
-                .background(bg503)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                        .strokeBorder(border503, lineWidth: 0.5)
-                )
-                .cornerRadius(3.5)
-                .fixedSize()
-                .help(L10n.recent503Tooltip(count503, lang))
 
                 Spacer()
 
@@ -1053,7 +1055,7 @@ struct MainDashboardView: View {
                     ScrollView(.vertical, showsIndicators: true) {
                         VStack(spacing: 2.5) {
                             ForEach(SessionListFilter.sessionsForDisplay(store.payload.sessions)) { session in
-                                CompactSessionRowView(session: session)
+                                CompactSessionRowView(session: session, showModelColumn: store.showSessionModelColumn)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         withAnimation(.easeInOut(duration: 0.15)) {
@@ -1264,6 +1266,12 @@ struct SettingsPopoverView: View {
 
             Toggle(L10n.t(.unifyMonitoringToggle, lang), isOn: $store.unifyLogMonitoring)
                 .font(.system(size: 11.5))
+
+            Toggle(L10n.t(.showSessionModelToggle, lang), isOn: Binding(
+                get: { store.showSessionModelColumn },
+                set: { store.toggleSessionModelColumn($0) }
+            ))
+            .font(.system(size: 11.5))
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(L10n.t(.cliIndependentToggle, lang), isOn: Binding(
@@ -2021,12 +2029,23 @@ struct ScrollingSessionTitleView: View {
     }
 }
 
+enum SessionRowTrailingColumn: Hashable {
+    case model
+    case context
+    case metrics
+}
+
 enum SessionRowBadgePolicy {
     static let modelFontSize: CGFloat = 9.5
     static let contextFontSize: CGFloat = 9.5
     static let modelColumnWidth: CGFloat = 70
     static let contextColumnWidth: CGFloat = 42
     static let metricsColumnWidth: CGFloat = 72
+    static let showModelDefaultsKey = "agyhub.sessions.showModel"
+
+    static func trailingColumns(showModel: Bool) -> [SessionRowTrailingColumn] {
+        showModel ? [.context, .metrics, .model] : [.context, .metrics]
+    }
 
     static func contextForegroundColor(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
@@ -2075,6 +2094,10 @@ enum SessionRowBadgePolicy {
         return language == .zhHans
             ? "当前上下文: \(Formatters.formatTokens(contextTokens)) (\(contextTokens) tokens)"
             : "Context: \(Formatters.formatTokens(contextTokens)) (\(contextTokens) tokens)"
+    }
+
+    static func showsLiveTps(for session: SessionItem) -> Bool {
+        session.isRunning
     }
 
     static func idleMetricsText(for session: SessionItem) -> String {
@@ -2160,6 +2183,7 @@ struct SessionCapsuleBadge: View {
 
 struct CompactSessionRowView: View {
     let session: SessionItem
+    var showModelColumn: Bool = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.agyLanguage) private var lang
     @State private var isHovered = false
@@ -2242,27 +2266,24 @@ struct CompactSessionRowView: View {
                 .help(SessionRowBadgePolicy.subagentTooltip(for: session, language: lang))
             }
 
-            Group {
-                if SessionRowBadgePolicy.hasModel(session.model) {
-                    SessionCapsuleBadge(
-                        text: SessionRowBadgePolicy.modelBadgeText(session.model),
-                        font: .system(size: SessionRowBadgePolicy.modelFontSize, weight: .medium),
-                        foregroundColor: Color.primary.opacity(0.75),
-                        fillColor: Color.primary.opacity(0.055),
-                        horizontalPadding: 6.5,
-                        verticalPadding: 2
-                    )
-
-                    .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("—")
-                        .font(.system(size: 10))
-                        .foregroundColor(Color.secondary.opacity(0.35))
-                }
+            ForEach(SessionRowBadgePolicy.trailingColumns(showModel: showModelColumn), id: \.self) { column in
+                trailingColumnView(for: column)
             }
-            .frame(width: SessionRowBadgePolicy.modelColumnWidth, alignment: .trailing)
-            .help(L10n.modelHelp(session.model, lang))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5.5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { isHovered = $0 }
+    }
 
+    @ViewBuilder
+    private func trailingColumnView(for column: SessionRowTrailingColumn) -> some View {
+        switch column {
+        case .context:
             Group {
                 if session.contextTokens > 0 {
                     SessionCapsuleBadge(
@@ -2284,9 +2305,10 @@ struct CompactSessionRowView: View {
             .frame(width: SessionRowBadgePolicy.contextColumnWidth, alignment: .trailing)
             .help(SessionRowBadgePolicy.contextTooltip(contextTokens: session.contextTokens, language: lang))
 
+        case .metrics:
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                if session.isRunning {
+                if SessionRowBadgePolicy.showsLiveTps(for: session) {
                     HStack(spacing: 2) {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 8.5))
@@ -2302,15 +2324,28 @@ struct CompactSessionRowView: View {
                 }
             }
             .frame(width: SessionRowBadgePolicy.metricsColumnWidth, alignment: .trailing)
+
+        case .model:
+            Group {
+                if SessionRowBadgePolicy.hasModel(session.model) {
+                    SessionCapsuleBadge(
+                        text: SessionRowBadgePolicy.modelBadgeText(session.model),
+                        font: .system(size: SessionRowBadgePolicy.modelFontSize, weight: .medium),
+                        foregroundColor: Color.primary.opacity(0.75),
+                        fillColor: Color.primary.opacity(0.055),
+                        horizontalPadding: 6.5,
+                        verticalPadding: 2
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("—")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color.secondary.opacity(0.35))
+                }
+            }
+            .frame(width: SessionRowBadgePolicy.modelColumnWidth, alignment: .trailing)
+            .help(L10n.modelHelp(session.model, lang))
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5.5)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .onHover { isHovered = $0 }
     }
 }
 

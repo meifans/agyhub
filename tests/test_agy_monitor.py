@@ -162,6 +162,93 @@ class AgyMonitorSubagentTests(unittest.TestCase):
 
         self.assertGreaterEqual(payload["active_count"], 1)
 
+    def test_idle_parent_with_not_fully_idle_flag_is_not_marked_running_or_leaking_tps(self) -> None:
+        parent_id = "a92ce2cc-0000-0000-0000-000000000001"
+        sub_run_id = "fedcc2bd-0000-0000-0000-000000000002"
+        now_utc = datetime.now(timezone.utc)
+        t0 = (now_utc - timedelta(minutes=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        t1 = (now_utc - timedelta(minutes=5, seconds=58)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        t_sub0 = (now_utc - timedelta(seconds=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        t_sub1 = (now_utc - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        self._insert_summary(
+            parent_id,
+            "页面按钮布局位移问题",
+            2000,
+            status="CASCADE_RUN_STATUS_IDLE",
+            not_fully_idle=1,
+        )
+        self._insert_summary(
+            sub_run_id,
+            "",
+            2005,
+            status="CASCADE_RUN_STATUS_RUNNING",
+            agent_name="guardrail-tests",
+            parent_id=parent_id,
+            depth=1,
+            not_fully_idle=1,
+        )
+
+        _write_transcript(
+            self.brain_dir,
+            parent_id,
+            [
+                {"step_index": 0, "type": "USER_INPUT", "created_at": t0, "content": "fix layout"},
+                {"step_index": 1, "type": "PLANNER_RESPONSE", "created_at": t1, "input_tokens": 1000, "cache_read_tokens": 9000, "output_tokens": 300, "content": "dispatched workers"},
+            ],
+        )
+        _write_transcript(
+            self.brain_dir,
+            sub_run_id,
+            [
+                {"step_index": 0, "type": "GENERIC", "created_at": t_sub0, "content": "run"},
+                {"step_index": 1, "type": "PLANNER_RESPONSE", "created_at": t_sub1, "input_tokens": 500, "cache_read_tokens": 1500, "output_tokens": 150, "tool_calls": [{"name": "run_command", "args": {"CommandLine": "pytest"}}]},
+            ],
+        )
+
+        payload = agy_monitor.build_json_payload(data_dir=self.base_dir, anchor_path=self.anchor_path, now_dt=now_utc)
+        self.assertEqual([s["uuid"] for s in payload["sessions"]], [parent_id])
+        parent = payload["sessions"][0]
+
+        self.assertFalse(parent["is_running"])
+        self.assertEqual(parent["status_label"], "CASCADE_RUN_STATUS_IDLE")
+        self.assertEqual(parent["health_code"], "idle")
+        self.assertEqual(parent["active_subagent_count"], 1)
+        self.assertAlmostEqual(parent["active_subagent_tps"], 15.0, places=1)
+        self.assertEqual(payload["active_count"], 1)
+        self.assertIn("15t/s", payload["menubar"]["text"])
+        self.assertNotIn("150t/s", payload["menubar"]["text"])
+
+        direct_parent = agy_monitor.inspect_session(
+            parent_id,
+            db_path=self.db_path,
+            brain_dir=self.brain_dir,
+            conversations_dir=self.conv_dir,
+            now_dt=now_utc,
+        )
+        self.assertFalse(direct_parent["is_running"])
+
+        zero_tps_sub = {
+            **parent,
+            "current_stall": 46.0,
+            "active_subagent_tps": 0.0,
+            "subagents": [{**parent["subagents"][0], "tps": 0.0, "current_stall": 3.0}],
+        }
+        menubar_zero = agy_monitor.build_menubar_summary([zero_tps_sub], {"cost_usd": 1.0})
+        self.assertNotIn("150t/s", menubar_zero["text"])
+        self.assertEqual(menubar_zero["status_level"], "healthy")
+
+        legacy_id = "legacy00-0000-0000-0000-000000000003"
+        self._insert_summary(legacy_id, "Legacy Blank Status", 3000, status="", not_fully_idle=1)
+        legacy_res = agy_monitor.inspect_session(
+            legacy_id,
+            db_path=self.db_path,
+            brain_dir=self.brain_dir,
+            conversations_dir=self.conv_dir,
+            now_dt=now_utc,
+        )
+        self.assertTrue(legacy_res["is_running"])
+
     def test_subagents_do_not_evict_top_level_sessions_under_limit(self) -> None:
         parent_id = "p0000000-0000-0000-0000-000000000001"
         self._insert_summary(parent_id, "Coordinator Parent", 5000)

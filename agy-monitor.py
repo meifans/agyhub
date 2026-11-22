@@ -891,6 +891,13 @@ def _apply_dynamic_session_fields(res: dict, static_data: dict, brief: bool, now
     if not brief:
         res["history_steps"] = [dict(st) for st in (static_data.get("history_steps") or [])]
 
+def _is_cascade_running(status: str | None, not_fully_idle: object = 0) -> bool:
+    status_norm = str(status or "").strip().upper()
+    if status_norm:
+        return "RUNNING" in status_norm
+    return bool(not_fully_idle == 1)
+
+
 def inspect_session(
     uuid: str,
     brief: bool = True,
@@ -968,7 +975,7 @@ def inspect_session(
     if _preloaded_summary is not None:
         title_v, status_v, idle_flag_v, parent_v, agent_v = _preloaded_summary
         res["title"] = title_v or uuid[:8]
-        res["is_running"] = (idle_flag_v == 1) or ("RUNNING" in (status_v or ""))
+        res["is_running"] = _is_cascade_running(status_v, idle_flag_v)
         res["status_label"] = "RUNNING" if res["is_running"] else (status_v or "IDLE")
         res["parent_conversation_id"] = str(parent_v or "").strip()
         res["agent_name"] = str(agent_v or "").strip()
@@ -988,7 +995,7 @@ def inspect_session(
             conn.close()
             if row:
                 res["title"] = row[0] or uuid[:8]
-                res["is_running"] = (row[2] == 1) or ("RUNNING" in (row[1] or ""))
+                res["is_running"] = _is_cascade_running(row[1], row[2])
                 res["status_label"] = "RUNNING" if res["is_running"] else (row[1] or "IDLE")
                 res["parent_conversation_id"] = str(row[3] or "").strip()
                 res["agent_name"] = str(row[4] or "").strip()
@@ -1190,7 +1197,7 @@ def _load_conversations_from_dir(
             for r in child_rows:
                 cid, _, status, idle_flag, _, pid, _ = r
                 rows_by_id.setdefault(cid, r)
-                is_child_running = (idle_flag == 1) or ("RUNNING" in (status or ""))
+                is_child_running = _is_cascade_running(status, idle_flag)
                 if is_child_running and pid and pid not in rows_by_id:
                     missing_active_parents.add(pid)
 
@@ -1262,7 +1269,7 @@ def _load_conversations_from_dir(
                 descriptor_cache[parent_id_clean] = descs
             descs_for_parent = descs
 
-        is_run = (idle_flag == 1) or ("RUNNING" in (status or ""))
+        is_run = _is_cascade_running(status, idle_flag)
         s_data = inspect_session(
             cid,
             brief=(not include_steps),
@@ -2978,17 +2985,26 @@ def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -
 
     alert_sessions = [
         s for s in running_sessions
-        if s.get("error_code") in ("503", "429", "EOF") or s.get("current_stall", 0) >= 30
+        if (s.get("is_running") and (s.get("error_code") in ("503", "429", "EOF") or s.get("current_stall", 0) >= 30))
+        or any(
+            sub.get("is_running") and (sub.get("error_code") in ("503", "429", "EOF") or sub.get("current_stall", 0) >= 30)
+            for sub in (s.get("subagents") or [])
+        )
     ]
     primary = alert_sessions[0] if alert_sessions else running_sessions[0]
     active_subs = [sub for sub in (primary.get("subagents") or []) if sub.get("is_running")]
-    stall_candidates = [primary.get("current_stall", 0.0)] + [sub.get("current_stall", 0.0) for sub in active_subs]
+    stall_candidates = ([primary.get("current_stall", 0.0)] if primary.get("is_running") else []) + [
+        sub.get("current_stall", 0.0) for sub in active_subs
+    ]
     effective_stall = max(stall_candidates) if stall_candidates else 0.0
     stall_str = fmt_hms_units(effective_stall)
-    err_code = primary.get("error_code")
+    err_code = primary.get("error_code") if primary.get("is_running") else next(
+        (sub.get("error_code") for sub in active_subs if sub.get("error_code") in ("503", "429", "EOF")),
+        None,
+    )
     tps = primary.get("tps", 0.0) if primary.get("is_running") else primary.get("active_subagent_tps", 0.0)
-    if tps <= 0:
-        tps = primary.get("active_subagent_tps", 0.0) or primary.get("tps", 0.0)
+    if tps <= 0 and primary.get("is_running"):
+        tps = primary.get("active_subagent_tps", 0.0)
 
     if err_code == "503":
         return {
@@ -3011,14 +3027,14 @@ def build_menubar_summary(sessions: list, today_stats: dict, lang: str = "zh") -
             "status_level": "warning",
             "active_count": len(running_sessions),
         }
-    if primary.get("current_stall", 0.0) >= 90:
+    if effective_stall >= 90:
         return {
             "icon": "🔴",
             "text": f"🔴 {queue_label} {stall_str} | {cost_str}",
             "status_level": "critical",
             "active_count": len(running_sessions),
         }
-    if primary.get("current_stall", 0.0) >= 30:
+    if effective_stall >= 30:
         return {
             "icon": "🟡",
             "text": f"🟡 {queue_label} {stall_str} | {cost_str}",

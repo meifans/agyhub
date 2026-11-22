@@ -104,6 +104,10 @@ enum Recent503Policy {
         return now.timeIntervalSince(last) >= refreshIntervalSeconds
     }
 
+    static func shouldShowBadge(count: Int) -> Bool {
+        count > 0
+    }
+
     static func badgeText(count: Int) -> String {
         "503: \(max(0, count))"
     }

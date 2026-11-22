@@ -1395,6 +1395,42 @@ struct AGYHubTestsRunner {
             longModelHost.fittingSize.width <= 260,
             "超长模型名不得借助 fixedSize 突破 70pt 列宽撑宽整行或压盖标题 (fittingWidth=\(longModelHost.fittingSize.width))"
         )
+
+        expectEqual(
+            SessionRowBadgePolicy.trailingColumns(showModel: false),
+            [.context, .metrics],
+            "默认关闭展示模型时，尾列应只渲染上下文与用量/速率，不预留空模型列"
+        )
+        expectEqual(
+            SessionRowBadgePolicy.trailingColumns(showModel: true),
+            [.context, .metrics, .model],
+            "开启展示模型时，模型胶囊必须排在整行最后（上下文 -> 用量/速率 -> 模型）"
+        )
+
+        let modelToggleHost = NSHostingView(rootView: CompactSessionRowView(session: ultraLongModelSession, showModelColumn: true))
+        expect(
+            modelToggleHost.fittingSize.width <= 260,
+            "开启模型列时超长模型名仍不得撑宽整行 (fittingWidth=\(modelToggleHost.fittingSize.width))"
+        )
+
+        let suiteName = "com.antigravity.agyhub.tests.showmodel.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        MainActor.assumeIsolated {
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            expect(!store.showSessionModelColumn, "是否展示会话模型默认必须关闭")
+            store.toggleSessionModelColumn(true)
+            expect(store.showSessionModelColumn, "开启后应立即更新状态")
+
+            let reloaded = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            expect(reloaded.showSessionModelColumn, "重启重新实例化后应持久化保留展示模型选项")
+            reloaded.toggleSessionModelColumn(false)
+            expect(!reloaded.showSessionModelColumn, "关闭后应同步持久化")
+        }
+
+        expect(!L10n.t(.showSessionModelToggle, .zhHans).isEmpty, "设置项中文文案不得为空")
+        expect(!containsCJK(L10n.t(.showSessionModelToggle, .en)), "设置项英文文案不得残留中文")
     }
 
     static func testWriteCLITokenFileRejectsMissingAccessTokenAndPersists0600() {
@@ -1791,6 +1827,7 @@ struct AGYHubTestsRunner {
         expectEqual(parent.effectiveActiveSubagentCount, 1, "应准确统计当前 1 个正在干活的子 Agent")
         expectEqual(parent.effectiveActiveSubagentTps, 120.4, "应汇总活跃子 Agent 速率 120.4 t/s")
         expect(parent.isActivelyWorking, "哪怕协调者本身 IDLE，只要有子 Agent 在跑，整条父会话应判定为工作中")
+        expect(!SessionRowBadgePolicy.showsLiveTps(for: parent), "主会话本身待命时，列表右侧不应渲染主会话历史 t/s，只能由子 Agent 徽章展示子代理速率")
 
         let plainSession = SessionItem(uuid: "plain-1", title: "Normal Task")
         expect(SessionRowBadgePolicy.subagentBadgeText(for: plainSession) == nil, "普通无子 Agent 会话不得渲染子 Agent Tag")
@@ -2542,6 +2579,10 @@ struct AGYHubTestsRunner {
         expect(Recent503Policy.severityLevel(count: 0) == .normal, "0 次为正常态")
         expect(Recent503Policy.severityLevel(count: 3) == .caution, "1-9 次为提醒态")
         expect(Recent503Policy.severityLevel(count: 58) == .warning, ">=10 次为告警态")
+        expect(!Recent503Policy.shouldShowBadge(count: 0), "503 为 0 时不得展示 503 胶囊")
+        expect(!Recent503Policy.shouldShowBadge(count: -1), "503 为负数时不得展示 503 胶囊")
+        expect(Recent503Policy.shouldShowBadge(count: 1), "存在至少 1 次 503 时应展示 503 胶囊")
+        expect(Recent503Policy.shouldShowBadge(count: 58), "存在多次 503 时应展示 503 胶囊")
     }
 
     static func testNativeWindowActivationPolicyAndMainMenuContract() {
