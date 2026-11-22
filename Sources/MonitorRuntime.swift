@@ -423,44 +423,92 @@ final class MonitorDaemonClient: @unchecked Sendable {
         return proc.processIdentifier
     }
 
+    private struct DaemonScalarId: Decodable {
+        let stringValue: String
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let s = try? c.decode(String.self) {
+                self.stringValue = s
+            } else if let i = try? c.decode(Int.self) {
+                self.stringValue = String(i)
+            } else if let d = try? c.decode(Double.self) {
+                self.stringValue = String(d)
+            } else {
+                throw DecodingError.typeMismatch(
+                    String.self,
+                    DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unsupported daemon id")
+                )
+            }
+        }
+    }
+
+    private struct DaemonIdProbe: Decodable {
+        let id: DaemonScalarId?
+    }
+
+    private struct EmptyDaemonPayload: Decodable {}
+
+    private struct DaemonResponseEnvelope<Payload: Decodable>: Decodable {
+        let ok: Bool?
+        let error: String?
+        let pong: Bool?
+        let etag: String?
+        let unchanged: Bool?
+        let payload: Payload?
+    }
+
+    private struct DaemonRequest: Encodable {
+        let id: String
+        let cmd: String
+        var lang: String? = nil
+        var ifNoneMatch: String? = nil
+        var days: Int? = nil
+        var sessionId: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case id, cmd, lang, days
+            case ifNoneMatch = "if_none_match"
+            case sessionId = "session_id"
+        }
+    }
+
     func ping(dataDir: String? = nil) -> Result<Bool, DaemonError> {
-        switch sendRequest(cmd: "ping", extraFields: [:], dataDir: dataDir) {
-        case .success(let dict):
-            return .success((dict["pong"] as? Bool) ?? true)
+        let request = DaemonRequest(id: "", cmd: "ping")
+        switch sendDecodedRequest(request, responseType: EmptyDaemonPayload.self, dataDir: dataDir) {
+        case .success(let env):
+            return .success(env.pong ?? true)
         case .failure(let err):
             return .failure(err)
         }
     }
 
     func fetchSnapshot(ifNoneMatch: String?, dataDir: String?, lang: String = "zh") -> Result<SnapshotResult, DaemonError> {
-        var extra: [String: Any] = ["lang": lang]
-        if let etag = ifNoneMatch, !etag.isEmpty {
-            extra["if_none_match"] = etag
-        }
-        switch sendRequest(cmd: "snapshot", extraFields: extra, dataDir: dataDir) {
-        case .success(let dict):
-            let etag = dict["etag"] as? String
-            let unchanged = (dict["unchanged"] as? Bool) ?? false
-            if unchanged {
-                return .success(.unchanged(etag: etag))
+        let request = DaemonRequest(
+            id: "",
+            cmd: "snapshot",
+            lang: lang,
+            ifNoneMatch: (ifNoneMatch?.isEmpty == false) ? ifNoneMatch : nil
+        )
+        switch sendDecodedRequest(request, responseType: MonitorPayload.self, dataDir: dataDir) {
+        case .success(let env):
+            if env.unchanged ?? false {
+                return .success(.unchanged(etag: env.etag))
             }
-            guard let payloadObj = dict["payload"],
-                  let payloadData = try? JSONSerialization.data(withJSONObject: payloadObj),
-                  let decoded = try? JSONDecoder().decode(MonitorPayload.self, from: payloadData) else {
+            guard let decoded = env.payload else {
                 return .failure(.invalidResponse)
             }
-            return .success(.updated(payload: decoded, etag: etag))
+            return .success(.updated(payload: decoded, etag: env.etag))
         case .failure(let err):
             return .failure(err)
         }
     }
 
     func fetchRecent503(dataDir: String?) -> Result<Recent503Stats, DaemonError> {
-        switch sendRequest(cmd: "recent_503", extraFields: [:], dataDir: dataDir) {
-        case .success(let dict):
-            guard let payloadObj = dict["payload"],
-                  let payloadData = try? JSONSerialization.data(withJSONObject: payloadObj),
-                  let decoded = try? JSONDecoder().decode(Recent503Stats.self, from: payloadData) else {
+        let request = DaemonRequest(id: "", cmd: "recent_503")
+        switch sendDecodedRequest(request, responseType: Recent503Stats.self, dataDir: dataDir) {
+        case .success(let env):
+            guard let decoded = env.payload else {
                 return .failure(.invalidResponse)
             }
             return .success(decoded)
@@ -470,11 +518,10 @@ final class MonitorDaemonClient: @unchecked Sendable {
     }
 
     func fetchUsageHistory(days: Int = 30, dataDir: String?) -> Result<UsageHistoryPayload, DaemonError> {
-        switch sendRequest(cmd: "usage_history", extraFields: ["days": days], dataDir: dataDir) {
-        case .success(let dict):
-            guard let payloadObj = dict["payload"],
-                  let payloadData = try? JSONSerialization.data(withJSONObject: payloadObj),
-                  let decoded = try? JSONDecoder().decode(UsageHistoryPayload.self, from: payloadData) else {
+        let request = DaemonRequest(id: "", cmd: "usage_history", days: days)
+        switch sendDecodedRequest(request, responseType: UsageHistoryPayload.self, dataDir: dataDir) {
+        case .success(let env):
+            guard let decoded = env.payload else {
                 return .failure(.invalidResponse)
             }
             return .success(decoded)
@@ -484,11 +531,10 @@ final class MonitorDaemonClient: @unchecked Sendable {
     }
 
     func analyzeSession(uuid: String, dataDir: String?, lang: String = "zh") -> Result<SessionDiagnosticsPayload, DaemonError> {
-        switch sendRequest(cmd: "analyze_session", extraFields: ["session_id": uuid, "lang": lang], dataDir: dataDir) {
-        case .success(let dict):
-            guard let payloadObj = dict["payload"],
-                  let payloadData = try? JSONSerialization.data(withJSONObject: payloadObj),
-                  let decoded = try? JSONDecoder().decode(SessionDiagnosticsPayload.self, from: payloadData) else {
+        let request = DaemonRequest(id: "", cmd: "analyze_session", lang: lang, sessionId: uuid)
+        switch sendDecodedRequest(request, responseType: SessionDiagnosticsPayload.self, dataDir: dataDir) {
+        case .success(let env):
+            guard let decoded = env.payload else {
                 return .failure(.invalidResponse)
             }
             return .success(decoded)
@@ -515,11 +561,35 @@ final class MonitorDaemonClient: @unchecked Sendable {
         terminateDetachedProcess(detached, graceful: true)
     }
 
-    private func sendRequest(
-        cmd: String,
-        extraFields: [String: Any],
+    private func sendDecodedRequest<Payload: Decodable>(
+        _ template: DaemonRequest,
+        responseType: Payload.Type,
         dataDir: String?
-    ) -> Result<[String: Any], DaemonError> {
+    ) -> Result<DaemonResponseEnvelope<Payload>, DaemonError> {
+        switch sendRawRequest(template, dataDir: dataDir) {
+        case .failure(let err):
+            return .failure(err)
+        case .success(let respLineData):
+            guard let envelope = try? JSONDecoder().decode(DaemonResponseEnvelope<Payload>.self, from: respLineData) else {
+                return .failure(.invalidResponse)
+            }
+            let ok = envelope.ok ?? false
+            if !ok {
+                let errMsg = envelope.error ?? "daemon error"
+                return .failure(.remoteError(errMsg))
+            }
+            stateLock.lock()
+            consecutiveFailures = 0
+            backoffUntil = .distantPast
+            stateLock.unlock()
+            return .success(envelope)
+        }
+    }
+
+    private func sendRawRequest(
+        _ template: DaemonRequest,
+        dataDir: String?
+    ) -> Result<Data, DaemonError> {
         var processToTerminate: (proc: Process?, stdin: FileHandle?, stdout: FileHandle?, stderr: FileHandle?)? = nil
         var staleWaiters: [(Result<Data, DaemonError>) -> Void] = []
 
@@ -585,16 +655,22 @@ final class MonitorDaemonClient: @unchecked Sendable {
         }
         stateLock.unlock()
 
-        var reqDict = extraFields
-        reqDict["id"] = reqId
-        reqDict["cmd"] = cmd
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: reqDict),
-              let lineData = String(data: jsonData, encoding: .utf8).map({ ($0 + "\n").data(using: .utf8) }) ?? nil else {
+        let request = DaemonRequest(
+            id: reqId,
+            cmd: template.cmd,
+            lang: template.lang,
+            ifNoneMatch: template.ifNoneMatch,
+            days: template.days,
+            sessionId: template.sessionId
+        )
+        guard let jsonData = try? JSONEncoder().encode(request) else {
             stateLock.lock()
             _ = pendingWaiters.removeValue(forKey: reqId)
             stateLock.unlock()
             return .failure(.invalidResponse)
         }
+        var lineData = jsonData
+        lineData.append(0x0A)
 
         let writeSucceeded: Bool = writeQueue.sync {
             do {
@@ -654,24 +730,7 @@ final class MonitorDaemonClient: @unchecked Sendable {
             }
         }
 
-        switch capturedResult {
-        case .success(let respLineData):
-            guard let obj = try? JSONSerialization.jsonObject(with: respLineData) as? [String: Any] else {
-                return .failure(.invalidResponse)
-            }
-            let ok = (obj["ok"] as? Bool) ?? false
-            if !ok {
-                let errMsg = (obj["error"] as? String) ?? "daemon error"
-                return .failure(.remoteError(errMsg))
-            }
-            stateLock.lock()
-            consecutiveFailures = 0
-            backoffUntil = .distantPast
-            stateLock.unlock()
-            return .success(obj)
-        case .failure(let err):
-            return .failure(err)
-        }
+        return capturedResult
     }
 
     private func spawnProcessLocked(dataDir: String?) -> Bool {
@@ -688,7 +747,9 @@ final class MonitorDaemonClient: @unchecked Sendable {
         proc.standardError = errPipe
 
         errPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
+            autoreleasepool {
+                _ = handle.availableData
+            }
         }
 
         do {
@@ -710,7 +771,11 @@ final class MonitorDaemonClient: @unchecked Sendable {
         self.activeDataDir = dataDir
 
         let outHandle = outPipe.fileHandleForReading
-        let readerQueue = DispatchQueue(label: "com.antigravity.agyhub.daemon-read.\(gen)", qos: .utility)
+        let readerQueue = DispatchQueue(
+            label: "com.antigravity.agyhub.daemon-read.\(gen)",
+            qos: .utility,
+            autoreleaseFrequency: .workItem
+        )
         readerQueue.async { [weak self] in
             self?.readStdoutLoop(handle: outHandle, generation: gen)
         }
@@ -719,31 +784,39 @@ final class MonitorDaemonClient: @unchecked Sendable {
 
     private func readStdoutLoop(handle: FileHandle, generation: UInt64) {
         var buffer = Data()
+        let idDecoder = JSONDecoder()
         while true {
-            let chunk: Data = autoreleasepool {
-                handle.availableData
-            }
-            if chunk.isEmpty {
-                break
-            }
-            buffer.append(chunk)
-            while let newlineIdx = buffer.firstIndex(of: 0x0A) {
-                let rawLine = buffer.subdata(in: buffer.startIndex..<newlineIdx)
-                buffer.removeSubrange(buffer.startIndex...newlineIdx)
-                let trimmed = String(data: rawLine, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !trimmed.isEmpty,
-                      let lineData = trimmed.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                      let rawId = dict["id"] else {
-                    continue
+            var shouldStop = false
+            autoreleasepool {
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    shouldStop = true
+                    return
                 }
-                let idStr = String(describing: rawId)
-                stateLock.lock()
-                let isCurrentGen = (activeGeneration == generation)
-                let waiter = isCurrentGen ? pendingWaiters.removeValue(forKey: idStr) : nil
-                stateLock.unlock()
-                waiter?(.success(lineData))
+                buffer.append(chunk)
+                while let newlineIdx = buffer.firstIndex(of: 0x0A) {
+                    let rawLine = buffer.subdata(in: buffer.startIndex..<newlineIdx)
+                    buffer.removeSubrange(buffer.startIndex...newlineIdx)
+                    autoreleasepool {
+                        guard let lineText = String(data: rawLine, encoding: .utf8) else { return }
+                        let trimmed = lineText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty,
+                              let lineData = trimmed.data(using: .utf8),
+                              let probe = try? idDecoder.decode(DaemonIdProbe.self, from: lineData),
+                              let rawId = probe.id else {
+                            return
+                        }
+                        let idStr = rawId.stringValue
+                        stateLock.lock()
+                        let isCurrentGen = (activeGeneration == generation)
+                        let waiter = isCurrentGen ? pendingWaiters.removeValue(forKey: idStr) : nil
+                        stateLock.unlock()
+                        waiter?(.success(lineData))
+                    }
+                }
+            }
+            if shouldStop {
+                break
             }
         }
 
@@ -885,6 +958,8 @@ final class AGYHubStore: ObservableObject {
     private var observedActiveAppEmail: String? = nil
     private var observedActiveCLIEmail: String? = nil
     private var isAppSwitchInProgress: Bool = false
+    private var lastFSEventFetchAt: Date? = nil
+    private var lastCLIStateRefreshAt: Date? = nil
 
     private let isMonitoringEnabled: Bool
     private let userDefaults: UserDefaults
@@ -1148,6 +1223,7 @@ final class AGYHubStore: ObservableObject {
             onVisibleRefreshRequested?()
             if isMonitoringEnabled {
                 fetchMonitorData()
+                refreshCLIAccountState(force: false)
             }
         }
     }
@@ -1212,7 +1288,17 @@ final class AGYHubStore: ObservableObject {
             debounceInterval: 0.4
         ) { [weak self] in
             Task { @MainActor [weak self] in
-                self?.fetchMonitorData()
+                guard let self = self else { return }
+                let now = Date()
+                guard PollingSchedulePolicy.shouldAttemptFSEventFetch(
+                    lastTriggeredAt: self.lastFSEventFetchAt,
+                    isDashboardVisible: self.isDashboardVisible,
+                    now: now
+                ) else {
+                    return
+                }
+                self.lastFSEventFetchAt = now
+                self.fetchMonitorData()
             }
         }
         backgroundResources.directoryWatcher = watcher
@@ -1337,51 +1423,53 @@ final class AGYHubStore: ObservableObject {
         let daemon = ensureDaemonClient()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
+            autoreleasepool {
+                guard let self = self else { return }
 
-            if let daemon, case .success(let snapResult) = daemon.fetchSnapshot(ifNoneMatch: etagSnapshot, dataDir: dataDir, lang: langCode) {
-                Task { @MainActor in
-                    switch snapResult {
-                    case .unchanged(let newEtag):
-                        if let newEtag, !newEtag.isEmpty {
+                if let daemon, case .success(let snapResult) = daemon.fetchSnapshot(ifNoneMatch: etagSnapshot, dataDir: dataDir, lang: langCode) {
+                    Task { @MainActor in
+                        switch snapResult {
+                        case .unchanged(let newEtag):
+                            if let newEtag, !newEtag.isEmpty {
+                                self.lastSnapshotEtag = newEtag
+                            }
+                        case .updated(let decoded, let newEtag):
                             self.lastSnapshotEtag = newEtag
+                            _ = self.applyMonitorPayloadIfChanged(decoded)
                         }
-                    case .updated(let decoded, let newEtag):
-                        self.lastSnapshotEtag = newEtag
+                        self.isFetching = false
+                        self.refreshCLIAccountState(force: false)
+                        self.refreshQuotasIfNeeded()
+                        self.refreshRecent503IfNeeded()
+                        if self.isUsageDashboardPresented {
+                            self.fetchUsageHistory(force: false)
+                        }
+                    }
+                    return
+                }
+
+                if let data = Self.runOneShotMonitorProcess(
+                    pythonBin: pythonBin,
+                    arguments: [scriptPath, "--json", "--data-dir", dataDir, "--lang", langCode]
+                ),
+                   let decoded = try? JSONDecoder().decode(MonitorPayload.self, from: data) {
+                    Task { @MainActor in
+                        self.lastSnapshotEtag = nil
                         _ = self.applyMonitorPayloadIfChanged(decoded)
+                        self.isFetching = false
+                        self.refreshCLIAccountState(force: false)
+                        self.refreshQuotasIfNeeded()
+                        self.refreshRecent503IfNeeded()
+                        if self.isUsageDashboardPresented {
+                            self.fetchUsageHistory(force: false)
+                        }
                     }
-                    self.isFetching = false
-                    self.refreshCLIAccountState()
-                    self.refreshQuotasIfNeeded()
-                    self.refreshRecent503IfNeeded()
-                    if self.isUsageDashboardPresented {
-                        self.fetchUsageHistory(force: false)
-                    }
+                    return
                 }
-                return
-            }
 
-            if let data = Self.runOneShotMonitorProcess(
-                pythonBin: pythonBin,
-                arguments: [scriptPath, "--json", "--data-dir", dataDir, "--lang", langCode]
-            ),
-               let decoded = try? JSONDecoder().decode(MonitorPayload.self, from: data) {
                 Task { @MainActor in
-                    self.lastSnapshotEtag = nil
-                    _ = self.applyMonitorPayloadIfChanged(decoded)
                     self.isFetching = false
-                    self.refreshCLIAccountState()
-                    self.refreshQuotasIfNeeded()
-                    self.refreshRecent503IfNeeded()
-                    if self.isUsageDashboardPresented {
-                        self.fetchUsageHistory(force: false)
-                    }
                 }
-                return
-            }
-
-            Task { @MainActor in
-                self.isFetching = false
             }
         }
     }
@@ -1402,32 +1490,34 @@ final class AGYHubStore: ObservableObject {
         let daemon = ensureDaemonClient()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            var decoded: Recent503Stats? = nil
-            if let daemon, case .success(let stats) = daemon.fetchRecent503(dataDir: dataDir) {
-                decoded = stats
-            } else if let data = Self.runOneShotMonitorProcess(
-                pythonBin: pythonBin,
-                arguments: [scriptPath, "--recent-503", "--data-dir", dataDir]
-            ) {
-                decoded = try? JSONDecoder().decode(Recent503Stats.self, from: data)
-            }
+            autoreleasepool {
+                guard let self = self else { return }
+                var decoded: Recent503Stats? = nil
+                if let daemon, case .success(let stats) = daemon.fetchRecent503(dataDir: dataDir) {
+                    decoded = stats
+                } else if let data = Self.runOneShotMonitorProcess(
+                    pythonBin: pythonBin,
+                    arguments: [scriptPath, "--recent-503", "--data-dir", dataDir]
+                ) {
+                    decoded = try? JSONDecoder().decode(Recent503Stats.self, from: data)
+                }
 
-            if let decoded {
-                Task { @MainActor in
-                    if self.recent503Count != decoded.count {
-                        self.recent503Count = decoded.count
+                if let decoded {
+                    Task { @MainActor in
+                        if self.recent503Count != decoded.count {
+                            self.recent503Count = decoded.count
+                        }
+                        let now = Date()
+                        self.recent503CheckedAt = now
+                        self.lastRecent503FetchTime = now
+                        self.isFetchingRecent503 = false
                     }
-                    let now = Date()
-                    self.recent503CheckedAt = now
-                    self.lastRecent503FetchTime = now
+                    return
+                }
+
+                Task { @MainActor in
                     self.isFetchingRecent503 = false
                 }
-                return
-            }
-
-            Task { @MainActor in
-                self.isFetchingRecent503 = false
             }
         }
     }
@@ -1459,36 +1549,38 @@ final class AGYHubStore: ObservableObject {
         let daemon = ensureDaemonClient()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            var decoded: UsageHistoryPayload? = nil
-            if let daemon, case .success(let payload) = daemon.fetchUsageHistory(days: days, dataDir: dataDir) {
-                decoded = payload
-            } else if let data = Self.runOneShotMonitorProcess(
-                pythonBin: pythonBin,
-                arguments: [scriptPath, "--usage-history", "--days", String(days), "--data-dir", dataDir]
-            ) {
-                decoded = try? JSONDecoder().decode(UsageHistoryPayload.self, from: data)
-            }
+            autoreleasepool {
+                guard let self = self else { return }
+                var decoded: UsageHistoryPayload? = nil
+                if let daemon, case .success(let payload) = daemon.fetchUsageHistory(days: days, dataDir: dataDir) {
+                    decoded = payload
+                } else if let data = Self.runOneShotMonitorProcess(
+                    pythonBin: pythonBin,
+                    arguments: [scriptPath, "--usage-history", "--days", String(days), "--data-dir", dataDir]
+                ) {
+                    decoded = try? JSONDecoder().decode(UsageHistoryPayload.self, from: data)
+                }
 
-            if let decoded {
-                Task { @MainActor in
-                    if self.usageHistory != decoded {
-                        self.usageHistory = decoded
+                if let decoded {
+                    Task { @MainActor in
+                        if self.usageHistory != decoded {
+                            self.usageHistory = decoded
+                        }
+                        self.lastUsageHistoryFetchTime = Date()
+                        if self.isLoadingUsageHistory {
+                            self.isLoadingUsageHistory = false
+                        }
+                        self.isFetchingUsageHistory = false
                     }
-                    self.lastUsageHistoryFetchTime = Date()
+                    return
+                }
+
+                Task { @MainActor in
                     if self.isLoadingUsageHistory {
                         self.isLoadingUsageHistory = false
                     }
                     self.isFetchingUsageHistory = false
                 }
-                return
-            }
-
-            Task { @MainActor in
-                if self.isLoadingUsageHistory {
-                    self.isLoadingUsageHistory = false
-                }
-                self.isFetchingUsageHistory = false
             }
         }
     }
@@ -1626,11 +1718,17 @@ final class AGYHubStore: ObservableObject {
 
     private var isRefreshingCLIState = false
 
-    func refreshCLIAccountState() {
-        guard !KeychainDriftPolicy.shouldSkipCLIStateRefresh(
+    func refreshCLIAccountState(force: Bool = true) {
+        let now = Date()
+        guard PollingSchedulePolicy.shouldRefreshCLIState(
+            lastRefreshedAt: lastCLIStateRefreshAt,
             isRefreshing: isRefreshingCLIState,
-            isAppSwitchInProgress: isAppSwitchInProgress
+            isAppSwitchInProgress: isAppSwitchInProgress,
+            isDashboardVisible: isDashboardVisible,
+            force: force,
+            now: now
         ) else { return }
+        lastCLIStateRefreshAt = now
         isRefreshingCLIState = true
         let hDir = homeDir
         let pRoot = profilesRootDir
@@ -1638,125 +1736,129 @@ final class AGYHubStore: ObservableObject {
         let storageEmailSnapshot = appStorageEmail
         let isIndependent = isCLIIndependentMode
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let mainDir = "\(hDir)/Library/Application Support/Antigravity"
-            let storageEmail = LocalAccountDetector.detectEmailFromUserDataDir(mainDir) ?? storageEmailSnapshot
-            let resolution = CLIAccountManager.resolveSharedKeychainOwner(
-                homeDir: hDir,
-                profilesRootDir: pRoot
-            )
-            let sharedEmailFallback = resolution.email ?? (storageEmail.isEmpty ? nil : storageEmail)
-            let activeCLI = CLIAccountManager.detectActiveCLIProfile(
-                homeDir: hDir,
-                profilesRootDir: pRoot,
-                allowVaultCapture: authorized,
-                sharedKeychainEmail: sharedEmailFallback,
-                isIndependentMode: isIndependent
-            )
-            let appAuthDate = CLIAccountManager.detectLatestDesktopAppAuthDate(homeDir: hDir)
-            let existingExpected = CLIAccountManager.readExpectedAppStateFile(profilesRootDir: pRoot)
-            let advancedExpected = KeychainDriftPolicy.syncedExpectedAppStateAfterDesktopLogin(
-                existingExpected: existingExpected,
-                appStorageEmail: storageEmail,
-                desktopAppAuthDate: appAuthDate
-            )
-            let switchState = advancedExpected ?? KeychainDriftPolicy.resolveExpectedSwitchState(
-                expectedAppState: existingExpected,
-                cliActiveState: CLIAccountManager.readActiveStateFile(profilesRootDir: pRoot),
-                resolution: resolution
-            )
-            if let updatedExpected = advancedExpected ?? (existingExpected == nil ? switchState : nil) {
-                CLIAccountManager.writeExpectedAppStateFile(
-                    email: updatedExpected.email,
+            autoreleasepool {
+                let mainDir = "\(hDir)/Library/Application Support/Antigravity"
+                let storageEmail = LocalAccountDetector.detectEmailFromUserDataDir(mainDir) ?? storageEmailSnapshot
+                let appAuthDate = CLIAccountManager.detectLatestDesktopAppAuthDate(homeDir: hDir)
+                let resolution = CLIAccountManager.resolveSharedKeychainOwner(
+                    homeDir: hDir,
                     profilesRootDir: pRoot,
-                    switchedAt: updatedExpected.switchedAt
+                    precomputedAppAuthDate: appAuthDate,
+                    precomputedAppStorageEmail: storageEmail
                 )
-            }
-            let computedExpectedApp = KeychainDriftPolicy.effectiveExpectedAppEmail(
-                appStorageEmail: storageEmail,
-                desktopAppAuthDate: appAuthDate,
-                expectedSwitchState: switchState
-            )
-            let slots = authorized ? CLIAccountManager.savedVaultAccounts() : []
-            let tokenFileReady = isIndependent ? CLIAccountManager.isCLITokenFileHealthy(homeDir: hDir) : true
-            let bgCount = CLIAccountManager.runningBackgroundCLIProcessCount()
-            Task { @MainActor in
-                guard let self = self else { return }
-                self.isRefreshingCLIState = false
-                guard !self.isAppSwitchInProgress else { return }
-                if !storageEmail.isEmpty && self.appStorageEmail != storageEmail {
-                    self.appStorageEmail = storageEmail
-                }
-                if self.sharedKeychainResolution != resolution {
-                    self.sharedKeychainResolution = resolution
-                }
-                if self.expectedAppEmail != computedExpectedApp {
-                    self.expectedAppEmail = computedExpectedApp
-                }
-                if self.backgroundCLIProcessCount != bgCount {
-                    self.backgroundCLIProcessCount = bgCount
-                }
-                if self.isCLITokenFileReady != tokenFileReady {
-                    self.isCLITokenFileReady = tokenFileReady
-                }
-                if self.activeCLIProfileName != activeCLI {
-                    self.activeCLIProfileName = activeCLI
-                }
-                if self.savedCLISlots != slots {
-                    self.savedCLISlots = slots
-                }
-
-                if KeychainDriftPolicy.isUnexpectedDrift(expectedAppEmail: computedExpectedApp, resolution: resolution),
-                   let actualEmail = resolution.email {
-                    let key = "\(computedExpectedApp.lowercased())->\(actualEmail.lowercased())->\(resolution.source.rawValue)"
-                    if self.lastLoggedMismatchKey != key {
-                        self.lastLoggedMismatchKey = key
-                        LocalAccountDetector.appendLog(
-                            "检测到共享钥匙串账号错配：预期主应用为 \(computedExpectedApp)，但钥匙串实际由 \(actualEmail) 持有 (来源: \(resolution.source.rawValue))"
-                        )
-                    }
-                } else {
-                    self.lastLoggedMismatchKey = ""
-                }
-
-                var shouldSaveProfiles = false
-                if let cliEmail = activeCLI,
-                   !self.profiles.contains(where: { $0.name.lowercased() == cliEmail.lowercased() }) {
-                    let cliProfile = AGYProfile(
-                        name: cliEmail,
-                        email: cliEmail,
-                        tier: "CLI 账号",
-                        userDataDir: "\(self.profilesRootDir)/\(cliEmail)",
-                        geminiDataDir: self.defaultGeminiDir,
-                        notes: "Antigravity CLI 已认证",
-                        isDefault: false,
-                        createdAt: ISO8601DateFormatter().string(from: Date())
+                let sharedEmailFallback = resolution.email ?? (storageEmail.isEmpty ? nil : storageEmail)
+                let activeCLI = CLIAccountManager.detectActiveCLIProfile(
+                    homeDir: hDir,
+                    profilesRootDir: pRoot,
+                    allowVaultCapture: authorized,
+                    sharedKeychainEmail: sharedEmailFallback,
+                    isIndependentMode: isIndependent
+                )
+                let existingExpected = CLIAccountManager.readExpectedAppStateFile(profilesRootDir: pRoot)
+                let advancedExpected = KeychainDriftPolicy.syncedExpectedAppStateAfterDesktopLogin(
+                    existingExpected: existingExpected,
+                    appStorageEmail: storageEmail,
+                    desktopAppAuthDate: appAuthDate
+                )
+                let switchState = advancedExpected ?? KeychainDriftPolicy.resolveExpectedSwitchState(
+                    expectedAppState: existingExpected,
+                    cliActiveState: CLIAccountManager.readActiveStateFile(profilesRootDir: pRoot),
+                    resolution: resolution
+                )
+                if let updatedExpected = advancedExpected ?? (existingExpected == nil ? switchState : nil) {
+                    CLIAccountManager.writeExpectedAppStateFile(
+                        email: updatedExpected.email,
+                        profilesRootDir: pRoot,
+                        switchedAt: updatedExpected.switchedAt
                     )
-                    self.profiles.append(cliProfile)
-                    shouldSaveProfiles = true
                 }
-
-                let effectiveApp = AccountDisplayPolicy.effectiveRunningAppEmail(
-                    expectedAppEmail: computedExpectedApp,
-                    appStorageEmail: self.appStorageEmail,
-                    sharedKeychainEmail: resolution.email,
-                    activeProfileName: self.activeProfileName
+                let computedExpectedApp = KeychainDriftPolicy.effectiveExpectedAppEmail(
+                    appStorageEmail: storageEmail,
+                    desktopAppAuthDate: appAuthDate,
+                    expectedSwitchState: switchState
                 )
-                if AccountSortOrder.syncObservedActiveAccount(
-                    activeEmail: effectiveApp,
-                    lastObservedEmail: &self.observedActiveAppEmail,
-                    in: &self.profiles
-                ) {
-                    shouldSaveProfiles = true
-                }
-                if AccountSortOrder.syncObservedActiveAccount(
-                    activeEmail: activeCLI,
-                    lastObservedEmail: &self.observedActiveCLIEmail,
-                    in: &self.profiles
-                ) {
-                    shouldSaveProfiles = true
-                }
-                if shouldSaveProfiles {
-                    self.saveProfiles()
+                let slots = authorized ? CLIAccountManager.savedVaultAccounts() : []
+                let tokenFileReady = isIndependent ? CLIAccountManager.isCLITokenFileHealthy(homeDir: hDir) : true
+                let bgCount = CLIAccountManager.runningBackgroundCLIProcessCount()
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    self.isRefreshingCLIState = false
+                    guard !self.isAppSwitchInProgress else { return }
+                    if !storageEmail.isEmpty && self.appStorageEmail != storageEmail {
+                        self.appStorageEmail = storageEmail
+                    }
+                    if self.sharedKeychainResolution != resolution {
+                        self.sharedKeychainResolution = resolution
+                    }
+                    if self.expectedAppEmail != computedExpectedApp {
+                        self.expectedAppEmail = computedExpectedApp
+                    }
+                    if self.backgroundCLIProcessCount != bgCount {
+                        self.backgroundCLIProcessCount = bgCount
+                    }
+                    if self.isCLITokenFileReady != tokenFileReady {
+                        self.isCLITokenFileReady = tokenFileReady
+                    }
+                    if self.activeCLIProfileName != activeCLI {
+                        self.activeCLIProfileName = activeCLI
+                    }
+                    if self.savedCLISlots != slots {
+                        self.savedCLISlots = slots
+                    }
+
+                    if KeychainDriftPolicy.isUnexpectedDrift(expectedAppEmail: computedExpectedApp, resolution: resolution),
+                       let actualEmail = resolution.email {
+                        let key = "\(computedExpectedApp.lowercased())->\(actualEmail.lowercased())->\(resolution.source.rawValue)"
+                        if self.lastLoggedMismatchKey != key {
+                            self.lastLoggedMismatchKey = key
+                            LocalAccountDetector.appendLog(
+                                "检测到共享钥匙串账号错配：预期主应用为 \(computedExpectedApp)，但钥匙串实际由 \(actualEmail) 持有 (来源: \(resolution.source.rawValue))"
+                            )
+                        }
+                    } else {
+                        self.lastLoggedMismatchKey = ""
+                    }
+
+                    var shouldSaveProfiles = false
+                    if let cliEmail = activeCLI,
+                       !self.profiles.contains(where: { $0.name.lowercased() == cliEmail.lowercased() }) {
+                        let cliProfile = AGYProfile(
+                            name: cliEmail,
+                            email: cliEmail,
+                            tier: "CLI 账号",
+                            userDataDir: "\(self.profilesRootDir)/\(cliEmail)",
+                            geminiDataDir: self.defaultGeminiDir,
+                            notes: "Antigravity CLI 已认证",
+                            isDefault: false,
+                            createdAt: ISO8601DateFormatter().string(from: Date())
+                        )
+                        self.profiles.append(cliProfile)
+                        shouldSaveProfiles = true
+                    }
+
+                    let effectiveApp = AccountDisplayPolicy.effectiveRunningAppEmail(
+                        expectedAppEmail: computedExpectedApp,
+                        appStorageEmail: self.appStorageEmail,
+                        sharedKeychainEmail: resolution.email,
+                        activeProfileName: self.activeProfileName
+                    )
+                    if AccountSortOrder.syncObservedActiveAccount(
+                        activeEmail: effectiveApp,
+                        lastObservedEmail: &self.observedActiveAppEmail,
+                        in: &self.profiles
+                    ) {
+                        shouldSaveProfiles = true
+                    }
+                    if AccountSortOrder.syncObservedActiveAccount(
+                        activeEmail: activeCLI,
+                        lastObservedEmail: &self.observedActiveCLIEmail,
+                        in: &self.profiles
+                    ) {
+                        shouldSaveProfiles = true
+                    }
+                    if shouldSaveProfiles {
+                        self.saveProfiles()
+                    }
                 }
             }
         }

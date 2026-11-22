@@ -403,6 +403,9 @@ struct DiscoveredAccount: Hashable {
 }
 
 enum LocalAccountDetector {
+    static let maxInMemoryLogCount = 1000
+    private static let maxDiskLogBytes: UInt64 = 1_048_576
+    private static let trimKeepDiskLogBytes: Int = 262_144
     private static let logLock = NSLock()
     private static let logDateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -410,6 +413,14 @@ enum LocalAccountDetector {
         return df
     }()
     private static var _discoveryLogs: [String] = []
+
+    private struct AppStorageEmailPayload: Decodable {
+        let lastLoginUsername: String?
+
+        enum CodingKeys: String, CodingKey {
+            case lastLoginUsername = "agy.onboarding.lastLoginUsername"
+        }
+    }
 
     static var discoveryLogs: [String] {
         snapshotDiscoveryLogs()
@@ -432,15 +443,31 @@ enum LocalAccountDetector {
         logLock.lock()
         let line = "[\(logDateFormatter.string(from: Date()))] \(msg)"
         _discoveryLogs.append(line)
+        if _discoveryLogs.count > maxInMemoryLogCount {
+            _discoveryLogs.removeFirst(_discoveryLogs.count - maxInMemoryLogCount)
+        }
         if let data = (line + "\n").data(using: .utf8) {
-            if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: logPath)) {
+            let logURL = URL(fileURLWithPath: logPath)
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
+               let fileSize = (attrs[.size] as? NSNumber)?.uint64Value,
+               fileSize > maxDiskLogBytes,
+               let existing = try? Data(contentsOf: logURL) {
+                let tailStart = existing.count > trimKeepDiskLogBytes ? existing.count - trimKeepDiskLogBytes : 0
+                let tailData = existing.subdata(in: tailStart..<existing.count)
+                var rotated = Data()
+                if let nlIdx = tailData.firstIndex(of: 0x0A), tailData.index(after: nlIdx) < tailData.endIndex {
+                    rotated.append(tailData.subdata(in: tailData.index(after: nlIdx)..<tailData.endIndex))
+                }
+                rotated.append(data)
+                try? rotated.write(to: logURL, options: .atomic)
+            } else if let handle = try? FileHandle(forWritingTo: logURL) {
                 handle.seekToEndOfFile()
                 handle.write(data)
                 try? handle.close()
             } else {
-                let parent = URL(fileURLWithPath: logPath).deletingLastPathComponent().path
+                let parent = logURL.deletingLastPathComponent().path
                 try? FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
-                try? data.write(to: URL(fileURLWithPath: logPath))
+                try? data.write(to: logURL)
             }
         }
         logLock.unlock()
@@ -448,15 +475,17 @@ enum LocalAccountDetector {
     }
 
     static func detectEmailFromUserDataDir(_ dir: String) -> String? {
-        let expanded = (dir as NSString).expandingTildeInPath
-        let storagePath = "\(expanded)/app_storage.json"
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: storagePath)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let email = json["agy.onboarding.lastLoginUsername"] as? String,
-              !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
+        autoreleasepool {
+            let expanded = (dir as NSString).expandingTildeInPath
+            let storagePath = "\(expanded)/app_storage.json"
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: storagePath)),
+                  let decoded = try? JSONDecoder().decode(AppStorageEmailPayload.self, from: data),
+                  let email = decoded.lastLoginUsername?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !email.isEmpty else {
+                return nil
+            }
+            return email
         }
-        return email.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func detectBrowserGoogleAccounts(homeDir: String) -> [DiscoveredAccount] {
@@ -869,15 +898,17 @@ enum CLIAccountManager {
         let logDir = "\(cliDir)/log"
 
         var candidateURLs: [(url: URL, mtime: Date)] = []
+        var seenPaths = Set<String>()
         let mainLog = URL(fileURLWithPath: "\(cliDir)/cli.log")
         if let resolvedMain = try? URL(resolvingAliasFileAt: mainLog),
            let vals = try? resolvedMain.resourceValues(forKeys: [.contentModificationDateKey]),
            let dt = vals.contentModificationDate {
             candidateURLs.append((resolvedMain, dt))
+            seenPaths.insert(resolvedMain.resolvingSymlinksInPath().path)
         }
         if let files = try? fm.contentsOfDirectory(at: URL(fileURLWithPath: logDir), includingPropertiesForKeys: [.contentModificationDateKey]) {
             for f in files where f.pathExtension == "log" {
-                if candidateURLs.contains(where: { $0.url.standardizedFileURL == f.standardizedFileURL }) {
+                if !seenPaths.isEmpty && seenPaths.contains(f.path) {
                     continue
                 }
                 if let vals = try? f.resourceValues(forKeys: [.contentModificationDateKey]),
@@ -1049,7 +1080,9 @@ enum CLIAccountManager {
         homeDir: String,
         profilesRootDir: String,
         keychainModDate: Date? = nil,
-        hasActiveKeychain: Bool? = nil
+        hasActiveKeychain: Bool? = nil,
+        precomputedAppAuthDate: Date? = nil,
+        precomputedAppStorageEmail: String? = nil
     ) -> SharedKeychainResolution {
         let activeExists = hasActiveKeychain ?? hasActiveCredential()
         guard activeExists else { return .empty }
@@ -1057,8 +1090,8 @@ enum CLIAccountManager {
         let state = readActiveStateFile(profilesRootDir: profilesRootDir)
         let kcMod = keychainModDate ?? keychainModificationDate()
         let cliEvent = detectLatestLogKeychainWriteEvent(homeDir: homeDir)
-        let appAuthDate = detectLatestDesktopAppAuthDate(homeDir: homeDir)
-        let appStorageEmail = LocalAccountDetector.detectEmailFromUserDataDir(
+        let appAuthDate = precomputedAppAuthDate ?? detectLatestDesktopAppAuthDate(homeDir: homeDir)
+        let appStorageEmail = precomputedAppStorageEmail ?? LocalAccountDetector.detectEmailFromUserDataDir(
             "\(homeDir)/Library/Application Support/Antigravity"
         )
 
@@ -1993,6 +2026,17 @@ enum AccountQuotaManager {
         return allowed
     }()
 
+    private static let missingCredentialsLogLock = NSLock()
+    private static var hasLoggedMissingCredentials = false
+
+    private static func shouldLogMissingCredentialsOnce() -> Bool {
+        missingCredentialsLogLock.lock()
+        defer { missingCredentialsLogLock.unlock() }
+        if hasLoggedMissingCredentials { return false }
+        hasLoggedMissingCredentials = true
+        return true
+    }
+
     static func refreshAccessTokenResult(
         refreshToken: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -2000,7 +2044,9 @@ enum AccountQuotaManager {
         performRequest: ((URLRequest) async throws -> (Data, URLResponse))? = nil
     ) async -> Result<(accessToken: String, expiresIn: TimeInterval?), OAuthConfigError> {
         guard let config = resolveOAuthClientConfig(environment: environment, homeDir: homeDir) else {
-            LocalAccountDetector.appendLog("[OAuth] \(OAuthConfigError.missingCredentials.localizedDescription)")
+            if shouldLogMissingCredentialsOnce() {
+                LocalAccountDetector.appendLog("[OAuth] \(OAuthConfigError.missingCredentials.localizedDescription)")
+            }
             return .failure(.missingCredentials)
         }
         guard let url = URL(string: tokenEndpoint) else {
@@ -2281,8 +2327,9 @@ enum AccountQuotaManager {
 
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                nativeRenewalLock.lock()
-                defer { nativeRenewalLock.unlock() }
+                autoreleasepool {
+                    nativeRenewalLock.lock()
+                    defer { nativeRenewalLock.unlock() }
 
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: agyPath)
@@ -2318,7 +2365,8 @@ enum AccountQuotaManager {
                     continuation.resume(returning: false)
                     return
                 }
-                continuation.resume(returning: proc.terminationStatus == 0)
+                    continuation.resume(returning: proc.terminationStatus == 0)
+                }
             }
         }
     }

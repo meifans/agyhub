@@ -49,7 +49,10 @@
 
 ## 3. Daemon 通信、FSEvents 与 Python 采集规则
 
-### 3.1 Swift 端 Daemon 与 FSEvents 细节
+### 3.1 Swift 端 Daemon、内存池与 FSEvents 细节
+- **禁止在常驻队列循环内使用未池化的 `JSONSerialization`**：自定义 `DispatchQueue` 默认采用 `autoreleaseFrequency: .inherit`，不会自动弹出 autoreleasepool；在 `MonitorDaemonClient.readStdoutLoop` 等常驻 `while` 循环或后台全局队列中调用 `JSONSerialization.jsonObject` 会导致 ObjC `NSDictionary`/`CFString`/`NSArray`/`NSNumber` 树永久滞留线程 autoreleasepool（过夜可膨胀至十余 GB）。Daemon NDJSON 读取与解包必须使用纯 Swift `Decodable` 信封（`DaemonIdProbe` / `DaemonResponseEnvelope`），`readerQueue` 显式开启 `.workItem` 且单行处理与后台 `DispatchQueue.global` 回调均包裹 `autoreleasepool`。
+- **可见性感知 `FSEvents` 节流与 CLI 状态冷却**：弹窗收起（`isDashboardVisible == false`）时，后台 Agent 连续写入 `brain/` 会密集触发 FSEvents，需通过 `PollingSchedulePolicy.shouldAttemptFSEventFetch` 对隐藏态 FSEvents 做至少 `4.0s` 节流；`refreshCLIAccountState` 与快照拉取解耦，常规轮询受可见 `10s` / 隐藏 `30s` 冷却约束（主动操作传 `force: true` 放行），并复用单次 `app_storage.json` (`Decodable`) 与 `language_server.log` 扫描结果、用哈希集合去重 `cli.log` 避免对海量历史日志做 `O(N)` `standardizedFileURL` 系统调用。
+- **内存/磁盘诊断日志有界化**：`LocalAccountDetector._discoveryLogs` 仅保留最新 1000 条，`agyhub_accounts.log` 超过 1MB 时自动裁剪保留尾部 256KB；未配置外部 OAuth 凭据时的提示在单进程生命周期内仅记录一次。
 - **防止 64KB 管道死锁**：`MonitorDaemonClient` 启动 `agy-monitor.py --daemon` 后必须持续排空 `stderr`，防止子进程写满 64KB 管道缓冲区引发死锁；收到 EOF 后清理当前代进程并唤醒全部悬而未决的等待者。
 - **`agy-monitor.py` 定位优先级**：优先使用打包在 `Agyhub.app/Contents/Resources/` 内的版本，其次检查 `~/.gemini/config/tools/agy-monitor.py`，最后回退当前工作目录。
 - **FSEvents 兼容后建目录**：`SessionDirectoryWatcher` 仅对已存在目录注册 `FSEventStream`，同时定期探测尚不存在的候选目录并在创建后自动纳管。

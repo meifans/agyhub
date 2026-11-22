@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import SwiftUI
 
@@ -122,6 +123,8 @@ struct AGYHubTestsRunner {
         testQuotaCredentialFreshnessPriorityAnd401Fallback()
         testQuotaCachePersistenceRoundTrip()
         testActiveAccountNativeRenewalPolicyAndNeutralOAuthErrorLog()
+        testMonitorDaemonClientHasBoundedMemoryAcrossRepeatedSnapshots()
+        testVisibilityAwareFSEventsCLIThrottleAndBoundedLogs()
 
         if failures > 0 {
             fputs("\n❌ 共 \(failures) 个断言失败\n", stderr)
@@ -3722,5 +3725,177 @@ struct AGYHubTestsRunner {
 
         let desc = AccountQuotaManager.OAuthConfigError.missingCredentials.localizedDescription
         expect(!desc.contains("请创建") && !desc.contains("oauth_client.json"), "OAuth 缺失错误日志不得诱导用户手建 oauth_client.json，实际: \(desc)")
+    }
+
+    private static func currentTaskFootprintBytes() -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? UInt64(info.phys_footprint) : 0
+    }
+
+    static func testMonitorDaemonClientHasBoundedMemoryAcrossRepeatedSnapshots() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agyhub-tdd-mem-\(UUID().uuidString)")
+            .path
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let scriptPath = "\(dir)/mock_mem_daemon.py"
+        let mockPy = #"""
+import sys, json
+payload = {
+    "timestamp": "2026-11-22T00:00:00+00:00",
+    "data_dir": "/tmp/mock",
+    "active_count": 1,
+    "total_roundtrips": 20,
+    "has_alert": False,
+    "today_stats": {"total_tokens": 1000, "cache_tokens": 800, "input_tokens": 100, "output_tokens": 100, "cache_pct": 80.0, "cost_usd": 1.0, "has_data": True, "source": "mock"},
+    "menubar": {"icon": "⚡️", "text": "test", "status_level": "active", "active_count": 1, "tooltip": "tip"},
+    "sessions": [
+        {
+            "uuid": f"sess-{i}",
+            "title": "Memory Stress Session Title " + ("x" * 40),
+            "is_running": False,
+            "model": "gemini-4-hydrogen",
+            "interactions": 20,
+            "tps": 100.0,
+            "input_tokens": 1000,
+            "cache_tokens": 9000,
+            "output_tokens": 500,
+            "total_tokens_consumed": 10500,
+            "cache_pct": 90.0,
+            "total_cost_usd": 0.5,
+            "total_local_sec": 10.0,
+            "total_remote_sec": 20.0,
+            "current_stall": 0.0,
+            "health": "🟢",
+            "health_code": "ok",
+            "health_desc": "ok",
+            "history_steps": [{"index": k, "type": "PLANNER_RESPONSE", "time": "09:00:00", "summary": "step summary " + ("y" * 30)} for k in range(10)],
+            "subagents": [{"uuid": f"sub-{i}-{j}", "title": "Subagent " + ("z" * 30), "is_running": False} for j in range(5)]
+        }
+        for i in range(15)
+    ]
+}
+for line in sys.stdin:
+    req = json.loads(line)
+    resp = {"id": req["id"], "ok": True, "unchanged": False, "etag": f"etag-{req['id']}", "payload": payload}
+    sys.stdout.write(json.dumps(resp) + "\n")
+    sys.stdout.flush()
+"""#
+        try? mockPy.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+
+        let client = MonitorDaemonClient(requestTimeout: 5.0) { _ in
+            ("/usr/bin/python3", [scriptPath])
+        }
+
+        autoreleasepool {
+            _ = client.fetchSnapshot(ifNoneMatch: nil, dataDir: nil, lang: "zh")
+        }
+        let baselineBytes = currentTaskFootprintBytes()
+
+        for i in 0..<300 {
+            autoreleasepool {
+                let res = client.fetchSnapshot(ifNoneMatch: nil, dataDir: nil, lang: "zh")
+                if case .failure(let err) = res {
+                    expect(false, "第 \(i) 次 mock daemon 快照请求失败: \(err)")
+                }
+            }
+        }
+        client.shutdown()
+        Thread.sleep(forTimeInterval: 0.15)
+
+        let endBytes = currentTaskFootprintBytes()
+        let deltaMB = Double(Int64(endBytes) - Int64(baselineBytes)) / (1024.0 * 1024.0)
+        expect(deltaMB <= 2.5, String(format: "连续 300 次大快照后 MonitorDaemonClient 内存增长必须可控 (<=2.5MB)，当前泄漏: %.2f MB", deltaMB))
+    }
+
+    static func testVisibilityAwareFSEventsCLIThrottleAndBoundedLogs() {
+        let now = Date()
+
+        expect(
+            PollingSchedulePolicy.shouldAttemptFSEventFetch(lastTriggeredAt: now.addingTimeInterval(-0.5), isDashboardVisible: true, now: now),
+            "弹窗可见时 FSEvents 在防抖后应立即触发刷新"
+        )
+        expect(
+            !PollingSchedulePolicy.shouldAttemptFSEventFetch(lastTriggeredAt: now.addingTimeInterval(-1.0), isDashboardVisible: false, now: now),
+            "弹窗隐藏时 FSEvents 1 秒内不得重复触发快照，防止后台高频空转"
+        )
+        expect(
+            PollingSchedulePolicy.shouldAttemptFSEventFetch(lastTriggeredAt: now.addingTimeInterval(-5.0), isDashboardVisible: false, now: now),
+            "弹窗隐藏且超过最小间隔后应允许 FSEvents 增量同步"
+        )
+
+        expect(
+            !PollingSchedulePolicy.shouldRefreshCLIState(
+                lastRefreshedAt: now.addingTimeInterval(-5.0),
+                isRefreshing: false,
+                isAppSwitchInProgress: false,
+                isDashboardVisible: true,
+                force: false,
+                now: now
+            ),
+            "可见态 10 秒冷却期内常规轮询不得重复扫盘检测 CLI 日志"
+        )
+        expect(
+            PollingSchedulePolicy.shouldRefreshCLIState(
+                lastRefreshedAt: now.addingTimeInterval(-12.0),
+                isRefreshing: false,
+                isAppSwitchInProgress: false,
+                isDashboardVisible: true,
+                force: false,
+                now: now
+            ),
+            "可见态超过 10 秒冷却后应放行 CLI 状态刷新"
+        )
+        expect(
+            !PollingSchedulePolicy.shouldRefreshCLIState(
+                lastRefreshedAt: now.addingTimeInterval(-15.0),
+                isRefreshing: false,
+                isAppSwitchInProgress: false,
+                isDashboardVisible: false,
+                force: false,
+                now: now
+            ),
+            "隐藏态 30 秒冷却期内常规轮询不得扫盘检测 CLI 状态"
+        )
+        expect(
+            PollingSchedulePolicy.shouldRefreshCLIState(
+                lastRefreshedAt: now.addingTimeInterval(-2.0),
+                isRefreshing: false,
+                isAppSwitchInProgress: false,
+                isDashboardVisible: false,
+                force: true,
+                now: now
+            ),
+            "用户主动切号或显式强刷时应无视冷却立即刷新"
+        )
+        expect(
+            !PollingSchedulePolicy.shouldRefreshCLIState(
+                lastRefreshedAt: nil,
+                isRefreshing: false,
+                isAppSwitchInProgress: true,
+                isDashboardVisible: true,
+                force: true,
+                now: now
+            ),
+            "切号进行中即使 force=true 也必须跳过以防竞态"
+        )
+
+        let home = makeTempHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        LocalAccountDetector.clearDiscoveryLogs()
+        let tempLogPath = "\(home)/accounts.log"
+        for idx in 0..<1150 {
+            LocalAccountDetector.appendLog("bounded-log-line-\(idx)", logFilePath: tempLogPath)
+        }
+        let snapshot = LocalAccountDetector.snapshotDiscoveryLogs()
+        expect(snapshot.count <= LocalAccountDetector.maxInMemoryLogCount, "内存诊断日志列表必须存在上限，当前: \(snapshot.count)")
+        expect(snapshot.last?.contains("bounded-log-line-1149") == true, "裁剪后应保留最新日志条目")
     }
 }

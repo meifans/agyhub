@@ -123,6 +123,9 @@ enum PollingSchedulePolicy {
     static let hiddenActiveFallbackInterval: Double = 15.0
     static let hiddenIdleFallbackInterval: Double = 60.0
     static let minimumRefreshInterval: Double = 0.2
+    static let hiddenFSEventThrottleInterval: Double = 4.0
+    static let visibleCLIStateRefreshInterval: Double = 10.0
+    static let hiddenCLIStateRefreshInterval: Double = 30.0
 
     static func effectiveInterval(
         userRefreshInterval: Double,
@@ -137,6 +140,41 @@ enum PollingSchedulePolicy {
             return max(base, hiddenActiveFallbackInterval)
         }
         return max(base, hiddenIdleFallbackInterval)
+    }
+
+    static func shouldAttemptFSEventFetch(
+        lastTriggeredAt: Date?,
+        isDashboardVisible: Bool,
+        now: Date = Date()
+    ) -> Bool {
+        if isDashboardVisible {
+            return true
+        }
+        guard let lastTriggeredAt else {
+            return true
+        }
+        return now.timeIntervalSince(lastTriggeredAt) >= hiddenFSEventThrottleInterval
+    }
+
+    static func shouldRefreshCLIState(
+        lastRefreshedAt: Date?,
+        isRefreshing: Bool,
+        isAppSwitchInProgress: Bool,
+        isDashboardVisible: Bool,
+        force: Bool,
+        now: Date = Date()
+    ) -> Bool {
+        if isRefreshing || isAppSwitchInProgress {
+            return false
+        }
+        if force {
+            return true
+        }
+        guard let lastRefreshedAt else {
+            return true
+        }
+        let cooldown = isDashboardVisible ? visibleCLIStateRefreshInterval : hiddenCLIStateRefreshInterval
+        return now.timeIntervalSince(lastRefreshedAt) >= cooldown
     }
 }
 
