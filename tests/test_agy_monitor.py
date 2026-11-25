@@ -1488,5 +1488,46 @@ class AgyMonitorI18nGuardrailTests(unittest.TestCase):
             self.assertTrue(diag_en["ok"])
             self.assertEqual(diag_en["payload"]["phases"][0]["name"], "Summary / Response")
 
+
+class TelemetryCardGeneratorTests(unittest.TestCase):
+    def test_build_svg_includes_updated_timestamp_and_skip_if_empty_guard(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(root, "scripts", "generate_telemetry_card.py")
+        spec = importlib.util.spec_from_file_location("generate_telemetry_card", script_path)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(mod)
+
+        en_svg = mod.build_svg("en", 621, 1_788_985_138, 92.1, 238.16, updated_at="2026-11-25 19:54")
+        zh_svg = mod.build_svg("zh", 621, 1_788_985_138, 92.1, 238.16, updated_at="2026-11-25 19:54")
+        self.assertIn("UPDATED 2026-11-25 19:54", en_svg)
+        self.assertIn("更新于 2026-11-25 19:54", zh_svg)
+
+        with tempfile.TemporaryDirectory(prefix="agy_telemetry_empty_") as tmp:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    script_path,
+                    "--output-dir",
+                    tmp,
+                    "--turns",
+                    "0",
+                    "--tokens",
+                    "0",
+                    "--cache-hit",
+                    "0",
+                    "--cost",
+                    "0",
+                    "--skip-if-empty",
+                    "--skip-png",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "build-telemetry.svg")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

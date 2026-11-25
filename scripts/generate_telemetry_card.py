@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -149,21 +150,33 @@ def _hakimi_cat_emblem_svg() -> str:
           stroke="#475569" stroke-width="1.0" stroke-linecap="round"/>
   </g>"""
 
-def build_svg(lang: str, turns: int, tokens: int, cache_hit_pct: float, cost_usd: float) -> str:
+def build_svg(
+    lang: str,
+    turns: int,
+    tokens: int,
+    cache_hit_pct: float,
+    cost_usd: float,
+    updated_at: str | None = None,
+) -> str:
 
     tokens_str = _format_tokens(tokens)
     turns_str = f"{turns:,}"
     cost_str = f"${cost_usd:.2f}"
+    ts_str = (updated_at or "").strip() or datetime.now().strftime("%Y-%m-%d %H:%M")
     ring_pct = int(round(cache_hit_pct))
     circ = 78.54
     dash = max(0.0, min(circ, circ * (cache_hit_pct / 100.0)))
 
     if lang == "zh":
-        aria = f"使用 Google Antigravity 开发：{turns_str} 轮人机交互，{tokens_str} 总 Token（{cache_hit_pct:.1f}% 缓存命中），估算 API 账单 {cost_str}"
+        aria = f"使用 Google Antigravity 开发：{turns_str} 轮人机交互，{tokens_str} 总 Token（{cache_hit_pct:.1f}% 缓存命中），估算 API 账单 {cost_str}（更新于 {ts_str}）"
         header_text = "由 Google 反重力（Antigravity）驱动构建"
         header_font = "'LXGW WenKai', 'PingFang SC', -apple-system, sans-serif"
         header_size = "13.5"
         header_spacing = "0.6"
+        updated_text = f"更新于 {ts_str}"
+        updated_font = "'LXGW WenKai', 'PingFang SC', -apple-system, sans-serif"
+        updated_size = "11.5"
+        updated_spacing = "0.4"
         col1_title = "01 / 人机交互轮次"
         col1_sub = "从想法到开源发布的真实对话"
         col2_title = "02 / 累计消耗 Token"
@@ -176,11 +189,15 @@ def build_svg(lang: str, turns: int, tokens: int, cache_hit_pct: float, cost_usd
         label_spacing = "0.5"
         num_font = "'JetBrains Mono', 'LXGW WenKai', ui-monospace, monospace"
     else:
-        aria = f"Built with Google Antigravity: {turns_str} human-AI turns, {tokens_str} tokens with {cache_hit_pct:.1f}% cache hit, {cost_str} estimated API bill"
+        aria = f"Built with Google Antigravity: {turns_str} human-AI turns, {tokens_str} tokens with {cache_hit_pct:.1f}% cache hit, {cost_str} estimated API bill (updated {ts_str})"
         header_text = "BUILT WITH GOOGLE ANTIGRAVITY"
         header_font = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
         header_size = "11"
         header_spacing = "1.4"
+        updated_text = f"UPDATED {ts_str}"
+        updated_font = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+        updated_size = "10"
+        updated_spacing = "0.8"
         col1_title = "01 / HUMAN–AI TURNS"
         col1_sub = "Prompts from idea to ship"
         col2_title = "02 / COMPUTE VOLUME"
@@ -252,6 +269,9 @@ def build_svg(lang: str, turns: int, tokens: int, cache_hit_pct: float, cost_usd
   <circle cx="36" cy="31" r="3" fill="#22C55E"/>
   <text x="51" y="35" fill="#E2E8F0" font-family="{header_font}" font-size="{header_size}" font-weight="600" letter-spacing="{header_spacing}">
     {header_text}
+  </text>
+  <text x="726" y="34.5" text-anchor="end" fill="#64748B" font-family="{updated_font}" font-size="{updated_size}" font-weight="500" letter-spacing="{updated_spacing}">
+    {updated_text}
   </text>
 
 {_hakimi_cat_emblem_svg()}
@@ -377,6 +397,8 @@ def main() -> int:
     parser.add_argument("--cache-hit", type=float, default=None, help="Override cache hit percentage (0-100)")
     parser.add_argument("--cost", type=float, default=None, help="Override estimated API cost in USD")
     parser.add_argument("--font-path", default=None, help="Path to local LXGW WenKai .ttf font")
+    parser.add_argument("--updated-at", default=None, help="Override timestamp label (default: local YYYY-MM-DD HH:MM)")
+    parser.add_argument("--skip-if-empty", action="store_true", help="Exit 0 without overwriting files when no matching local sessions are found")
     parser.add_argument("--skip-png", action="store_true", help="Only write SVG files without rendering PNGs")
     args = parser.parse_args()
 
@@ -393,9 +415,14 @@ def main() -> int:
     tokens = args.tokens if args.tokens is not None else metrics["tokens"]
     cache_hit = args.cache_hit if args.cache_hit is not None else metrics["cache_hit_pct"]
     cost = args.cost if args.cost is not None else metrics["cost_usd"]
+    updated_at = (args.updated_at or "").strip() or datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    en_svg = build_svg("en", turns, tokens, cache_hit, cost)
-    zh_svg = build_svg("zh", turns, tokens, cache_hit, cost)
+    if args.skip_if_empty and turns <= 0 and tokens <= 0:
+        print("Skip telemetry card update: no matching local Antigravity sessions found.")
+        return 0
+
+    en_svg = build_svg("en", turns, tokens, cache_hit, cost, updated_at=updated_at)
+    zh_svg = build_svg("zh", turns, tokens, cache_hit, cost, updated_at=updated_at)
 
     (out_dir / "build-telemetry.svg").write_text(en_svg, encoding="utf-8")
     (out_dir / "build-telemetry-zh.svg").write_text(zh_svg, encoding="utf-8")

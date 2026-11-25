@@ -35,6 +35,8 @@ Agyhub/
 ├── docs/adr/
 │   ├── ADR-001-cli-app-account-isolation.md           # 架构决策 001：App 与 CLI 双轨凭证隔离
 │   └── ADR-002-low-overhead-incremental-monitoring.md # 架构决策 002：增量缓存与常驻 Daemon 架构
+├── .githooks/
+│   └── pre-commit                  # 本地 Git pre-commit 钩子（提交代码改动时自动刷新遥测卡片并顺手暂存）
 ├── assets/                         # 应用图标、头图、双语宣传截图（screenshot-*.png）与遥测卡片（.icns / .png / .svg）
 └── .github/workflows/
     ├── ci.yml                      # CI 流水线（shell 语法、i18n 检查、Swift/Python 单测、应用构建）
@@ -151,6 +153,9 @@ env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL="${SHELL:-/bin/zsh}" \
 # 半自动重新生成 6 张中英双语 Retina 主页宣传图到 assets/（可加 --open 在 Preview 中直接预览，加 --with-telemetry 同步刷新遥测卡）
 ./scripts/generate_screenshots.sh
 
-# 单独更新中英文开发遥测卡片（SVG + 3x PNG 到 assets/，加 --skip-png 仅更新 SVG）
+# 单独更新中英文开发遥测卡片（SVG + 3x PNG 到 assets/，自带右上角更新时间；加 --skip-png 仅更新 SVG）
 python3 scripts/generate_telemetry_card.py
+
+# 启用本地 Git pre-commit 钩子（提交源码/脚本/测试改动时自动刷新遥测卡片；临时跳过可设 AGYHUB_SKIP_TELEMETRY=1）
+git config core.hooksPath .githooks
 ```

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "${AGYHUB_SKIP_TELEMETRY:-0}" = "1" ]; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || [ -f .git/MERGE_HEAD ]; then
+    exit 0
+fi
+
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR || true)"
+if [ -z "$STAGED_FILES" ]; then
+    exit 0
+fi
+
+NEEDS_TELEMETRY_REFRESH=false
+while IFS= read -r file; do
+    case "$file" in
+        Sources/*|agy-monitor.py|agy-top|build_app.sh|scripts/*|tests/*|.github/*)
+            NEEDS_TELEMETRY_REFRESH=true
+            break
+            ;;
+    esac
+done <<< "$STAGED_FILES"
+
+if [ "$NEEDS_TELEMETRY_REFRESH" != true ]; then
+    exit 0
+fi
+
+if [ ! -d "$HOME/.gemini/antigravity/brain" ] && [ ! -d "$HOME/.gemini/antigravity-cli/brain" ]; then
+    exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/scripts/generate_telemetry_card.py" ]; then
+    exit 0
+fi
+
+echo "📊 [pre-commit] 检测到代码/测试改动，正在自动刷新开发遥测卡片..."
+python3 "$REPO_ROOT/scripts/generate_telemetry_card.py" --skip-if-empty
+
+TELEMETRY_ASSETS=(
+    "assets/build-telemetry.svg"
+    "assets/build-telemetry.png"
+    "assets/build-telemetry-zh.svg"
+    "assets/build-telemetry-zh.png"
+)
+
+TO_STAGE=()
+for asset in "${TELEMETRY_ASSETS[@]}"; do
+    if [ -f "$REPO_ROOT/$asset" ]; then
+        TO_STAGE+=("$asset")
+    fi
+done
+
+if [ ${#TO_STAGE[@]} -gt 0 ]; then
+    git add "${TO_STAGE[@]}"
+fi
