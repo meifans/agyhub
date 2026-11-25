@@ -44,6 +44,10 @@ struct ModernSecondaryButtonStyle: ButtonStyle {
 enum AccountTargetMode: String, CaseIterable {
     case app = "App"
     case cli = "CLI"
+
+    var toggled: AccountTargetMode {
+        self == .app ? .cli : .app
+    }
 }
 
 private struct ImpeccableIconButtonStyle: ButtonStyle {
@@ -342,19 +346,331 @@ enum MainDashboardWindowChrome {
     }
 }
 
+struct HakimiHeaderLogoView: View {
+    var body: some View {
+        if let catURL = Bundle.main.url(forResource: "header-cat", withExtension: "png"),
+           let catImg = NSImage(contentsOf: catURL) {
+            Image(nsImage: catImg)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 24, height: 24)
+        } else {
+            Image(nsImage: AGYAppDelegate.HakimiBrandIcon.menuBarImage(state: .working))
+                .resizable()
+                .frame(width: 18, height: 18)
+        }
+    }
+}
+
+struct DashboardHeaderBarView: View {
+    static let showsTodayPillInHeader = true
+    static let showsLeadingLogoOnTodayPill = false
+
+    var stats: TodayStats = .empty
+    let hasAlert: Bool
+    var isUsageOpen: Bool = false
+    let isStandaloneWindow: Bool
+    let lang: AppLanguage.Resolved
+    let refreshSpinCount: Int
+    var outerHorizontalPadding: CGFloat = 12
+    var onToggleUsage: () -> Void = {}
+    let onRefresh: () -> Void
+    let onOpenStandalone: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                HakimiHeaderLogoView()
+                Text("Agyhub")
+                    .font(.system(size: 14.5, weight: .bold))
+                    .lineLimit(1)
+
+                Circle()
+                    .fill(hasAlert ? Color.red : Color.green)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: (hasAlert ? Color.red : Color.green).opacity(0.55), radius: 2.5)
+            }
+            .fixedSize(horizontal: true, vertical: true)
+
+            HStack(spacing: 0) {
+                Spacer(minLength: 2)
+
+                TodayUsagePillButton(
+                    stats: stats,
+                    isUsageOpen: isUsageOpen,
+                    lang: lang,
+                    onToggleUsage: onToggleUsage
+                )
+
+                Spacer(minLength: 2)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .background(WindowDragArea())
+
+            HStack(spacing: 6) {
+                ImpeccableIconButton(
+                    icon: "arrow.clockwise",
+                    tooltip: L10n.t(.refreshDataTooltip, lang),
+                    size: 26,
+                    iconSize: 12,
+                    spinTrigger: refreshSpinCount
+                ) {
+                    onRefresh()
+                }
+
+                if !isStandaloneWindow {
+                    ImpeccableIconButton(
+                        icon: "macwindow.on.rectangle",
+                        tooltip: L10n.t(.openStandaloneTooltip, lang),
+                        size: 26,
+                        iconSize: 12
+                    ) {
+                        onOpenStandalone()
+                    }
+                }
+
+                ImpeccableIconButton(
+                    icon: "xmark",
+                    tooltip: WindowClosePolicy.headerCloseTooltip(language: lang),
+                    hoverTint: .red,
+                    hoverFill: Color.red.opacity(0.12),
+                    size: 26,
+                    iconSize: 12
+                ) {
+                    onClose()
+                }
+            }
+            .fixedSize(horizontal: true, vertical: true)
+        }
+        .padding(.horizontal, outerHorizontalPadding)
+        .padding(.vertical, 7)
+    }
+}
+
+struct DashboardFooterBarView: View {
+    static let showsTodayPillInFooter = false
+
+    let lastUpdatedTimeStr: String
+    var stats: TodayStats = .empty
+    var isUsageOpen: Bool = false
+    let lang: AppLanguage.Resolved
+    var horizontalPadding: CGFloat = 12
+    var onToggleUsage: () -> Void = {}
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                Text(L10n.updatedAt(lastUpdatedTimeStr, lang))
+                    .font(.system(size: 10.5, design: .monospaced).monospacedDigit())
+                    .foregroundColor(Color.primary.opacity(0.62))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: true)
+
+                Text(lastUpdatedTimeStr)
+                    .font(.system(size: 10.5, design: .monospaced).monospacedDigit())
+                    .foregroundColor(Color.primary.opacity(0.62))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            ImpeccableIconButton(
+                icon: "gearshape",
+                tooltip: L10n.t(.settingsTitle, lang),
+                tint: Color.primary.opacity(0.65),
+                hoverTint: Color.primary,
+                size: 26,
+                iconSize: 12.5
+            ) {
+                onOpenSettings()
+            }
+            .fixedSize(horizontal: true, vertical: true)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 6)
+    }
+}
+
+struct TodayUsagePillButton: View {
+    static let closedChevronSystemName = "chevron.down"
+    static let openChevronSystemName = "chevron.up"
+    static let usesElevatedCrispSurface = true
+
+    let stats: TodayStats
+    let isUsageOpen: Bool
+    let lang: AppLanguage.Resolved
+    let onToggleUsage: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            onToggleUsage()
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                pillContent(
+                    showTitle: true,
+                    showCost: true,
+                    showTokens: true,
+                    horizontalPadding: 7
+                )
+                pillContent(
+                    showTitle: false,
+                    showCost: true,
+                    showTokens: true,
+                    horizontalPadding: 9
+                )
+                pillContent(
+                    showTitle: false,
+                    showCost: true,
+                    showTokens: false,
+                    horizontalPadding: 9
+                )
+                pillContent(
+                    showTitle: true,
+                    showCost: false,
+                    showTokens: false,
+                    horizontalPadding: 8
+                )
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .help(L10n.todayPillTooltip(cost: stats.costUsd, totalTokens: stats.totalTokens, cachePct: stats.cachePct, lang))
+    }
+
+    private func pillContent(
+        showTitle: Bool,
+        showCost: Bool,
+        showTokens: Bool,
+        horizontalPadding: CGFloat
+    ) -> some View {
+        let fillColor: Color = {
+            if isUsageOpen {
+                return colorScheme == .dark
+                    ? Color.accentColor.opacity(0.20)
+                    : Color.accentColor.opacity(0.11)
+            }
+            if colorScheme == .dark {
+                return Color(nsColor: .controlBackgroundColor).opacity(isHovered ? 1.0 : 0.88)
+            }
+            return Color.white.opacity(isHovered ? 1.0 : 0.94)
+        }()
+
+        let borderColor: Color = {
+            if isUsageOpen {
+                return Color.accentColor.opacity(0.42)
+            }
+            if colorScheme == .dark {
+                return Color.white.opacity(isHovered ? 0.22 : 0.14)
+            }
+            return Color.black.opacity(isHovered ? 0.14 : 0.08)
+        }()
+
+        let tokenInkColor: Color = colorScheme == .dark
+            ? Color.white.opacity(0.84)
+            : Color(red: 0.22, green: 0.29, blue: 0.39)
+
+        let badgeFill: Color = isUsageOpen
+            ? Color.accentColor.opacity(colorScheme == .dark ? 0.28 : 0.18)
+            : Color.accentColor.opacity(colorScheme == .dark ? 0.20 : 0.11)
+
+        return HStack(spacing: 5.5) {
+            if showTitle {
+                Text(L10n.t(.headerTodayLabel, lang))
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(Color.accentColor)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(badgeFill)
+                    )
+            }
+
+            if showCost {
+                Text(Formatters.formatCost(stats.costUsd))
+                    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+
+            if showCost && showTokens {
+                Text("·")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Color.primary.opacity(0.28))
+                    .lineLimit(1)
+            }
+
+            if showTokens {
+                Text(Formatters.formatTokens(stats.totalTokens))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundColor(tokenInkColor)
+                    .lineLimit(1)
+            }
+
+            Image(systemName: isUsageOpen ? Self.openChevronSystemName : Self.closedChevronSystemName)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(Color.accentColor.opacity(isUsageOpen || isHovered ? 1.0 : 0.72))
+                .padding(.trailing, 1)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 3.5)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(
+            Capsule()
+                .fill(fillColor)
+                .overlay(
+                    Capsule()
+                        .strokeBorder(borderColor, lineWidth: 0.65)
+                )
+        )
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.24 : (isHovered ? 0.08 : 0.045)),
+            radius: isHovered ? 4 : 2.5,
+            y: 1
+        )
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isUsageOpen)
+        .contentShape(Capsule())
+    }
+}
+
 struct MainDashboardView: View {
     @ObservedObject var store: AGYHubStore
     var isStandaloneWindow: Bool = false
 
-    @AppStorage("agyhub.collapse.accounts") private var isAccountsCollapsed = false
     @AppStorage("agyhub.collapse.sessions") private var isSessionsCollapsed = false
+    @AppStorage("agyhub.collapse.telemetry") private var isTelemetryCollapsed = false
+    @AppStorage("agyhub.telemetry.range") private var selectedTelemetryRangeRaw: String = TelemetryTimeRange.threeMinutes.rawValue
+    @AppStorage(DashboardSplitLayoutPolicy.splitFractionDefaultsKey) private var storedSplitFraction: Double = -1
     @State private var accountTargetMode: AccountTargetMode = .app
+    @State private var isAccountPickerOpen = false
+    @State private var accountCardFrame: CGRect = .zero
     @State private var refreshSpinCount: Int = 0
+    @State private var containerWidth: CGFloat = 464
+    @State private var hoveredSessionSeriesIds: Set<String> = []
+    @State private var hoveredChartAgentId: String? = nil
+    @State private var dragStartTelemetryHeight: CGFloat? = nil
+    @State private var liveDragTelemetryFraction: CGFloat? = nil
 
     @State private var showCreateProfileSheet = false
     @State private var showSettingsPopover = false
     @State private var showLogsSheet = false
-    @State private var isTodayPillHovered = false
     @State private var newProfileName = ""
     @State private var newProfileNotes = ""
     @State private var newProfileDataDir = ""
@@ -363,91 +679,135 @@ struct MainDashboardView: View {
         store.resolvedLanguage
     }
 
+    private var layoutMetrics: DashboardAdaptiveLayoutMetrics {
+        DashboardAdaptiveLayoutMetrics.metrics(forWidth: containerWidth)
+    }
+
     var body: some View {
-        MainDashboardWindowChrome.apply(to:
-        VStack(spacing: 0) {
+        let metrics = layoutMetrics
+        return MainDashboardWindowChrome.apply(to:
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
 
-            headerBar
+                headerBar
 
-            Rectangle()
-                .fill(Color.primary.opacity(0.08))
-                .frame(height: 0.5)
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 0.5)
 
-            if let banner = store.statusBannerMessage {
-                HStack(spacing: 6) {
-                    Text(banner)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Color.accentColor)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
-            if store.isUsageDashboardPresented {
-                UsageAnalyticsView(
-                    store: store,
-                    onBack: {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            store.closeUsageDashboard()
-                        }
+                if let banner = store.statusBannerMessage {
+                    HStack(spacing: 6) {
+                        Text(banner)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .transition(.opacity)
-            } else {
-                VStack(spacing: 10) {
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
 
-                    profileManagerSection
-
-                    Rectangle()
-                        .fill(Color(nsColor: .separatorColor).opacity(0.35))
-                        .frame(height: 0.5)
-                        .padding(.horizontal, 2)
-
-                    if let session = store.activeSelectedSession {
-                        SessionDetailCardView(
-                            session: session,
-                            diagnostics: store.sessionDiagnosticsByUUID[session.uuid],
-                            isLoadingDiagnostics: store.isLoadingDiagnosticsUUID == session.uuid,
-                            onBack: { store.popSessionDetail() },
-                            onRefreshDiagnostics: {
-                                store.fetchSessionDiagnostics(uuid: session.uuid, force: true)
-                            },
-                            onSelectSubagent: { subUUID in
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    store.drillDownToSession(subUUID)
-                                }
+                if store.isUsageDashboardPresented {
+                    UsageAnalyticsView(
+                        store: store,
+                        onBack: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                store.closeUsageDashboard()
                             }
-                        )
-                        .id(session.uuid)
-                        .task(id: session.uuid) {
-                            store.fetchSessionDiagnostics(uuid: session.uuid, force: false)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    } else {
-                        activeSessionsSection
-                        if isSessionsCollapsed {
-                            Spacer(minLength: 0)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.horizontal, metrics.outerHorizontalPadding)
+                    .padding(.vertical, 8)
+                    .transition(.opacity)
+                } else {
+                    VStack(spacing: 8) {
+
+                        profileManagerSection
+
+                        Rectangle()
+                            .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                            .frame(height: 0.5)
+                            .padding(.horizontal, metrics.sectionHeaderHorizontalPadding)
+
+                        if let session = store.activeSelectedSession {
+                            SessionDetailCardView(
+                                session: session,
+                                diagnostics: store.sessionDiagnosticsByUUID[session.uuid],
+                                isLoadingDiagnostics: store.isLoadingDiagnosticsUUID == session.uuid,
+                                onBack: { store.popSessionDetail() },
+                                onRefreshDiagnostics: {
+                                    store.fetchSessionDiagnostics(uuid: session.uuid, force: true)
+                                },
+                                onSelectSubagent: { subUUID in
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        store.drillDownToSession(subUUID)
+                                    }
+                                }
+                            )
+                            .id(session.uuid)
+                            .task(id: session.uuid) {
+                                store.fetchSessionDiagnostics(uuid: session.uuid, force: false)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        } else {
+                            dashboardSplitPaneContent(metrics: metrics)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.horizontal, metrics.outerHorizontalPadding)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                    .frame(height: 0.5)
+
+                footerBar
             }
 
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.35))
-                .frame(height: 0.5)
+            if isAccountPickerOpen && !store.isUsageDashboardPresented {
+                accountPickerDismissScrimAndOverlay
+            }
 
-            footerBar
+            if showSettingsPopover {
+                settingsDismissScrimAndOverlay
+            }
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        if geo.size.width > 0 {
+                            containerWidth = geo.size.width
+                        }
+                    }
+                    .onChange(of: geo.size.width) { newWidth in
+                        if newWidth > 0 {
+                            containerWidth = newWidth
+                        }
+                    }
+            }
+        )
+        .coordinateSpace(name: "dashboardRoot")
+        .onPreferenceChange(AccountCardFramePreferenceKey.self) { frame in
+            if frame.width > 0 {
+                accountCardFrame = frame
+            }
+        }
+        .onChange(of: store.isUsageDashboardPresented) { open in
+            if open {
+                isAccountPickerOpen = false
+            }
+        }
+        .onChange(of: store.expandedSessionRowLimit) { _ in
+            storedSplitFraction = -1
+            liveDragTelemetryFraction = nil
+            dragStartTelemetryHeight = nil
         }
         )
         .environment(\.agyLanguage, lang)
@@ -464,124 +824,23 @@ struct MainDashboardView: View {
             discoveryLogsSheetView
                 .environment(\.agyLanguage, lang)
         }
-        .sheet(isPresented: $showSettingsPopover) {
-            SettingsPopoverView(store: store, onClose: {
-                showSettingsPopover = false
-            })
-            .environment(\.agyLanguage, lang)
-        }
-    }
-
-    private struct HakimiHeaderLogoView: View {
-        var body: some View {
-            if let catURL = Bundle.main.url(forResource: "header-cat", withExtension: "png"),
-               let catImg = NSImage(contentsOf: catURL) {
-                Image(nsImage: catImg)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
-            } else {
-                Image(nsImage: AGYAppDelegate.HakimiBrandIcon.menuBarImage(state: .working))
-                    .resizable()
-                    .frame(width: 18, height: 18)
-            }
-        }
     }
 
     private var headerBar: some View {
-        HStack(spacing: 8) {
-
-            HStack(spacing: 6) {
-                HakimiHeaderLogoView()
-                Text("Agyhub")
-                    .font(.system(size: 14.5, weight: .bold))
-
-                Circle()
-                    .fill(store.payload.hasAlert ? Color.red : Color.green)
-                    .frame(width: 6, height: 6)
-                    .shadow(color: (store.payload.hasAlert ? Color.red : Color.green).opacity(0.55), radius: 2.5)
-            }
-
-            HStack(spacing: 0) {
-                Spacer(minLength: 4)
-
-                let stats = store.payload.todayStats
-                let isOpen = store.isUsageDashboardPresented
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        store.toggleUsageDashboard()
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(isOpen ? Color.accentColor : .secondary.opacity(0.75))
-
-                        Text(L10n.t(.headerTodayLabel, lang))
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(isOpen ? Color.accentColor : .secondary.opacity(0.80))
-
-                        Text(Formatters.formatCost(stats.costUsd))
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.primary)
-
-                        Text("·")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.secondary.opacity(0.40))
-
-                        Text(Formatters.formatTokens(stats.totalTokens))
-                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.secondary.opacity(0.90))
-
-                        Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(isOpen ? Color.accentColor : .secondary.opacity(0.60))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(
-                                isOpen
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.primary.opacity(isTodayPillHovered ? 0.085 : 0.04)
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(
-                                        isOpen
-                                            ? Color.accentColor.opacity(0.32)
-                                            : Color.primary.opacity(isTodayPillHovered ? 0.14 : 0.06),
-                                        lineWidth: 0.6
-                                    )
-                            )
-                    )
-                    .contentShape(Capsule())
+        DashboardHeaderBarView(
+            stats: store.payload.todayStats,
+            hasAlert: store.payload.hasAlert,
+            isUsageOpen: store.isUsageDashboardPresented,
+            isStandaloneWindow: isStandaloneWindow,
+            lang: lang,
+            refreshSpinCount: refreshSpinCount,
+            outerHorizontalPadding: layoutMetrics.outerHorizontalPadding,
+            onToggleUsage: {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    store.toggleUsageDashboard()
                 }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    isTodayPillHovered = hovering
-                    if hovering {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
-                    }
-                }
-                .help(L10n.todayPillTooltip(cost: stats.costUsd, totalTokens: stats.totalTokens, cachePct: stats.cachePct, lang))
-
-                Spacer(minLength: 4)
-            }
-            .contentShape(Rectangle())
-            .background(WindowDragArea())
-
-            ImpeccableIconButton(
-                icon: "arrow.clockwise",
-                tooltip: L10n.t(.refreshDataTooltip, lang),
-                size: 26,
-                iconSize: 12,
-                spinTrigger: refreshSpinCount
-            ) {
+            },
+            onRefresh: {
                 refreshSpinCount += 1
                 store.fetchMonitorData()
                 store.refreshQuotasIfNeeded(force: true)
@@ -589,301 +848,192 @@ struct MainDashboardView: View {
                 if store.isUsageDashboardPresented {
                     store.fetchUsageHistory(force: true)
                 }
-            }
-
-            if !isStandaloneWindow {
-                ImpeccableIconButton(
-                    icon: "macwindow.on.rectangle",
-                    tooltip: L10n.t(.openStandaloneTooltip, lang),
-                    size: 26,
-                    iconSize: 12
-                ) {
-                    AGYAppDelegate.shared?.openStandaloneWindow()
-                }
-            }
-
-            ImpeccableIconButton(
-                icon: "xmark",
-                tooltip: WindowClosePolicy.headerCloseTooltip(language: lang),
-                hoverTint: .red,
-                hoverFill: Color.red.opacity(0.12),
-                size: 26,
-                iconSize: 12
-            ) {
+            },
+            onOpenStandalone: {
+                AGYAppDelegate.shared?.openStandaloneWindow()
+            },
+            onClose: {
                 if let delegate = AGYAppDelegate.shared {
                     delegate.closeWindow(isStandaloneWindow: isStandaloneWindow)
                 } else {
                     NSApp.keyWindow?.orderOut(nil)
                 }
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
+        )
     }
 
     private var profileManagerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                SectionCollapseToggleButton(title: L10n.t(.accountsSectionTitle, lang), isCollapsed: isAccountsCollapsed) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isAccountsCollapsed.toggle()
-                    }
+        let effectiveTargetMode = store.isCLIIndependentMode ? accountTargetMode : .app
+        let snapshot = AccountCompactSummaryPolicy.resolveActiveAccount(
+            mode: effectiveTargetMode,
+            isCLIIndependentMode: store.isCLIIndependentMode,
+            profiles: store.profiles,
+            expectedAppEmail: store.expectedAppEmail,
+            appStorageEmail: store.appStorageEmail,
+            sharedKeychainEmail: store.sharedKeychainResolution.email,
+            activeProfileName: store.activeProfileName,
+            activeCLIProfileName: store.activeCLIProfileName,
+            accountQuotas: store.accountQuotas,
+            expiredQuotaEmails: store.expiredQuotaEmails,
+            language: lang
+        )
+
+        return AccountSummaryCardView(
+            targetMode: $accountTargetMode,
+            isCLIIndependentMode: store.isCLIIndependentMode,
+            snapshot: snapshot,
+            hasSharedKeychainMismatch: store.hasSharedKeychainMismatch,
+            isCLIVaultAuthorized: store.isCLIVaultAuthorized,
+            isPickerOpen: isAccountPickerOpen,
+            horizontalPadding: layoutMetrics.accountCardHorizontalPadding,
+            onTogglePicker: {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    isAccountPickerOpen.toggle()
                 }
-
-                if isAccountsCollapsed {
-                    let effectiveApp = store.sharedKeychainResolution.email ?? store.activeProfileName
-                    let appLabel = effectiveApp.split(separator: "@").first.map(String.init) ?? "-"
-                    let cliLabel = store.activeCLIProfileName?.split(separator: "@").first.map(String.init) ?? L10n.t(.notSignedIn, lang)
-                    Text("App \(appLabel) · CLI \(cliLabel)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(store.hasSharedKeychainMismatch ? .orange : Color.primary.opacity(0.70))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-
-                Spacer(minLength: 4)
-
-                if !isAccountsCollapsed && store.isCLIIndependentMode {
-                    HStack(spacing: 2) {
-                        ForEach(AccountTargetMode.allCases, id: \.self) { mode in
-                            let isActiveMode = (accountTargetMode == mode)
-                            Button(action: {
-                                withAnimation(.easeOut(duration: 0.14)) {
-                                    accountTargetMode = mode
-                                }
-                            }) {
-                                HStack(spacing: 3) {
-                                    if mode == .cli {
-                                        Image(systemName: "terminal")
-                                            .font(.system(size: 9))
-                                    }
-                                    Text(mode.rawValue)
-                                        .font(.system(size: 11, weight: isActiveMode ? .bold : .medium))
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                        .fill(isActiveMode ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-                                        .shadow(color: isActiveMode ? Color.black.opacity(0.08) : Color.clear, radius: 1, y: 0.5)
-                                )
-                                .foregroundColor(isActiveMode ? .primary : Color.primary.opacity(0.70))
-                                .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                            .help(mode == .app ? L10n.t(.switchDesktopAppTooltip, lang) : L10n.t(.switchCLIAccountTooltip, lang))
-                        }
-                    }
-                    .padding(2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
-                    )
-                }
-
-                if !isAccountsCollapsed {
-                    ImpeccableIconButton(
-                        icon: "doc.text.magnifyingglass",
-                        tooltip: L10n.t(.viewLogsTooltip, lang),
-                        size: 22,
-                        iconSize: 11
-                    ) {
-                        showLogsSheet = true
-                    }
-
-                    ImpeccableIconButton(
-                        icon: "plus",
-                        tooltip: L10n.t(.newProfileTooltip, lang),
-                        tint: Color.accentColor,
-                        hoverTint: Color.accentColor,
-                        hoverFill: Color.accentColor.opacity(0.12),
-                        size: 22,
-                        iconSize: 11.5
-                    ) {
-                        newProfileName = ""
-                        newProfileNotes = ""
-                        newProfileDataDir = ""
-                        showCreateProfileSheet = true
-                    }
-                }
+            },
+            onRefreshQuota: {
+                store.refreshQuotasIfNeeded(force: true)
             }
-            .padding(.horizontal, 2)
+        )
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .preference(
+                        key: AccountCardFramePreferenceKey.self,
+                        value: geo.frame(in: .named("dashboardRoot"))
+                    )
+            }
+        )
+    }
 
-            if !isAccountsCollapsed {
-                if store.hasSharedKeychainMismatch,
-                   let actualEmail = store.sharedKeychainResolution.email {
-                    let expectedEmail = store.resolvedExpectedAppEmail
-                    let appShort = String(expectedEmail.split(separator: "@").first ?? Substring(expectedEmail))
-                    let actualShort = String(actualEmail.split(separator: "@").first ?? Substring(actualEmail))
-                    let sourceHint = L10n.keychainDriftHint(
-                        isRefreshHijack: store.sharedKeychainResolution.isTokenRefreshHijack,
-                        actualShort: actualShort,
-                        lang
-                    )
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.orange)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(L10n.primaryAppDriftLine(appShort: appShort, hint: sourceHint, lang))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.primary)
-                                .lineLimit(2)
-                            if store.backgroundCLIProcessCount > 0 {
-                                Text(L10n.backgroundCLIWarning(store.backgroundCLIProcessCount, lang))
-                                    .font(.system(size: 8.5))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                        Spacer(minLength: 4)
-                        ImpeccableActionButton(
-                            title: L10n.switchBackTo(appShort, lang),
-                            icon: "arrow.uturn.backward",
-                            baseFill: Color.orange.opacity(0.16),
-                            hoverFill: Color.orange.opacity(0.28),
-                            tint: .orange,
-                            hoverTint: .orange,
-                            cornerRadius: 4,
-                            horizontalPadding: 7,
-                            verticalPadding: 3,
-                            fontSize: 9.5,
-                            fontWeight: .semibold,
-                            tooltip: L10n.restoreKeychainTooltip(expectedEmail, lang)
-                        ) {
-                            store.restoreAppKeychainAccount()
-                        }
-                    }
-                    .padding(7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.orange.opacity(0.08))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.orange.opacity(0.25), lineWidth: 0.6)
-                    )
-                }
-
-                if store.isCLIIndependentMode && accountTargetMode == .cli && !store.isCLIVaultAuthorized {
-                    HStack(spacing: 8) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.purple)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(L10n.t(.authorizeCLIAutoSwitchTitle, lang))
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text(L10n.t(.authorizeCLIAutoSwitchDesc, lang))
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                        }
-                        Spacer(minLength: 4)
-                        Button(action: { store.authorizeCLIVault() }) {
-                            Text(L10n.t(.authorizeOnceButton, lang))
-                                .font(.system(size: 9.5, weight: .semibold))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
-                                .background(Color.purple)
-                                .foregroundColor(.white)
-                                .cornerRadius(4)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.purple.opacity(0.07))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.purple.opacity(0.18), lineWidth: 0.6)
-                    )
-                } else if store.isCLIIndependentMode && accountTargetMode == .cli {
-                    HStack(spacing: 5) {
-                        Image(systemName: store.isCLITokenFileReady ? "info.circle" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 9))
-                            .foregroundColor(store.isCLITokenFileReady ? .purple.opacity(0.85) : .orange)
-                        Text(
-                            !store.isCLITokenFileReady
-                                ? L10n.t(.cliTokenMissingOrCorrupt, lang)
-                                : (store.backgroundCLIProcessCount > 0
-                                    ? L10n.cliTokenRunningWarning(store.backgroundCLIProcessCount, lang)
-                                    : L10n.t(.cliTokenIsolatedHint, lang))
-                        )
-                            .font(.system(size: 8.5))
-                            .foregroundColor(store.isCLITokenFileReady ? .secondary : .orange)
-                            .lineLimit(1)
-                            .help(L10n.t(.cliTokenHelpTooltip, lang))
-                        Spacer()
-                        Button(action: {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(CLIAccountManager.fileTokenModeEnv, forType: .string)
-                            store.showBanner(L10n.copiedEnvBanner(CLIAccountManager.fileTokenModeEnv, lang))
-                        }) {
-                            Text(L10n.t(.copyEnvButton, lang))
-                                .font(.system(size: 8.5, weight: .semibold))
-                                .foregroundColor(.purple)
-                        }
-                        .buttonStyle(.plain)
-                        .help(L10n.copyEnvHelp(CLIAccountManager.fileTokenModeEnv, lang))
-                    }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                }
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 2) {
-                        let effectiveTargetMode = store.isCLIIndependentMode ? accountTargetMode : .app
-                        let effectiveAppEmail = AccountDisplayPolicy.effectiveRunningAppEmail(
-                            expectedAppEmail: store.expectedAppEmail,
-                            appStorageEmail: store.appStorageEmail,
-                            sharedKeychainEmail: store.sharedKeychainResolution.email,
-                            activeProfileName: store.activeProfileName
-                        ).lowercased()
-                        let isAppResolved = !store.expectedAppEmail.isEmpty
-                            || !store.appStorageEmail.isEmpty
-                            || store.sharedKeychainResolution.email != nil
-                        let authenticatedEmails = store.savedCLISlots.union(
-                            store.accountQuotas.keys.filter { $0.contains("@") }
-                        )
-                        let sortedProfiles = AccountSortOrder.sortedProfiles(
-                            store.profiles,
-                            mode: effectiveTargetMode,
-                            effectiveAppEmail: effectiveAppEmail,
-                            activeProfileName: store.activeProfileName,
-                            activeCLIProfileName: store.activeCLIProfileName,
-                            isSharedKeychainResolved: isAppResolved,
-                            authenticatedEmails: authenticatedEmails
-                        )
-                        ForEach(sortedProfiles) { profile in
-                            let emailKey = (profile.email ?? profile.name).lowercased()
-                            let isAppActive = (emailKey == effectiveAppEmail) || (!isAppResolved && profile.name == store.activeProfileName)
-                            let isCLIActive = (store.activeCLIProfileName?.lowercased() == emailKey)
-                            let hasCLISlot = isCLIActive || store.savedCLISlots.contains(emailKey)
-                            CompactProfileRowView(
-                                profile: profile,
-                                mode: effectiveTargetMode,
-                                isAppActive: isAppActive,
-                                isCLIActive: isCLIActive,
-                                isCLIVaultAuthorized: store.isCLIVaultAuthorized,
-                                isCLIIndependentMode: store.isCLIIndependentMode,
-                                hasCLISlot: hasCLISlot,
-                                accountQuota: store.accountQuotas[emailKey],
-                                isQuotaTokenExpired: store.expiredQuotaEmails.contains(emailKey),
-                                onSwitchApp: { store.switchToProfile(profile) },
-                                onParallelApp: { store.launchParallelProfile(profile) },
-                                onSwitchCLI: { store.switchCLIProfile(profile) },
-                                onDelete: { store.deleteProfile(profile) },
-                                onRefreshQuota: { store.refreshQuotasIfNeeded(force: true) }
-                            )
-                        }
-                    }
-                }
-                .frame(maxHeight: 138)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+    private func closeAccountPicker() {
+        if isAccountPickerOpen {
+            withAnimation(.easeOut(duration: 0.14)) {
+                isAccountPickerOpen = false
             }
         }
+    }
+
+    @ViewBuilder
+    private var settingsDismissScrimAndOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.22)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        showSettingsPopover = false
+                    }
+                }
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .onTapGesture {}
+
+                SettingsPopoverView(store: store, onClose: {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        showSettingsPopover = false
+                    }
+                })
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.75)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: Color.black.opacity(0.22), radius: 18, y: 6)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        .zIndex(20)
+    }
+
+    @ViewBuilder
+    private var accountPickerDismissScrimAndOverlay: some View {
+        let effectiveTargetMode = store.isCLIIndependentMode ? accountTargetMode : .app
+        let effectiveAppEmail = AccountDisplayPolicy.effectiveRunningAppEmail(
+            expectedAppEmail: store.expectedAppEmail,
+            appStorageEmail: store.appStorageEmail,
+            sharedKeychainEmail: store.sharedKeychainResolution.email,
+            activeProfileName: store.activeProfileName
+        ).lowercased()
+        let isAppResolved = !store.expectedAppEmail.isEmpty
+            || !store.appStorageEmail.isEmpty
+            || store.sharedKeychainResolution.email != nil
+        let authenticatedEmails = store.savedCLISlots.union(
+            store.accountQuotas.keys.filter { $0.contains("@") }
+        )
+        let sortedProfiles = AccountSortOrder.sortedProfiles(
+            store.profiles,
+            mode: effectiveTargetMode,
+            effectiveAppEmail: effectiveAppEmail,
+            activeProfileName: store.activeProfileName,
+            activeCLIProfileName: store.activeCLIProfileName,
+            isSharedKeychainResolved: isAppResolved,
+            authenticatedEmails: authenticatedEmails
+        )
+        let cardWidth = accountCardFrame.width > 0 ? accountCardFrame.width : nil
+        let topCutout = max(0, accountCardFrame.minY)
+        let bottomAnchor = accountCardFrame.maxY > 0 ? accountCardFrame.maxY : 80
+
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                if topCutout > 0 {
+                    Color.black.opacity(0.06)
+                        .frame(height: topCutout)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture { closeAccountPicker() }
+                }
+                Spacer()
+                    .frame(height: max(0, bottomAnchor - topCutout))
+                Color.black.opacity(0.10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { closeAccountPicker() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            Button("") {
+                closeAccountPicker()
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+            .frame(width: 0, height: 0)
+            .opacity(0)
+
+            AccountSwitcherOverlayView(
+                store: store,
+                mode: effectiveTargetMode,
+                sortedProfiles: sortedProfiles,
+                effectiveAppEmail: effectiveAppEmail,
+                isAppResolved: isAppResolved,
+                onSelectProfile: { profile, isAlreadyActive in
+                    if !isAlreadyActive {
+                        if effectiveTargetMode == .app {
+                            store.switchToProfile(profile)
+                        } else {
+                            store.switchCLIProfile(profile)
+                        }
+                    }
+                    closeAccountPicker()
+                },
+                onRefreshQuota: {
+                    store.refreshQuotasIfNeeded(force: true)
+                },
+                onClose: {
+                    closeAccountPicker()
+                }
+            )
+            .frame(width: cardWidth)
+            .offset(x: accountCardFrame.minX, y: bottomAnchor + 6)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var todayOverviewSection: some View {
@@ -932,8 +1082,115 @@ struct MainDashboardView: View {
         }
     }
 
-    private var activeSessionsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    @ViewBuilder
+    private func dashboardSplitPaneContent(metrics: DashboardAdaptiveLayoutMetrics) -> some View {
+        let displayCount = SessionListFilter.sessionsForDisplay(store.payload.sessions).count
+
+        if !isTelemetryCollapsed && !isSessionsCollapsed {
+            GeometryReader { splitGeo in
+                let totalH = max(0, splitGeo.size.height)
+                let activeFraction = liveDragTelemetryFraction ?? CGFloat(storedSplitFraction)
+                let alloc = DashboardSplitLayoutPolicy.resolveAllocation(
+                    totalAvailableHeight: totalH,
+                    storedFraction: activeFraction,
+                    displaySessionsCount: displayCount,
+                    expandedSessionRowLimit: store.expandedSessionRowLimit
+                )
+
+                VStack(spacing: 0) {
+                    LiveTelemetryOverviewCardView(
+                        samples: store.liveTelemetrySamples,
+                        todayStats: store.payload.todayStats,
+                        isCollapsedExternal: $isTelemetryCollapsed,
+                        cardHorizontalPadding: metrics.telemetryCardHorizontalPadding,
+                        plotHorizontalPadding: metrics.telemetryPlotHorizontalPadding,
+                        highlightedSeriesIds: hoveredSessionSeriesIds,
+                        minPlotHeight: DashboardSplitLayoutPolicy.splitMinPlotHeight,
+                        pinnedFamilyByRoot: store.telemetryFamilyByRoot,
+                        timelineAnchorDate: store.telemetryTimelineAnchor,
+                        onHoverChartAgent: { agentId in
+                            if hoveredChartAgentId != agentId {
+                                hoveredChartAgentId = agentId
+                            }
+                        }
+                    )
+                    .frame(height: alloc.telemetryHeight > 0 ? alloc.telemetryHeight : nil, alignment: .top)
+                    .clipped()
+
+                    Color.clear
+                        .frame(height: alloc.dividerHeight)
+
+                    activeSessionsSection(
+                        allocatedHeight: alloc.sessionsHeight > 0 ? alloc.sessionsHeight : nil,
+                        splitDragCallbacks: SplitDragCallbacks(
+                            onDragBegan: {
+                                dragStartTelemetryHeight = alloc.telemetryHeight
+                            },
+                            onDragChanged: { deltaY in
+                                let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
+                                liveDragTelemetryFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+                                    startTelemetryHeight: base,
+                                    dragDeltaY: deltaY,
+                                    totalAvailableHeight: totalH
+                                )
+                            },
+                            onDragEnded: { deltaY in
+                                let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
+                                let committed = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+                                    startTelemetryHeight: base,
+                                    dragDeltaY: deltaY,
+                                    totalAvailableHeight: totalH
+                                )
+                                storedSplitFraction = Double(committed)
+                                liveDragTelemetryFraction = nil
+                                dragStartTelemetryHeight = nil
+                            },
+                            onDoubleClick: {
+                                withAnimation(.easeOut(duration: 0.18)) {
+                                    storedSplitFraction = -1
+                                    liveDragTelemetryFraction = nil
+                                    dragStartTelemetryHeight = nil
+                                }
+                            }
+                        )
+                    )
+                }
+                .frame(width: splitGeo.size.width, height: splitGeo.size.height, alignment: .top)
+            }
+        } else {
+            VStack(spacing: 8) {
+                LiveTelemetryOverviewCardView(
+                    samples: store.liveTelemetrySamples,
+                    todayStats: store.payload.todayStats,
+                    isCollapsedExternal: $isTelemetryCollapsed,
+                    cardHorizontalPadding: metrics.telemetryCardHorizontalPadding,
+                    plotHorizontalPadding: metrics.telemetryPlotHorizontalPadding,
+                    highlightedSeriesIds: hoveredSessionSeriesIds,
+                    pinnedFamilyByRoot: store.telemetryFamilyByRoot,
+                    timelineAnchorDate: store.telemetryTimelineAnchor,
+                    onHoverChartAgent: { agentId in
+                        if hoveredChartAgentId != agentId {
+                            hoveredChartAgentId = agentId
+                        }
+                    }
+                )
+                .frame(maxHeight: !isTelemetryCollapsed ? .infinity : nil)
+
+                activeSessionsSection(allocatedHeight: nil, splitDragCallbacks: nil)
+
+                if isSessionsCollapsed {
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private func activeSessionsSection(
+        allocatedHeight: CGFloat?,
+        splitDragCallbacks: SplitDragCallbacks?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: SessionListLayoutPolicy.headerToListSpacing) {
             HStack(spacing: 6) {
                 SectionCollapseToggleButton(title: L10n.t(.sessionsSectionTitle, lang), isCollapsed: isSessionsCollapsed) {
                     withAnimation(.easeOut(duration: 0.18)) {
@@ -1029,7 +1286,19 @@ struct MainDashboardView: View {
                     .help(L10n.recent503Tooltip(count503, lang))
                 }
 
-                Spacer()
+                if let splitDrag = splitDragCallbacks {
+                    SplitPaneDividerBar(
+                        showsSeparatorLine: false,
+                        tooltip: L10n.t(.splitResizeTooltip, lang),
+                        onDragBegan: splitDrag.onDragBegan,
+                        onDragChanged: splitDrag.onDragChanged,
+                        onDragEnded: splitDrag.onDragEnded,
+                        onDoubleClick: splitDrag.onDoubleClick
+                    )
+                    .frame(minWidth: 26, maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Spacer()
+                }
 
                 if !store.payload.sessions.isEmpty {
                     let displayedCount = SessionListFilter.sessionsForDisplay(store.payload.sessions).count
@@ -1039,7 +1308,8 @@ struct MainDashboardView: View {
                         .padding(.trailing, 2)
                 }
             }
-            .padding(.horizontal, 2)
+            .frame(height: SessionListLayoutPolicy.headerHeight)
+            .padding(.horizontal, layoutMetrics.sectionHeaderHorizontalPadding)
 
             if !isSessionsCollapsed {
                 if store.payload.sessions.isEmpty {
@@ -1052,12 +1322,53 @@ struct MainDashboardView: View {
                         Spacer()
                     }
                 } else {
+                    let displaySessions = SessionListFilter.sessionsForDisplay(store.payload.sessions)
+                    let telemetryRange = TelemetryTimeRange.resolved(from: selectedTelemetryRangeRaw)
+                    let referenceDate = max(Date(), store.liveTelemetrySamples.last?.timestamp ?? Date())
+                    let anchorDate = store.telemetryTimelineAnchor ?? store.liveTelemetrySamples.first?.timestamp
+                    let windowSamples = LiveTelemetryPolicy.visibleChartSamples(
+                        in: telemetryRange,
+                        from: store.liveTelemetrySamples,
+                        anchorDate: anchorDate,
+                        now: referenceDate
+                    )
+                    let seriesList = LiveTelemetryPolicy.agentSeries(
+                        in: windowSamples,
+                        colorAnchorSamples: store.liveTelemetrySamples,
+                        pinnedFamilyByRoot: store.telemetryFamilyByRoot
+                    )
+                    let sessionColorLinks = LiveTelemetryPolicy.sessionColorLinks(
+                        sessions: displaySessions,
+                        seriesList: seriesList
+                    )
+                    let highlightedSessionId = LiveTelemetryPolicy.matchingSessionId(
+                        forAgentId: hoveredChartAgentId,
+                        links: sessionColorLinks
+                    )
+                    let fixedHeight: CGFloat? = allocatedHeight == nil
+                        ? SessionListLayoutPolicy.scrollHeight(
+                            forCount: displaySessions.count,
+                            visibleLimit: store.expandedSessionRowLimit,
+                            chartExpanded: !isTelemetryCollapsed
+                        )
+                        : nil
                     ScrollView(.vertical, showsIndicators: true) {
-                        VStack(spacing: 2.5) {
-                            ForEach(SessionListFilter.sessionsForDisplay(store.payload.sessions)) { session in
-                                CompactSessionRowView(session: session, showModelColumn: store.showSessionModelColumn)
+                        VStack(spacing: SessionListLayoutPolicy.rowSpacing) {
+                            ForEach(displaySessions) { session in
+                                let link = sessionColorLinks[session.uuid]
+                                CompactSessionRowView(
+                                    session: session,
+                                    showModelColumn: store.showSessionModelColumn,
+                                    horizontalPadding: layoutMetrics.sessionRowHorizontalPadding,
+                                    chartColorLink: link,
+                                    isHighlightedFromChart: highlightedSessionId == session.uuid,
+                                    onHoverChartHighlight: { hovering in
+                                        hoveredSessionSeriesIds = hovering ? (link?.seriesIds ?? []) : []
+                                    }
+                                )
                                     .contentShape(Rectangle())
                                     .onTapGesture {
+                                        hoveredSessionSeriesIds = []
                                         withAnimation(.easeInOut(duration: 0.15)) {
                                             store.openSessionDetail(session.uuid)
                                         }
@@ -1065,34 +1376,35 @@ struct MainDashboardView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: .infinity)
+                    .frame(height: fixedHeight)
+                    .frame(maxHeight: fixedHeight ?? .infinity)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
         }
+        .frame(height: allocatedHeight, alignment: .top)
+        .clipped()
     }
 
     private var footerBar: some View {
-        HStack {
-            Text(L10n.updatedAt(store.lastUpdatedTimeStr, lang))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(Color.primary.opacity(0.65))
-
-            Spacer()
-
-            ImpeccableIconButton(
-                icon: "gearshape",
-                tooltip: L10n.t(.settingsTitle, lang),
-                tint: Color.primary.opacity(0.65),
-                hoverTint: Color.primary,
-                size: 26,
-                iconSize: 12.5
-            ) {
-                showSettingsPopover.toggle()
+        DashboardFooterBarView(
+            lastUpdatedTimeStr: store.lastUpdatedTimeStr,
+            stats: store.payload.todayStats,
+            isUsageOpen: store.isUsageDashboardPresented,
+            lang: lang,
+            horizontalPadding: layoutMetrics.footerHorizontalPadding,
+            onToggleUsage: {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    store.toggleUsageDashboard()
+                }
+            },
+            onOpenSettings: {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    isAccountPickerOpen = false
+                    showSettingsPopover.toggle()
+                }
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
+        )
     }
 
     private var createProfileSheetView: some View {
@@ -1198,6 +1510,9 @@ struct MainDashboardView: View {
 }
 
 struct SettingsPopoverView: View {
+    static let showsFooterQuitAndHintBar = false
+    static let dismissesOnOutsideScrimTap = true
+
     @ObservedObject var store: AGYHubStore
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -1272,6 +1587,34 @@ struct SettingsPopoverView: View {
                 set: { store.toggleSessionModelColumn($0) }
             ))
             .font(.system(size: 11.5))
+
+            HStack(spacing: 8) {
+                Text(L10n.t(.visibleSessionsCountLabel, lang))
+                    .font(.system(size: 11.5))
+
+                Spacer()
+
+                Text(L10n.visibleSessionsCountValue(store.expandedSessionRowLimit, lang))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    )
+
+                Stepper(
+                    "",
+                    value: Binding(
+                        get: { store.expandedSessionRowLimit },
+                        set: { store.updateExpandedSessionRowLimit($0) }
+                    ),
+                    in: SessionListLayoutPolicy.minVisibleRowsWhenExpanded...SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded
+                )
+                .labelsHidden()
+                .controlSize(.small)
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(L10n.t(.cliIndependentToggle, lang), isOn: Binding(
@@ -1438,34 +1781,9 @@ struct SettingsPopoverView: View {
                 }
             }
             .frame(maxHeight: 400)
-
-            Divider().opacity(0.3)
-
-            HStack {
-                Text(L10n.t(.closeWindowKeepsRunning, lang))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Spacer()
-                ImpeccableActionButton(
-                    title: L10n.t(.quitAgyhubButton, lang),
-                    icon: "power",
-                    baseFill: Color.red.opacity(0.10),
-                    hoverFill: Color.red.opacity(0.20),
-                    tint: .red,
-                    hoverTint: .red,
-                    cornerRadius: 4.5,
-                    horizontalPadding: 8,
-                    verticalPadding: 4,
-                    fontSize: 10.5,
-                    fontWeight: .semibold,
-                    tooltip: L10n.t(.quitAgyhubTooltip, lang)
-                ) {
-                    NSApplication.shared.terminate(nil)
-                }
-            }
         }
         .padding(16)
-        .frame(width: 360)
+        .frame(minWidth: 280, maxWidth: 360)
         .environment(\.agyLanguage, lang)
         .onExitCommand {
             closeSettings()
@@ -1504,25 +1822,25 @@ struct QuotaPillView: View {
     }
 
     var body: some View {
-        HStack(spacing: 2.5) {
+        HStack(spacing: 2) {
             Text(item.title)
-                .font(.system(size: 9.5, weight: .semibold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(Color.primary.opacity(0.72))
                 .fixedSize()
 
             Text("\(item.percentage)%")
-                .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundColor(item.remainingFraction <= 0.2 ? statusColor : Color.primary)
                 .fixedSize()
 
             if !item.countdown.isEmpty {
                 Text("·\(item.countdown)")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                     .foregroundColor(Color.primary.opacity(0.62))
                     .fixedSize()
             }
         }
-        .padding(.horizontal, 5)
+        .padding(.horizontal, 4.5)
         .padding(.vertical, 2)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -1533,6 +1851,758 @@ struct QuotaPillView: View {
                 )
         )
         .fixedSize(horizontal: true, vertical: true)
+    }
+}
+
+struct AccountCardFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next.width > 0 {
+            value = next
+        }
+    }
+}
+
+struct AccountNameCapacityBadgeView: View {
+    let name: String
+    let fullEmail: String
+    let mode: AccountTargetMode
+    let isSignedIn: Bool
+    let isActiveTarget: Bool
+    let hasDriftWarning: Bool
+    let fiveHourDisplay: FiveHourCapacityDisplay?
+    let isQuotaTokenExpired: Bool
+    var secondaryRoleBadge: String? = nil
+
+    private var accentTint: Color {
+        if hasDriftWarning {
+            return Color.orange
+        }
+        return mode == .app ? Color.accentColor : Color.purple
+    }
+
+    private var capacityBarColor: Color {
+        guard let fh = fiveHourDisplay else { return accentTint }
+        if fh.remainingFraction > 0.2 {
+            return mode == .app ? Color.accentColor : Color.purple
+        } else if fh.remainingFraction > 0.05 {
+            return Color(red: 0.85, green: 0.42, blue: 0.0)
+        } else {
+            return Color.red
+        }
+    }
+
+    private var borderStrokeColor: Color {
+        if hasDriftWarning {
+            return Color.orange.opacity(0.55)
+        }
+        if let fh = fiveHourDisplay, fh.remainingFraction <= 0.2 {
+            return capacityBarColor.opacity(0.45)
+        }
+        return isActiveTarget ? accentTint.opacity(0.32) : Color.primary.opacity(0.11)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isSignedIn ? (isActiveTarget || hasDriftWarning ? accentTint : Color.secondary.opacity(0.35)) : Color.secondary.opacity(0.30))
+                .frame(width: 5, height: 5)
+                .fixedSize()
+
+            Text(name)
+                .font(.system(size: 11.5, weight: isActiveTarget ? .semibold : .medium))
+                .foregroundColor(isSignedIn ? (isActiveTarget ? .primary : Color.primary.opacity(0.88)) : .secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(0)
+
+            if let roleBadge = secondaryRoleBadge, !roleBadge.isEmpty {
+                Text(roleBadge)
+                    .font(.system(size: 8.5, weight: .bold))
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 0.5)
+                    .background((roleBadge == "CLI" ? Color.purple : Color.accentColor).opacity(0.14))
+                    .foregroundColor(roleBadge == "CLI" ? Color.purple : Color.accentColor)
+                    .cornerRadius(3)
+                    .fixedSize()
+                    .layoutPriority(2)
+            }
+
+            if let fh = fiveHourDisplay {
+                HStack(spacing: 1) {
+                    Text("\(fh.percentage)%")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(fh.remainingFraction <= 0.2 ? capacityBarColor : Color.primary.opacity(0.75))
+                    if !fh.countdown.isEmpty {
+                        Text("·\(fh.countdown)")
+                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.primary.opacity(0.58))
+                    }
+                }
+                .fixedSize()
+                .layoutPriority(2)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3.5)
+        .background(
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.primary.opacity(0.045))
+
+                if let fh = fiveHourDisplay {
+                    GeometryReader { geo in
+                        let fillWidth = max(0, geo.size.width * CGFloat(fh.remainingFraction))
+                        ZStack(alignment: .bottomLeading) {
+                            Rectangle()
+                                .fill(capacityBarColor.opacity(0.16))
+                                .frame(width: fillWidth, height: geo.size.height)
+
+                            Rectangle()
+                                .fill(capacityBarColor.opacity(0.72))
+                                .frame(width: fillWidth, height: 1.75)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    }
+                    .opacity(isQuotaTokenExpired ? 0.55 : 1.0)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(borderStrokeColor, lineWidth: 0.6)
+        )
+        .help(fullEmail)
+    }
+}
+
+struct AccountSummaryCardView: View {
+    @Binding var targetMode: AccountTargetMode
+    let isCLIIndependentMode: Bool
+    let snapshot: ActiveAccountSnapshot
+    let hasSharedKeychainMismatch: Bool
+    let isCLIVaultAuthorized: Bool
+    let isPickerOpen: Bool
+    var horizontalPadding: CGFloat = 6
+    let onTogglePicker: () -> Void
+    let onRefreshQuota: () -> Void
+
+    @Environment(\.agyLanguage) private var lang
+    @State private var isModeHovered = false
+    @State private var isSwitchHovered = false
+
+    private var activeTint: Color {
+        snapshot.effectiveMode == .app ? Color.accentColor : Color.purple
+    }
+
+    private var tooltipText: String {
+        let weeklyItems = snapshot.quota.map { AccountQuotaManager.displayItems(for: $0, language: lang) } ?? []
+        var parts: [String] = []
+        if !snapshot.fullEmail.isEmpty && snapshot.fullEmail != snapshot.displayName {
+            parts.append(snapshot.fullEmail)
+        }
+        if let q = snapshot.quota {
+            let qTip = AccountQuotaManager.quotaTooltip(
+                items: weeklyItems,
+                isUltra: q.isUltra,
+                fiveHourQuota: q.effectiveFiveHourQuota,
+                isExpired: snapshot.isQuotaExpired,
+                language: lang
+            )
+            if !qTip.isEmpty {
+                parts.append(qTip)
+            }
+        } else if snapshot.isQuotaExpired {
+            parts.append(L10n.quotaExpiredHint(for: lang))
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    var body: some View {
+        let fhDisplay = AccountQuotaManager.fiveHourDisplay(for: snapshot.quota, language: lang)
+        let weeklyItems = snapshot.quota.map { AccountQuotaManager.displayItems(for: $0, language: lang) } ?? []
+        let tip = tooltipText
+
+        HStack(spacing: 4) {
+            modeSwitcherSegment
+            warningIndicatorButton
+
+            AccountNameCapacityBadgeView(
+                name: snapshot.displayName,
+                fullEmail: tip.isEmpty ? snapshot.fullEmail : tip,
+                mode: snapshot.effectiveMode,
+                isSignedIn: snapshot.isSignedIn,
+                isActiveTarget: snapshot.isSignedIn,
+                hasDriftWarning: hasSharedKeychainMismatch && snapshot.effectiveMode == .app,
+                fiveHourDisplay: fhDisplay,
+                isQuotaTokenExpired: snapshot.isQuotaExpired
+            )
+            .layoutPriority(1)
+
+            weeklyQuotaSection(weeklyItems: weeklyItems, tooltip: tip)
+
+            Spacer(minLength: 2)
+                .frame(height: 20)
+                .contentShape(Rectangle())
+                .background(WindowDragArea())
+                .layoutPriority(-1)
+
+            switchTriggerButton
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 4.5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    (hasSharedKeychainMismatch && snapshot.effectiveMode == .app)
+                        ? Color.orange.opacity(0.40)
+                        : Color.primary.opacity(0.09),
+                    lineWidth: 0.6
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var modeSwitcherSegment: some View {
+        if isCLIIndependentMode {
+            let modeTint = targetMode == .app ? Color.accentColor : Color.purple
+            Button {
+                withAnimation(.easeOut(duration: 0.14)) {
+                    targetMode = targetMode.toggled
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: targetMode == .cli ? "terminal" : "macwindow")
+                        .font(.system(size: 8.5, weight: .semibold))
+                    Text(targetMode.rawValue)
+                        .font(.system(size: 10.5, weight: .bold))
+                }
+                .foregroundColor(modeTint)
+                .padding(.horizontal, 6.5)
+                .padding(.vertical, 3.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(modeTint.opacity(isModeHovered ? 0.17 : 0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(modeTint.opacity(isModeHovered ? 0.38 : 0.22), lineWidth: 0.5)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(2)
+            .onHover { hovering in
+                isModeHovered = hovering
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .onDisappear {
+                if isModeHovered {
+                    isModeHovered = false
+                    NSCursor.arrow.set()
+                }
+            }
+            .help(targetMode == .app ? L10n.t(.toggleToCLIModeTooltip, lang) : L10n.t(.toggleToAppModeTooltip, lang))
+        } else {
+            Text(AccountTargetMode.app.rawValue)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Color.accentColor)
+                .padding(.horizontal, 5.5)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.10))
+                )
+                .fixedSize()
+                .layoutPriority(2)
+        }
+    }
+
+    @ViewBuilder
+    private var warningIndicatorButton: some View {
+        if hasSharedKeychainMismatch && snapshot.effectiveMode == .app {
+            Button(action: onTogglePicker) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(2)
+            .help(L10n.t(.switchAppHelp, lang))
+        } else if snapshot.effectiveMode == .cli && !isCLIVaultAuthorized {
+            Button(action: onTogglePicker) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(.purple)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(2)
+            .help(L10n.t(.authorizeCLIAutoSwitchTitle, lang))
+        }
+    }
+
+    @ViewBuilder
+    private func weeklyQuotaSection(weeklyItems: [QuotaDisplayItem], tooltip: String) -> some View {
+        if snapshot.quota != nil && !weeklyItems.isEmpty {
+            HStack(spacing: 3) {
+                ForEach(weeklyItems) { item in
+                    QuotaPillView(item: item)
+                }
+            }
+            .opacity(snapshot.isQuotaExpired ? 0.65 : 1.0)
+            .fixedSize()
+            .layoutPriority(2)
+            .help(tooltip)
+        } else if snapshot.isQuotaExpired {
+            Button(action: onRefreshQuota) {
+                HStack(spacing: 2.5) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 8.5, weight: .medium))
+                    Text(L10n.quotaExpiredBadge(for: lang))
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(2)
+            .help(L10n.quotaExpiredHint(for: lang))
+        }
+    }
+
+    private var switchTriggerButton: some View {
+        Button(action: onTogglePicker) {
+            HStack(spacing: 2.5) {
+                Text(L10n.t(.switchAction, lang))
+                    .font(.system(size: 10.5, weight: .semibold))
+                Image(systemName: isPickerOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundColor(activeTint)
+            .padding(.horizontal, 6.5)
+            .padding(.vertical, 3.5)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(activeTint.opacity(isPickerOpen ? 0.22 : (isSwitchHovered ? 0.18 : 0.11)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(activeTint.opacity(isPickerOpen ? 0.42 : 0.24), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .layoutPriority(3)
+        .onHover { hovering in
+            isSwitchHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+        .onDisappear {
+            if isSwitchHovered {
+                isSwitchHovered = false
+                NSCursor.arrow.set()
+            }
+        }
+        .help(snapshot.effectiveMode == .app ? L10n.t(.switchAppHelp, lang) : L10n.t(.switchCLIAccountTooltip, lang))
+    }
+}
+
+struct AccountSwitcherOverlayView: View {
+    @ObservedObject var store: AGYHubStore
+    let mode: AccountTargetMode
+    let sortedProfiles: [AGYProfile]
+    let effectiveAppEmail: String
+    let isAppResolved: Bool
+    let onSelectProfile: (AGYProfile, Bool) -> Void
+    let onRefreshQuota: () -> Void
+    let onClose: () -> Void
+
+    @Environment(\.agyLanguage) private var lang
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                ImpeccableIconButton(
+                    icon: "xmark",
+                    tooltip: L10n.t(.closePickerTooltip, lang),
+                    hoverTint: .red,
+                    hoverFill: Color.red.opacity(0.12),
+                    size: 20,
+                    iconSize: 10
+                ) {
+                    onClose()
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 5)
+
+            driftWarningBanner
+            cliAuthStatusBanner
+
+            accountListScrollView
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.98))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.75)
+        )
+        .shadow(color: Color.black.opacity(0.20), radius: 14, y: 6)
+    }
+
+    @ViewBuilder
+    private var driftWarningBanner: some View {
+        if store.hasSharedKeychainMismatch,
+           let actualEmail = store.sharedKeychainResolution.email {
+            let expectedEmail = store.resolvedExpectedAppEmail
+            let appShort = AccountCompactSummaryPolicy.shortName(for: expectedEmail)
+            let actualShort = AccountCompactSummaryPolicy.shortName(for: actualEmail)
+            let sourceHint = L10n.keychainDriftHint(
+                isRefreshHijack: store.sharedKeychainResolution.isTokenRefreshHijack,
+                actualShort: actualShort,
+                lang
+            )
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.primaryAppDriftLine(appShort: appShort, hint: sourceHint, lang))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                    if store.backgroundCLIProcessCount > 0 {
+                        Text(L10n.backgroundCLIWarning(store.backgroundCLIProcessCount, lang))
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 4)
+                ImpeccableActionButton(
+                    title: L10n.switchBackTo(appShort, lang),
+                    icon: "arrow.uturn.backward",
+                    baseFill: Color.orange.opacity(0.16),
+                    hoverFill: Color.orange.opacity(0.28),
+                    tint: .orange,
+                    hoverTint: .orange,
+                    cornerRadius: 4,
+                    horizontalPadding: 7,
+                    verticalPadding: 3,
+                    fontSize: 9.5,
+                    fontWeight: .semibold,
+                    tooltip: L10n.restoreKeychainTooltip(expectedEmail, lang)
+                ) {
+                    store.restoreAppKeychainAccount()
+                    onClose()
+                }
+            }
+            .padding(7)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.orange.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.orange.opacity(0.25), lineWidth: 0.6)
+            )
+            .padding(.horizontal, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var cliAuthStatusBanner: some View {
+        if store.isCLIIndependentMode && mode == .cli && !store.isCLIVaultAuthorized {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.purple)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.t(.authorizeCLIAutoSwitchTitle, lang))
+                        .font(.system(size: 10.5, weight: .semibold))
+                    Text(L10n.t(.authorizeCLIAutoSwitchDesc, lang))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 4)
+                Button(action: { store.authorizeCLIVault() }) {
+                    Text(L10n.t(.authorizeOnceButton, lang))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(7)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.purple.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.purple.opacity(0.18), lineWidth: 0.6)
+            )
+            .padding(.horizontal, 8)
+        } else if store.isCLIIndependentMode && mode == .cli {
+            HStack(spacing: 5) {
+                Image(systemName: store.isCLITokenFileReady ? "info.circle" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(store.isCLITokenFileReady ? .purple.opacity(0.85) : .orange)
+                Text(
+                    !store.isCLITokenFileReady
+                        ? L10n.t(.cliTokenMissingOrCorrupt, lang)
+                        : (store.backgroundCLIProcessCount > 0
+                            ? L10n.cliTokenRunningWarning(store.backgroundCLIProcessCount, lang)
+                            : L10n.t(.cliTokenIsolatedHint, lang))
+                )
+                .font(.system(size: 8.5))
+                .foregroundColor(store.isCLITokenFileReady ? .secondary : .orange)
+                .lineLimit(1)
+                .help(L10n.t(.cliTokenHelpTooltip, lang))
+                Spacer()
+                Button(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(CLIAccountManager.fileTokenModeEnv, forType: .string)
+                    store.showBanner(L10n.copiedEnvBanner(CLIAccountManager.fileTokenModeEnv, lang))
+                }) {
+                    Text(L10n.t(.copyEnvButton, lang))
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(.purple)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.copyEnvHelp(CLIAccountManager.fileTokenModeEnv, lang))
+            }
+            .padding(.horizontal, 10)
+        }
+    }
+
+    private var accountListScrollView: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 3) {
+                ForEach(sortedProfiles) { profile in
+                    let emailKey = (profile.email ?? profile.name).lowercased()
+                    let isAppActive = (emailKey == effectiveAppEmail) || (!isAppResolved && profile.name == store.activeProfileName)
+                    let isCLIActive = (store.activeCLIProfileName?.lowercased() == emailKey)
+                    let isTargetActive = (mode == .app) ? isAppActive : isCLIActive
+                    let hasCLISlot = isCLIActive || store.savedCLISlots.contains(emailKey)
+                    AccountPickerRowView(
+                        profile: profile,
+                        mode: mode,
+                        isAppActive: isAppActive,
+                        isCLIActive: isCLIActive,
+                        isCLIVaultAuthorized: store.isCLIVaultAuthorized,
+                        hasCLISlot: hasCLISlot,
+                        accountQuota: store.accountQuotas[emailKey],
+                        isQuotaTokenExpired: store.expiredQuotaEmails.contains(emailKey),
+                        onSelect: {
+                            onSelectProfile(profile, isTargetActive)
+                        },
+                        onRefreshQuota: onRefreshQuota
+                    )
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 7)
+        }
+        .frame(maxHeight: 220)
+    }
+}
+
+struct AccountPickerRowView: View {
+    let profile: AGYProfile
+    let mode: AccountTargetMode
+    let isAppActive: Bool
+    let isCLIActive: Bool
+    let isCLIVaultAuthorized: Bool
+    let hasCLISlot: Bool
+    let accountQuota: AccountQuotaSummary?
+    let isQuotaTokenExpired: Bool
+    let onSelect: () -> Void
+    let onRefreshQuota: () -> Void
+
+    @Environment(\.agyLanguage) private var lang
+    @State private var isHovered = false
+
+    private var isTargetActive: Bool {
+        mode == .app ? isAppActive : isCLIActive
+    }
+
+    private var secondaryRoleBadge: String? {
+        if mode == .app && isCLIActive {
+            return "CLI"
+        }
+        if mode == .cli && isAppActive {
+            return "App"
+        }
+        return nil
+    }
+
+    private var activeTint: Color {
+        mode == .app ? Color.accentColor : Color.purple
+    }
+
+    var body: some View {
+        let shortId = AccountCompactSummaryPolicy.shortName(for: profile.email ?? profile.name)
+        let fhDisplay = AccountQuotaManager.fiveHourDisplay(for: accountQuota, language: lang)
+        let weeklyItems = accountQuota.map { AccountQuotaManager.displayItems(for: $0, language: lang) } ?? []
+        let tooltipText: String = {
+            var parts = [profile.name]
+            if let q = accountQuota {
+                let qTip = AccountQuotaManager.quotaTooltip(
+                    items: weeklyItems,
+                    isUltra: q.isUltra,
+                    fiveHourQuota: q.effectiveFiveHourQuota,
+                    isExpired: isQuotaTokenExpired,
+                    language: lang
+                )
+                if !qTip.isEmpty {
+                    parts.append(qTip)
+                }
+            } else if isQuotaTokenExpired {
+                parts.append(L10n.quotaExpiredHint(for: lang))
+            }
+            return parts.joined(separator: "\n")
+        }()
+
+        Button(action: onSelect) {
+            HStack(spacing: 5) {
+                AccountNameCapacityBadgeView(
+                    name: shortId,
+                    fullEmail: tooltipText,
+                    mode: mode,
+                    isSignedIn: true,
+                    isActiveTarget: isTargetActive,
+                    hasDriftWarning: false,
+                    fiveHourDisplay: fhDisplay,
+                    isQuotaTokenExpired: isQuotaTokenExpired,
+                    secondaryRoleBadge: secondaryRoleBadge
+                )
+                .layoutPriority(1)
+
+                if accountQuota != nil && !weeklyItems.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(weeklyItems) { item in
+                            QuotaPillView(item: item)
+                        }
+                    }
+                    .opacity(isQuotaTokenExpired ? 0.65 : 1.0)
+                    .fixedSize()
+                    .layoutPriority(2)
+                    .help(tooltipText)
+                } else if isQuotaTokenExpired {
+                    Button(action: onRefreshQuota) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 8.5, weight: .medium))
+                            Text(L10n.quotaExpiredBadge(for: lang))
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Color.primary.opacity(0.04))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .layoutPriority(2)
+                    .help(L10n.quotaExpiredHint(for: lang))
+                }
+
+                Spacer(minLength: 4)
+
+                if isTargetActive {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(activeTint)
+                        .fixedSize()
+                } else if isHovered {
+                    let actionLabel = (mode == .cli && (!isCLIVaultAuthorized || !hasCLISlot))
+                        ? (!isCLIVaultAuthorized ? L10n.t(.terminalLoginAction, lang) : L10n.t(.loginCLIAction, lang))
+                        : L10n.t(.switchAction, lang)
+                    Text(actionLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(activeTint)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(activeTint.opacity(0.14))
+                        )
+                        .fixedSize()
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        isTargetActive
+                            ? activeTint.opacity(0.08)
+                            : (isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        isTargetActive ? activeTint.opacity(0.22) : Color.clear,
+                        lineWidth: 0.6
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+        .onDisappear {
+            if isHovered {
+                isHovered = false
+                NSCursor.arrow.set()
+            }
+        }
     }
 }
 
@@ -1824,6 +2894,955 @@ struct CompactProfileRowView: View {
             } else {
                 NSCursor.arrow.set()
             }
+        }
+    }
+}
+
+enum TelemetryYAxisPosition: Equatable {
+    case leading
+    case trailing
+}
+
+enum LiveTelemetryChartAxisPolicy {
+    static let yAxisPosition: TelemetryYAxisPosition = .leading
+    static let contextHeaderAlignment: HorizontalAlignment = .leading
+    static let yAxisTitleOpacity: Double = 0.78
+    static let yAxisTickOpacity: Double = 0.74
+    static let xAxisTickOpacity: Double = 0.62
+    static let yAxisTitleFontSize: CGFloat = 9.5
+    static let yAxisTickFontSize: CGFloat = 9.5
+    static let xAxisTickFontSize: CGFloat = 9.0
+
+    static func horizontalGuideIndices(
+        seriesList: [AgentContextSeries],
+        focusedSeriesIds: Set<String>
+    ) -> [Int] {
+        guard !focusedSeriesIds.isEmpty else { return [] }
+        if let match = seriesList.indices.first(where: { focusedSeriesIds.contains(seriesList[$0].agentId) }) {
+            return [match]
+        }
+        return []
+    }
+
+    static func calloutCenterX(forReferenceX referenceX: CGFloat, in plotRect: CGRect) -> CGFloat {
+        let minX = plotRect.minX + 22
+        let maxX = max(minX, plotRect.maxX - 22)
+        if referenceX <= plotRect.maxX - 46 {
+            return min(max(minX, referenceX + 24), maxX)
+        }
+        return min(max(minX, referenceX - 24), maxX)
+    }
+}
+
+struct LiveTelemetryOverviewCardView: View {
+    static let showsStandaloneLegendStrip = false
+    static let drawsHollowEndpointForIdleSeries = true
+    static let usesOneQuarterGrowingTimelinePage = true
+
+    let samples: [LiveTelemetrySample]
+    let todayStats: TodayStats
+    var isCollapsedExternal: Binding<Bool>? = nil
+    var cardHorizontalPadding: CGFloat = 9
+    var plotHorizontalPadding: CGFloat = 6
+    var highlightedSeriesIds: Set<String> = []
+    var minPlotHeight: CGFloat = DashboardSplitLayoutPolicy.defaultMinPlotHeight
+    var pinnedFamilyByRoot: [String: Int] = [:]
+    var timelineAnchorDate: Date? = nil
+    var onHoverChartAgent: ((String?) -> Void)? = nil
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.agyLanguage) private var lang
+    @AppStorage("agyhub.telemetry.range") private var selectedRangeRaw: String = TelemetryTimeRange.threeMinutes.rawValue
+    @AppStorage("agyhub.collapse.telemetry") private var storedCollapsed: Bool = false
+    @State private var hoveredSampleId: Int? = nil
+    @State private var hoveredChartAgentId: String? = nil
+    @State private var hoveredLegendAgentId: String? = nil
+
+    private var activeFocusedSeriesIds: Set<String> {
+        if !highlightedSeriesIds.isEmpty {
+            return highlightedSeriesIds
+        }
+        if let hoveredChartAgentId {
+            return [hoveredChartAgentId]
+        }
+        if let focusId = hoveredLegendAgentId {
+            return [focusId]
+        }
+        return []
+    }
+
+    private var isCollapsed: Bool {
+        get { isCollapsedExternal?.wrappedValue ?? storedCollapsed }
+        nonmutating set {
+            if let ext = isCollapsedExternal {
+                ext.wrappedValue = newValue
+            } else {
+                storedCollapsed = newValue
+            }
+        }
+    }
+
+    private var selectedRange: TelemetryTimeRange {
+        TelemetryTimeRange.resolved(from: selectedRangeRaw)
+    }
+
+    private static let hoverTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    private static let axisMinuteFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private var referenceDate: Date {
+        max(Date(), samples.last?.timestamp ?? Date())
+    }
+
+    private var effectiveAnchorDate: Date {
+        timelineAnchorDate ?? samples.first?.timestamp ?? referenceDate
+    }
+
+    private var rangeSamples: [LiveTelemetrySample] {
+        LiveTelemetryPolicy.visibleChartSamples(
+            in: selectedRange,
+            from: samples,
+            anchorDate: effectiveAnchorDate,
+            now: referenceDate
+        )
+    }
+
+    private var latestSample: LiveTelemetrySample? {
+        rangeSamples.last ?? samples.last
+    }
+
+    private var hoveredSample: LiveTelemetrySample? {
+        guard let hoveredId = hoveredSampleId else { return nil }
+        return rangeSamples.first(where: { $0.id == hoveredId })
+    }
+
+    private var activeSample: LiveTelemetrySample? {
+        hoveredSample ?? latestSample
+    }
+
+    private var windowSummary: TelemetryWindowSummary {
+        LiveTelemetryPolicy.windowSummary(
+            in: selectedRange,
+            from: samples,
+            todayStats: todayStats,
+            now: referenceDate
+        )
+    }
+
+    private var displayedAgents: Int {
+        activeSample?.activeAgentCount ?? 0
+    }
+
+    private var displayedTps: Double {
+        activeSample?.totalTps ?? 0.0
+    }
+
+    private var displayedWindowTokens: Int {
+        if let hovered = hoveredSample {
+            return hovered.deltaTokens
+        }
+        return windowSummary.totalTokens
+    }
+
+    private var displayedCachePct: Double {
+        if let hovered = hoveredSample {
+            return hovered.cachePct
+        }
+        return windowSummary.cachePct
+    }
+
+    private var cacheColor: Color {
+        if !todayStats.hasData && samples.isEmpty {
+            return .secondary
+        }
+        if displayedCachePct >= 85.0 {
+            return Color(red: 0.06, green: 0.60, blue: 0.35)
+        } else if displayedCachePct >= 60.0 {
+            return Color(red: 0.88, green: 0.43, blue: 0.04)
+        }
+        return Color.red
+    }
+
+    private var timeRangeDomain: ClosedRange<Date> {
+        LiveTelemetryPolicy.xAxisDomain(
+            for: selectedRange,
+            referenceDate: referenceDate,
+            anchorDate: effectiveAnchorDate
+        )
+    }
+
+    private var xTicks: [Date] {
+        LiveTelemetryPolicy.xAxisTicks(
+            for: selectedRange,
+            referenceDate: referenceDate,
+            anchorDate: effectiveAnchorDate,
+            count: 5
+        )
+    }
+
+    private var cardSurfaceColor: Color {
+        colorScheme == .dark
+            ? Color(nsColor: .controlBackgroundColor).opacity(0.92)
+            : Color(nsColor: .windowBackgroundColor).opacity(0.98)
+    }
+
+    private var plotWellColor: Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.20)
+            : Color(nsColor: .textBackgroundColor).opacity(0.82)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            cardHeaderBar
+
+            if !isCollapsed {
+                topKpiBar
+                chartsStack
+            }
+        }
+        .padding(.horizontal, cardHorizontalPadding)
+        .padding(.vertical, isCollapsed ? 7 : 9)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(cardSurfaceColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.07), lineWidth: 0.75)
+        )
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.045), radius: 5, y: 1.5)
+    }
+
+    private var cardHeaderBar: some View {
+        HStack(spacing: 6) {
+            SectionCollapseToggleButton(title: L10n.t(.telemetrySectionTitle, lang), isCollapsed: isCollapsed) {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    isCollapsed.toggle()
+                }
+            }
+
+            if isCollapsed {
+                Text("\(L10n.telemetryAgentCount(displayedAgents, lang)) · \(Int(displayedTps.rounded())) t/s · \(String(format: "%.1f%%", displayedCachePct))")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if let hovered = hoveredSample {
+                let deltaPart = hovered.deltaTokens > 0 ? " · +\(Formatters.formatTokens(hovered.deltaTokens))" : ""
+                Text("\(Self.hoverTimeFormatter.string(from: hovered.timestamp))\(deltaPart)")
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(Color.accentColor.opacity(0.10))
+                    .cornerRadius(4)
+                    .fixedSize()
+            }
+
+            Spacer(minLength: 4)
+
+            if !isCollapsed {
+                HStack(spacing: 1.5) {
+                    ForEach(TelemetryTimeRange.allCases) { range in
+                        let isSelected = (range == selectedRange)
+                        Button {
+                            hoveredSampleId = nil
+                            selectedRangeRaw = range.rawValue
+                        } label: {
+                            Text(range.rawValue)
+                                .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2.5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                                        .fill(isSelected ? cardSurfaceColor : Color.clear)
+                                        .shadow(color: isSelected ? Color.black.opacity(0.08) : Color.clear, radius: 1, y: 0.5)
+                                )
+                                .foregroundColor(isSelected ? .primary : .secondary)
+                                .contentShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.055))
+                )
+                .fixedSize()
+            }
+        }
+    }
+
+    private var topKpiBar: some View {
+        HStack(spacing: 6) {
+            kpiCell(
+                label: L10n.t(.telemetryAgentsLabel, lang),
+                value: L10n.telemetryAgentCount(displayedAgents, lang),
+                valueColor: displayedAgents > 0 ? Color(red: 0.06, green: 0.56, blue: 0.28) : .secondary,
+                dotColor: displayedAgents > 0 ? Color(nsColor: .systemGreen) : nil,
+                subLabel: nil
+            )
+
+            kpiDivider
+
+            kpiCell(
+                label: L10n.t(.telemetryRateLabel, lang),
+                value: "\(Int(displayedTps.rounded())) t/s",
+                valueColor: displayedTps > 0 ? Color(red: 0.14, green: 0.40, blue: 0.92) : .primary,
+                dotColor: nil,
+                subLabel: nil
+            )
+
+            kpiDivider
+
+            kpiCell(
+                label: L10n.t(.telemetryTotalLabel, lang),
+                value: Formatters.formatTokens(displayedWindowTokens),
+                valueColor: .primary,
+                dotColor: nil,
+                subLabel: hoveredSample != nil ? nil : selectedRange.rawValue
+            )
+
+            kpiDivider
+
+            kpiCell(
+                label: L10n.t(.telemetryCacheLabel, lang),
+                value: (todayStats.hasData || !samples.isEmpty) ? String(format: "%.1f%%", displayedCachePct) : "-",
+                valueColor: cacheColor,
+                dotColor: nil,
+                subLabel: nil
+            )
+        }
+    }
+
+    private var kpiDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.28))
+            .frame(width: 0.5, height: 22)
+    }
+
+    private func kpiCell(
+        label: String,
+        value: String,
+        valueColor: Color,
+        dotColor: Color?,
+        subLabel: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1.5) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+            HStack(spacing: 3.5) {
+                if let dot = dotColor {
+                    Circle()
+                        .fill(dot)
+                        .frame(width: 5.5, height: 5.5)
+                }
+                Text(value)
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundColor(valueColor)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                if let sub = subLabel {
+                    Text(sub)
+                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.85))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var chartsStack: some View {
+        let seriesList = LiveTelemetryPolicy.agentSeries(
+            in: rangeSamples,
+            colorAnchorSamples: samples,
+            pinnedFamilyByRoot: pinnedFamilyByRoot
+        )
+
+        return VStack(alignment: .leading, spacing: 6) {
+            if rangeSamples.isEmpty {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.55))
+                        .frame(width: 5, height: 5)
+                    Text(L10n.t(.telemetryWaitingWaveHint, lang))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: minPlotHeight, idealHeight: minPlotHeight, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(plotWellColor)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
+                        )
+                )
+            } else {
+                VStack(alignment: LiveTelemetryChartAxisPolicy.contextHeaderAlignment, spacing: 4) {
+                    HStack {
+                        if LiveTelemetryChartAxisPolicy.yAxisPosition == .trailing {
+                            Spacer()
+                        }
+                        Text(L10n.t(.telemetryTrackContextTitle, lang))
+                            .font(.system(size: LiveTelemetryChartAxisPolicy.yAxisTitleFontSize, weight: .semibold))
+                            .foregroundColor(.primary.opacity(LiveTelemetryChartAxisPolicy.yAxisTitleOpacity))
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: 36, alignment: .trailing)
+                        if LiveTelemetryChartAxisPolicy.yAxisPosition == .leading {
+                            Spacer()
+                        }
+                    }
+
+                    agentContextChart(seriesList: seriesList)
+                        .padding(.top, 1)
+                        .padding(.trailing, LiveTelemetryChartAxisPolicy.yAxisPosition == .leading ? 6 : 0)
+                        .frame(minHeight: minPlotHeight, idealHeight: minPlotHeight, maxHeight: .infinity)
+                }
+                .padding(.horizontal, plotHorizontalPadding)
+                .padding(.top, 6)
+                .padding(.bottom, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(plotWellColor)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.055), lineWidth: 0.6)
+                        )
+                )
+
+                if Self.showsStandaloneLegendStrip && !seriesList.isEmpty {
+                    agentLegendStrip(seriesList: seriesList)
+                }
+            }
+        }
+    }
+
+    private func toneForSeries(_ series: AgentContextSeries) -> TelemetrySeriesTone {
+        LiveTelemetryColorPalette.tone(familyIndex: series.familyIndex, tier: series.familyTier)
+    }
+
+    private func colorForSeries(_ series: AgentContextSeries, offset: Int) -> Color {
+        toneForSeries(series).color
+    }
+
+    private func highlightedContextValue(for series: AgentContextSeries) -> Int {
+        if let hovered = hoveredSample,
+           let matched = hovered.agentContexts.first(where: { $0.agentId == series.agentId }) {
+            return matched.contextTokens
+        }
+        return series.latestContextTokens
+    }
+
+    private func indicatorSeriesIndices(seriesList: [AgentContextSeries]) -> [Int] {
+        let focused = activeFocusedSeriesIds
+        if !focused.isEmpty {
+            let indices = seriesList.indices.filter { focused.contains(seriesList[$0].agentId) }
+            if !indices.isEmpty {
+                return indices
+            }
+        }
+        let runningIndices = seriesList.indices.filter { seriesList[$0].isRunning }
+        if !runningIndices.isEmpty {
+            return Array(runningIndices.prefix(2))
+        }
+        return seriesList.isEmpty ? [] : [0]
+    }
+
+    private func agentContextChart(seriesList: [AgentContextSeries]) -> some View {
+        let maxCtx = LiveTelemetryPolicy.maxContextDomain(for: seriesList)
+        let maxCtxDouble = Double(maxCtx)
+        let yTicks = LiveTelemetryPolicy.yAxisTicks(maxContext: maxCtx)
+        let calloutIndices = indicatorSeriesIndices(seriesList: seriesList)
+        let guideRuleIndices = LiveTelemetryChartAxisPolicy.horizontalGuideIndices(
+            seriesList: seriesList,
+            focusedSeriesIds: activeFocusedSeriesIds
+        )
+        let resolvedList = LiveTelemetryPolicy.resolvedCurveSegments(
+            for: seriesList,
+            windowSeconds: selectedRange.seconds
+        )
+        let externalFocusSignature = highlightedSeriesIds.sorted().joined(separator: ",")
+            + "-\(hoveredLegendAgentId ?? "")"
+
+        return Chart {
+            chartSeriesMarks(seriesList: seriesList, resolvedList: resolvedList)
+            chartReferenceAndHoverMarks(seriesList: seriesList, guideIndices: guideRuleIndices)
+        }
+        .id("\(selectedRange.rawValue)-\(externalFocusSignature)")
+        .chartLegend(.hidden)
+        .chartXAxis {
+            AxisMarks(values: xTicks) { value in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                    .foregroundStyle(Color.primary.opacity(0.08))
+                AxisValueLabel {
+                    if let dt = value.as(Date.self) {
+                        let isCenterNow = abs(dt.timeIntervalSince(referenceDate)) < 0.5
+                        let showsSeconds = (selectedRange == .oneMinute || selectedRange == .threeMinutes)
+                        Text(showsSeconds
+                            ? Self.hoverTimeFormatter.string(from: dt)
+                            : Self.axisMinuteFormatter.string(from: dt))
+                            .font(.system(
+                                size: LiveTelemetryChartAxisPolicy.xAxisTickFontSize,
+                                weight: isCenterNow ? .bold : .medium,
+                                design: .monospaced
+                            ))
+                            .foregroundColor(
+                                isCenterNow
+                                    ? Color.accentColor.opacity(0.90)
+                                    : .primary.opacity(LiveTelemetryChartAxisPolicy.xAxisTickOpacity)
+                            )
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(
+                position: LiveTelemetryChartAxisPolicy.yAxisPosition == .leading ? .leading : .trailing,
+                values: yTicks
+            ) { value in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.75, dash: [3, 3]))
+                    .foregroundStyle(Color.primary.opacity(0.14))
+                AxisValueLabel {
+                    if let num = value.as(Double.self) {
+                        Text(Formatters.formatTokens(Int(num.rounded())))
+                            .font(.system(size: LiveTelemetryChartAxisPolicy.yAxisTickFontSize, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.primary.opacity(LiveTelemetryChartAxisPolicy.yAxisTickOpacity))
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+            }
+        }
+        .chartXScale(domain: timeRangeDomain)
+        .chartYScale(domain: 0.0...maxCtxDouble)
+        .chartOverlay { proxy in
+            chartInteractiveAndCalloutOverlay(
+                proxy: proxy,
+                seriesList: seriesList,
+                resolvedList: resolvedList,
+                maxContext: maxCtx,
+                guideIndices: calloutIndices
+            )
+        }
+    }
+
+    @ChartContentBuilder
+    private func chartSeriesMarks(
+        seriesList: [AgentContextSeries],
+        resolvedList: [ResolvedAgentCurveSeries]
+    ) -> some ChartContent {
+        let focused = activeFocusedSeriesIds
+        let defaultSpotlitId = seriesList.first(where: \.isRunning)?.agentId ?? seriesList.first?.agentId
+        let resolvedById = Dictionary(uniqueKeysWithValues: resolvedList.map { ($0.agentId, $0) })
+        let seriesById = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0) })
+
+        ForEach(Array(seriesList.enumerated()), id: \.element.id) { idx, series in
+            let color = colorForSeries(series, offset: idx)
+            let isSpotlit = !focused.isEmpty ? focused.contains(series.agentId) : (series.agentId == defaultSpotlitId)
+            let lineAlpha: Double = {
+                if !focused.isEmpty {
+                    return focused.contains(series.agentId) ? 1.0 : 0.24
+                }
+                return series.isRunning ? 1.0 : 0.72
+            }()
+            let lineW: CGFloat = {
+                if !focused.isEmpty {
+                    return focused.contains(series.agentId) ? 3.4 : 1.5
+                }
+                if series.isRunning {
+                    return series.familyTier == 0 ? 2.8 : 2.3
+                }
+                return series.familyTier == 0 ? 2.0 : 1.7
+            }()
+            let segments = resolvedById[series.agentId]?.segments ?? []
+
+            ForEach(segments) { segment in
+                let smoothed = segment.points
+
+                if smoothed.count >= 2 {
+                    ForEach(smoothed) { pt in
+                        AreaMark(
+                            x: .value("Time", pt.timestamp),
+                            y: .value("Context", Double(pt.contextTokens)),
+                            series: .value("AreaSeg", segment.id)
+                        )
+                        .interpolationMethod(.linear)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [
+                                    color.opacity(isSpotlit ? 0.16 : 0.0),
+                                    color.opacity(isSpotlit ? 0.01 : 0.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    }
+
+                    let runs = segment.strokeRuns.isEmpty
+                        ? [AgentCurveStrokeRun(id: segment.id, isIdle: false, points: smoothed)]
+                        : segment.strokeRuns
+                    ForEach(runs) { run in
+                        if run.points.count >= 2 {
+                            ForEach(run.points) { pt in
+                                LineMark(
+                                    x: .value("Time", pt.timestamp),
+                                    y: .value("Context", Double(pt.contextTokens)),
+                                    series: .value("AgentSeg", run.id)
+                                )
+                                .interpolationMethod(.linear)
+                                .lineStyle(
+                                    run.isIdle
+                                        ? StrokeStyle(
+                                            lineWidth: max(1.35, lineW * 0.65),
+                                            lineCap: .round,
+                                            lineJoin: .round,
+                                            dash: [4.5, 3.5]
+                                        )
+                                        : StrokeStyle(
+                                            lineWidth: lineW,
+                                            lineCap: .round,
+                                            lineJoin: .round
+                                        )
+                                )
+                                .foregroundStyle(color.opacity(run.isIdle ? lineAlpha * 0.65 : lineAlpha))
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let tail = series.points.last {
+                if series.isRunning {
+                    PointMark(
+                        x: .value("Time", tail.timestamp),
+                        y: .value("Context", Double(tail.contextTokens))
+                    )
+                    .symbolSize(96)
+                    .foregroundStyle(color.opacity(0.20 * lineAlpha))
+                    PointMark(
+                        x: .value("Time", tail.timestamp),
+                        y: .value("Context", Double(tail.contextTokens))
+                    )
+                    .symbolSize(36)
+                    .foregroundStyle(color.opacity(lineAlpha))
+                } else {
+                    PointMark(
+                        x: .value("Time", tail.timestamp),
+                        y: .value("Context", Double(tail.contextTokens))
+                    )
+                    .symbolSize(isSpotlit ? 46 : 36)
+                    .foregroundStyle(color.opacity(lineAlpha))
+                    PointMark(
+                        x: .value("Time", tail.timestamp),
+                        y: .value("Context", Double(tail.contextTokens))
+                    )
+                    .symbolSize(isSpotlit ? 18 : 14)
+                    .foregroundStyle(plotWellColor)
+                }
+            }
+        }
+
+        ForEach(Array(seriesList.enumerated()), id: \.element.id) { idx, series in
+            let childColor = colorForSeries(series, offset: idx)
+            let parentSeries = series.parentAgentId.flatMap { seriesById[$0] }
+            let parentColor = parentSeries.map { toneForSeries($0).color } ?? childColor
+            let junctionAlpha: Double = {
+                if !focused.isEmpty {
+                    let matchesSelf = focused.contains(series.agentId)
+                    let matchesParent = series.parentAgentId.map { focused.contains($0) } ?? false
+                    return (matchesSelf || matchesParent) ? 1.0 : 0.25
+                }
+                return series.isRunning ? 1.0 : 0.85
+            }()
+            let segments = resolvedById[series.agentId]?.segments ?? []
+
+            ForEach(segments) { segment in
+                if let junction = segment.forkJunction {
+                    PointMark(
+                        x: .value("Time", junction.timestamp),
+                        y: .value("Context", Double(junction.contextTokens))
+                    )
+                    .symbolSize(92)
+                    .foregroundStyle(parentColor.opacity(junctionAlpha))
+
+                    PointMark(
+                        x: .value("Time", junction.timestamp),
+                        y: .value("Context", Double(junction.contextTokens))
+                    )
+                    .symbolSize(48)
+                    .foregroundStyle(plotWellColor)
+
+                    PointMark(
+                        x: .value("Time", junction.timestamp),
+                        y: .value("Context", Double(junction.contextTokens))
+                    )
+                    .symbolSize(22)
+                    .foregroundStyle(childColor.opacity(junctionAlpha))
+                }
+            }
+        }
+    }
+
+    @ChartContentBuilder
+    private func chartReferenceAndHoverMarks(
+        seriesList: [AgentContextSeries],
+        guideIndices: [Int]
+    ) -> some ChartContent {
+        RuleMark(x: .value("Now", referenceDate))
+            .foregroundStyle(Color.primary.opacity(0.16))
+            .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+        ForEach(guideIndices, id: \.self) { idx in
+            let series = seriesList[idx]
+            let color = colorForSeries(series, offset: idx)
+            let val = Double(highlightedContextValue(for: series))
+            RuleMark(y: .value("Level", val))
+                .foregroundStyle(color.opacity(0.45))
+                .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [2, 3]))
+        }
+
+        if let hovered = hoveredSample {
+            RuleMark(x: .value("Hover", hovered.timestamp))
+                .foregroundStyle(Color.primary.opacity(0.28))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 2]))
+
+            ForEach(Array(seriesList.enumerated()), id: \.element.id) { idx, series in
+                if let matched = hovered.agentContexts.first(where: { $0.agentId == series.agentId }) {
+                    PointMark(
+                        x: .value("Hover", hovered.timestamp),
+                        y: .value("Context", Double(matched.contextTokens))
+                    )
+                    .symbolSize(36)
+                    .foregroundStyle(colorForSeries(series, offset: idx))
+                }
+            }
+        }
+    }
+
+    private func chartInteractiveAndCalloutOverlay(
+        proxy: ChartProxy,
+        seriesList: [AgentContextSeries],
+        resolvedList: [ResolvedAgentCurveSeries],
+        maxContext: Int,
+        guideIndices: [Int]
+    ) -> some View {
+        GeometryReader { geo in
+            let plotRect = geo[proxy.plotAreaFrame]
+            let nowX = proxy.position(forX: referenceDate).map { plotRect.origin.x + $0 } ?? plotRect.midX
+            let calloutX = LiveTelemetryChartAxisPolicy.calloutCenterX(forReferenceX: nowX, in: plotRect)
+            let callouts: [(idx: Int, y: CGFloat, text: String, color: Color, fgColor: Color)] = {
+                var items: [(idx: Int, y: CGFloat, text: String, color: Color, fgColor: Color)] = []
+                for idx in guideIndices {
+                    let series = seriesList[idx]
+                    let tone = toneForSeries(series)
+                    let ctxVal = highlightedContextValue(for: series)
+                    guard let yInPlot = proxy.position(forY: Double(ctxVal)) else { continue }
+                    let clampedY = min(max(plotRect.minY + 9, plotRect.origin.y + yInPlot), max(plotRect.minY + 9, plotRect.maxY - 9))
+                    if items.allSatisfy({ abs($0.y - clampedY) >= 16 }) {
+                        items.append((idx, clampedY, Formatters.formatTokens(ctxVal), tone.color, tone.capsuleForegroundColor))
+                    }
+                }
+                return items
+            }()
+
+            ZStack(alignment: .topLeading) {
+                ForEach(callouts, id: \.idx) { item in
+                    Text(item.text)
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(item.fgColor)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(item.color)
+                        )
+                        .position(
+                            x: calloutX,
+                            y: item.y
+                        )
+                        .allowsHitTesting(false)
+                }
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let loc):
+                            let xPos = loc.x - plotRect.origin.x
+                            let yPos = loc.y - plotRect.origin.y
+                            let plotW = proxy.plotAreaSize.width
+                            let plotH = proxy.plotAreaSize.height
+                            guard xPos >= 0, xPos <= plotW,
+                                  yPos >= 0, yPos <= plotH else {
+                                if hoveredSampleId != nil {
+                                    hoveredSampleId = nil
+                                }
+                                if hoveredChartAgentId != nil {
+                                    hoveredChartAgentId = nil
+                                    onHoverChartAgent?(nil)
+                                }
+                                return
+                            }
+                            let futureSnapGrace = max(6.0, selectedRange.seconds * 0.04)
+                            if let hoverDate = proxy.value(atX: xPos, as: Date.self),
+                               hoverDate <= referenceDate.addingTimeInterval(futureSnapGrace),
+                               let nearest = rangeSamples.min(by: {
+                                   abs($0.timestamp.timeIntervalSince(hoverDate)) < abs($1.timestamp.timeIntervalSince(hoverDate))
+                               }) {
+                                if hoveredSampleId != nearest.id {
+                                    hoveredSampleId = nearest.id
+                                }
+                            } else if hoveredSampleId != nil {
+                                hoveredSampleId = nil
+                            }
+                            let hitAgent = LiveTelemetryPolicy.nearestAgentId(
+                                in: resolvedList,
+                                seriesList: seriesList,
+                                timeDomain: timeRangeDomain,
+                                maxContext: maxContext,
+                                plotSize: CGSize(width: plotW, height: plotH),
+                                hoverLocation: CGPoint(x: xPos, y: yPos)
+                            )
+                            if hoveredChartAgentId != hitAgent {
+                                hoveredChartAgentId = hitAgent
+                                onHoverChartAgent?(hitAgent)
+                            }
+                        case .ended:
+                            hoveredSampleId = nil
+                            if hoveredChartAgentId != nil {
+                                hoveredChartAgentId = nil
+                                onHoverChartAgent?(nil)
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    private func agentLegendStrip(seriesList: [AgentContextSeries]) -> some View {
+        TelemetryLegendFlowLayout(horizontalSpacing: 5, verticalSpacing: 4) {
+            ForEach(Array(seriesList.enumerated()), id: \.element.id) { idx, series in
+                let tone = toneForSeries(series)
+                let color = tone.color
+                let hoveredPt = hoveredSample?.agentContexts.first(where: { $0.agentId == series.agentId })
+                let ctxVal = hoveredPt?.contextTokens ?? series.latestContextTokens
+                let tpsVal = hoveredPt?.tps ?? series.latestTps
+                let isHighlighted = hoveredLegendAgentId == series.agentId
+                let displayLabel = L10n.localizeAgentLabel(series.label, language: lang)
+
+                HStack(spacing: 4) {
+                    if series.parentAgentId != nil {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(color.opacity(series.isRunning ? 1.0 : 0.78))
+                    } else {
+                        Circle()
+                            .fill(color.opacity(series.isRunning ? 1.0 : 0.72))
+                            .frame(width: 6.5, height: 6.5)
+                    }
+                    Text(displayLabel)
+                        .font(.system(size: 9.5, weight: (series.isRunning || isHighlighted) ? .semibold : .medium))
+                        .foregroundColor((series.isRunning || isHighlighted) ? .primary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 92, alignment: .leading)
+                    Text(Formatters.formatTokens(ctxVal))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(tone.relativeLuminance > 0.58 && colorScheme == .light ? Color.primary.opacity(0.78) : color)
+                        .lineLimit(1)
+                    if tpsVal > 0 {
+                        Text("\(Int(tpsVal.rounded()))t/s")
+                            .font(.system(size: 8.5, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isHighlighted ? color.opacity(0.14) : Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(isHighlighted ? color.opacity(0.50) : color.opacity(0.28), lineWidth: 0.7)
+                )
+                .fixedSize(horizontal: true, vertical: true)
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .onHover { hovering in
+                    hoveredLegendAgentId = hovering ? series.agentId : nil
+                }
+                .help("\(displayLabel): \(Formatters.formatTokens(ctxVal))")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct TelemetryLegendFlowLayout: Layout {
+    var horizontalSpacing: CGFloat = 5
+    var verticalSpacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var curX: CGFloat = 0
+        var curY: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if curX > 0 && curX + size.width > maxWidth {
+                usedWidth = max(usedWidth, curX - horizontalSpacing)
+                curX = 0
+                curY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            curX += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        if curX > 0 {
+            usedWidth = max(usedWidth, curX - horizontalSpacing)
+        }
+        let totalHeight = subviews.isEmpty ? 0 : curY + rowHeight
+        let resolvedWidth = maxWidth.isFinite ? maxWidth : usedWidth
+        return CGSize(width: resolvedWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var curX = bounds.minX
+        var curY = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if curX > bounds.minX && curX + size.width > bounds.maxX + 0.5 {
+                curX = bounds.minX
+                curY += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: curX, y: curY), proposal: ProposedViewSize(size))
+            curX += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
@@ -2124,9 +4143,11 @@ enum SessionRowBadgePolicy {
             } else {
                 tpsText = L10n.t(.runningStatus, language)
             }
-            return "\(active) Agent · \(tpsText)"
+            let unit = (language == .en && active != 1) ? "Agents" : "Agent"
+            return "\(active) \(unit) · \(tpsText)"
         }
-        return "\(total) Agent"
+        let unit = (language == .en && total != 1) ? "Agents" : "Agent"
+        return "\(total) \(unit)"
     }
 
     static func subagentTooltip(for session: SessionItem, language: AppLanguage.Resolved = .zhHans) -> String {
@@ -2184,9 +4205,17 @@ struct SessionCapsuleBadge: View {
 struct CompactSessionRowView: View {
     let session: SessionItem
     var showModelColumn: Bool = false
+    var horizontalPadding: CGFloat = 7
+    var chartColorLink: SessionTelemetryColorLink? = nil
+    var isHighlightedFromChart: Bool = false
+    var onHoverChartHighlight: ((Bool) -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.agyLanguage) private var lang
     @State private var isHovered = false
+
+    private var isEmphasized: Bool {
+        isHovered || isHighlightedFromChart
+    }
 
     private var displayTitle: String {
         SessionTitleCleaner.cleanTitle(session.title, fallbackUUID: session.uuid, language: lang)
@@ -2194,6 +4223,16 @@ struct CompactSessionRowView: View {
 
     var body: some View {
         HStack(spacing: 5) {
+
+            if let link = chartColorLink {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(link.primaryTone.color)
+                    .frame(width: isEmphasized ? 4 : 3, height: isEmphasized ? 18 : 15)
+                    .shadow(
+                        color: isHighlightedFromChart ? link.primaryTone.color.opacity(0.45) : .clear,
+                        radius: 2.5
+                    )
+            }
 
             if session.isActivelyWorking {
                 Circle()
@@ -2208,8 +4247,8 @@ struct CompactSessionRowView: View {
 
             ScrollingSessionTitleView(
                 title: displayTitle,
-                font: .system(size: 12.5, weight: session.isActivelyWorking ? .bold : .medium),
-                foregroundColor: session.isActivelyWorking ? .primary : Color.primary.opacity(0.88),
+                font: .system(size: 12.5, weight: (session.isActivelyWorking || isHighlightedFromChart) ? .bold : .medium),
+                foregroundColor: (session.isActivelyWorking || isHighlightedFromChart) ? .primary : Color.primary.opacity(0.88),
                 isHovered: isHovered
             )
             .overlay(alignment: .topTrailing) {
@@ -2249,6 +4288,15 @@ struct CompactSessionRowView: View {
                     Text(badgeText)
                         .font(.system(size: 9.5, weight: isActive ? .bold : .medium, design: .rounded).monospacedDigit())
                         .lineLimit(1)
+                    if let childTones = chartColorLink?.childTones, !childTones.isEmpty {
+                        HStack(spacing: 2) {
+                            ForEach(Array(childTones.prefix(3).enumerated()), id: \.offset) { _, tone in
+                                Circle()
+                                    .fill(tone.color)
+                                    .frame(width: 5.5, height: 5.5)
+                            }
+                        }
+                    }
                 }
                 .foregroundColor(isActive ? activeFg : Color.secondary)
                 .padding(.horizontal, 6)
@@ -2270,14 +4318,51 @@ struct CompactSessionRowView: View {
                 trailingColumnView(for: column)
             }
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5.5)
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: SessionListLayoutPolicy.rowEstimatedHeight)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+                .fill(rowBackgroundColor)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(rowBorderColor, lineWidth: isHighlightedFromChart ? 1.1 : 0.6)
+        )
+        .animation(.easeOut(duration: 0.14), value: isHighlightedFromChart)
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            isHovered = hovering
+            onHoverChartHighlight?(hovering)
+        }
+    }
+
+    private var rowBackgroundColor: Color {
+        if let link = chartColorLink {
+            if isHighlightedFromChart {
+                return link.primaryTone.color.opacity(colorScheme == .dark ? 0.21 : 0.14)
+            }
+            if isHovered {
+                return link.primaryTone.color.opacity(colorScheme == .dark ? 0.16 : 0.11)
+            }
+            return link.primaryTone.color.opacity(colorScheme == .dark ? 0.09 : 0.055)
+        }
+        if isHighlightedFromChart {
+            return Color.accentColor.opacity(colorScheme == .dark ? 0.16 : 0.10)
+        }
+        return isHovered ? Color.primary.opacity(0.04) : Color.clear
+    }
+
+    private var rowBorderColor: Color {
+        if let link = chartColorLink {
+            if isHighlightedFromChart {
+                return link.primaryTone.color.opacity(0.58)
+            }
+            return link.primaryTone.color.opacity(isHovered ? 0.36 : 0.18)
+        }
+        if isHighlightedFromChart {
+            return Color.accentColor.opacity(0.45)
+        }
+        return .clear
     }
 
     @ViewBuilder
@@ -3678,6 +5763,163 @@ extension AGYAppDelegate {
             }
             let trimmed = s.trimmingCharacters(in: .whitespaces)
             return trimmed.isEmpty ? "Agyhub" : "Agyhub · \(trimmed)"
+        }
+    }
+}
+
+struct SplitDragCallbacks {
+    let onDragBegan: () -> Void
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat) -> Void
+    let onDoubleClick: () -> Void
+}
+
+struct SplitPaneDividerBar: View {
+    var showsSeparatorLine: Bool = true
+    let tooltip: String
+    let onDragBegan: () -> Void
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat) -> Void
+    let onDoubleClick: () -> Void
+
+    @State private var isHovering = false
+    @State private var isDragging = false
+
+    var body: some View {
+        ZStack {
+            if showsSeparatorLine {
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor).opacity(isHovering || isDragging ? 0.36 : 0.14))
+                    .frame(height: isHovering || isDragging ? 1.0 : 0.5)
+            }
+
+            Capsule()
+                .fill(isDragging ? Color.accentColor : (isHovering ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.22)))
+                .frame(width: (isHovering || isDragging) ? 38 : 28, height: (isHovering || isDragging) ? 4 : 3.5)
+                .animation(.easeOut(duration: 0.12), value: isHovering || isDragging)
+
+            SplitDividerAppKitView(
+                onHoverChanged: { hovering in
+                    isHovering = hovering
+                },
+                onDragBegan: {
+                    isDragging = true
+                    onDragBegan()
+                },
+                onDragChanged: onDragChanged,
+                onDragEnded: { deltaY in
+                    isDragging = false
+                    onDragEnded(deltaY)
+                },
+                onDoubleClick: onDoubleClick
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .help(tooltip)
+    }
+}
+
+private struct SplitDividerAppKitView: NSViewRepresentable {
+    let onHoverChanged: (Bool) -> Void
+    let onDragBegan: () -> Void
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat) -> Void
+    let onDoubleClick: () -> Void
+
+    final class Coordinator {
+        var parent: SplitDividerAppKitView
+
+        init(parent: SplitDividerAppKitView) {
+            self.parent = parent
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> DividerTrackingNSView {
+        let view = DividerTrackingNSView()
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: DividerTrackingNSView, context: Context) {
+        context.coordinator.parent = self
+        nsView.coordinator = context.coordinator
+    }
+
+    final class DividerTrackingNSView: NSView {
+        weak var coordinator: Coordinator?
+        private var trackingArea: NSTrackingArea?
+        private var isDragging = false
+        private var dragStartScreenY: CGFloat = 0
+
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let existing = trackingArea {
+                removeTrackingArea(existing)
+            }
+            let area = NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(area)
+            trackingArea = area
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeUpDown)
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            NSCursor.resizeUpDown.set()
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            NSCursor.resizeUpDown.set()
+            coordinator?.parent.onHoverChanged(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            if !isDragging {
+                coordinator?.parent.onHoverChanged(false)
+            }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                isDragging = false
+                coordinator?.parent.onDoubleClick()
+                return
+            }
+            isDragging = true
+            dragStartScreenY = NSEvent.mouseLocation.y
+            NSCursor.resizeUpDown.set()
+            coordinator?.parent.onDragBegan()
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard isDragging else { return }
+            let deltaDown = dragStartScreenY - NSEvent.mouseLocation.y
+            coordinator?.parent.onDragChanged(deltaDown)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            guard isDragging else { return }
+            isDragging = false
+            let deltaDown = dragStartScreenY - NSEvent.mouseLocation.y
+            coordinator?.parent.onDragEnded(deltaDown)
+            if !bounds.contains(convert(event.locationInWindow, from: nil)) {
+                coordinator?.parent.onHoverChanged(false)
+            }
         }
     }
 }

@@ -1654,12 +1654,27 @@ struct QuotaDisplayItem: Identifiable, Equatable {
     let resetTimeStr: String?
 }
 
+struct FiveHourCapacityDisplay: Equatable {
+    let remainingFraction: Double
+    let percentage: Int
+    let countdown: String
+}
+
 struct AccountQuotaSummary: Codable, Equatable {
     var email: String
     var isUltra: Bool
     var geminiQuota: WeeklyQuotaBucket?
     var argonQuota: WeeklyQuotaBucket?
+    var geminiFiveHourQuota: WeeklyQuotaBucket? = nil
+    var argonFiveHourQuota: WeeklyQuotaBucket? = nil
     var lastFetched: Date
+
+    var effectiveFiveHourQuota: WeeklyQuotaBucket? {
+        if isUltra {
+            return geminiFiveHourQuota
+        }
+        return geminiFiveHourQuota ?? argonFiveHourQuota
+    }
 }
 
 enum AccountQuotaManager {
@@ -1762,40 +1777,58 @@ enum AccountQuotaManager {
 
         var geminiBucket: WeeklyQuotaBucket? = nil
         var argonBucket: WeeklyQuotaBucket? = nil
+        var geminiFiveHourBucket: WeeklyQuotaBucket? = nil
+        var argonFiveHourBucket: WeeklyQuotaBucket? = nil
 
         for group in groups {
             let displayName = (group["displayName"] as? String) ?? ""
             let description = (group["description"] as? String) ?? ""
             let buckets = (group["buckets"] as? [[String: Any]]) ?? []
 
-            guard let weeklyBucket = buckets.first(where: {
+            let weeklyRaw = buckets.first(where: {
                 let bid = ($0["bucketId"] as? String) ?? ""
                 let win = ($0["window"] as? String) ?? ""
                 return win.lowercased() == "weekly" || bid.lowercased().contains("weekly")
-            }) else {
-                continue
-            }
+            })
+            let fiveHourRaw = buckets.first(where: {
+                let bid = (($0["bucketId"] as? String) ?? "").lowercased()
+                let win = (($0["window"] as? String) ?? "").lowercased()
+                return win == "5h" || bid == "5h" || bid.hasSuffix("-5h")
+            })
 
-            let rem = (weeklyBucket["remainingFraction"] as? NSNumber)?.doubleValue ?? 1.0
-            let resetStr = weeklyBucket["resetTime"] as? String
-            let resetDate = resetStr.flatMap { parseISO8601($0) }
-            let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
-
-            let bucketId = (weeklyBucket["bucketId"] as? String) ?? ""
-
-            let isArgonGroup = bucketId.localizedCaseInsensitiveContains("argon") ||
+            let primaryBucketId = ((weeklyRaw?["bucketId"] as? String) ?? (fiveHourRaw?["bucketId"] as? String) ?? "")
+            let isArgonGroup = primaryBucketId.localizedCaseInsensitiveContains("argon") ||
                                displayName.localizedCaseInsensitiveContains("argon")
             let isGeminiGroup = !isArgonGroup && (
-                bucketId.lowercased() == "gemini-weekly" ||
+                primaryBucketId.lowercased() == "gemini-weekly" ||
+                primaryBucketId.lowercased() == "gemini-5h" ||
                 ((displayName.localizedCaseInsensitiveContains("gemini") ||
                   description.localizedCaseInsensitiveContains("gemini")) &&
                  !displayName.localizedCaseInsensitiveContains("claude"))
             )
 
-            if isArgonGroup {
-                argonBucket = bucket
-            } else if isGeminiGroup {
-                geminiBucket = bucket
+            if let weeklyRaw = weeklyRaw {
+                let rem = (weeklyRaw["remainingFraction"] as? NSNumber)?.doubleValue ?? 1.0
+                let resetStr = weeklyRaw["resetTime"] as? String
+                let resetDate = resetStr.flatMap { parseISO8601($0) }
+                let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
+                if isArgonGroup {
+                    argonBucket = bucket
+                } else if isGeminiGroup {
+                    geminiBucket = bucket
+                }
+            }
+
+            if let fiveHourRaw = fiveHourRaw {
+                let rem = (fiveHourRaw["remainingFraction"] as? NSNumber)?.doubleValue ?? 1.0
+                let resetStr = fiveHourRaw["resetTime"] as? String
+                let resetDate = resetStr.flatMap { parseISO8601($0) }
+                let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
+                if isArgonGroup {
+                    argonFiveHourBucket = bucket
+                } else if isGeminiGroup {
+                    geminiFiveHourBucket = bucket
+                }
             }
         }
 
@@ -1804,7 +1837,25 @@ enum AccountQuotaManager {
             isUltra: isUltra,
             geminiQuota: geminiBucket,
             argonQuota: argonBucket,
+            geminiFiveHourQuota: geminiFiveHourBucket,
+            argonFiveHourQuota: argonFiveHourBucket,
             lastFetched: now
+        )
+    }
+
+    static func fiveHourDisplay(
+        for summary: AccountQuotaSummary?,
+        from referenceDate: Date = Date(),
+        language: AppLanguage.Resolved = .zhHans
+    ) -> FiveHourCapacityDisplay? {
+        guard let bucket = summary?.effectiveFiveHourQuota else { return nil }
+        let clamped = min(1.0, max(0.0, bucket.remainingFraction))
+        let pct = Int((clamped * 100.0).rounded())
+        let countdown = bucket.remainingCountdown(from: referenceDate, language: language)
+        return FiveHourCapacityDisplay(
+            remainingFraction: clamped,
+            percentage: pct,
+            countdown: countdown
         )
     }
 
@@ -2397,6 +2448,8 @@ enum AccountQuotaManager {
     static func quotaTooltip(
         items: [QuotaDisplayItem],
         isUltra: Bool,
+        fiveHourQuota: WeeklyQuotaBucket? = nil,
+        from referenceDate: Date = Date(),
         isExpired: Bool = false,
         language: AppLanguage.Resolved = .zhHans
     ) -> String {
@@ -2407,6 +2460,26 @@ enum AccountQuotaManager {
                     ? "Google AI Ultra · 统一共享周配额池"
                     : "Google AI Ultra · Shared Weekly Quota Pool"
             )
+        }
+        if let fh = fiveHourQuota {
+            let clamped = min(1.0, max(0.0, fh.remainingFraction))
+            let pct = Int((clamped * 100.0).rounded())
+            let cd = fh.remainingCountdown(from: referenceDate, language: language)
+            if language == .zhHans {
+                let countdownStr = cd.isEmpty ? "" : "，将在 \(cd) 后重置"
+                lines.append("5h 额度: \(pct)% 剩余\(countdownStr)")
+            } else {
+                let resetWord = L10n.t(.quotaResetNow, .en)
+                let countdownStr: String
+                if cd.isEmpty {
+                    countdownStr = ""
+                } else if cd == resetWord {
+                    countdownStr = ", resets now"
+                } else {
+                    countdownStr = ", resets in \(cd)"
+                }
+                lines.append("5h Quota: \(pct)% left\(countdownStr)")
+            }
         }
         for item in items {
             if language == .zhHans {
@@ -2429,5 +2502,114 @@ enum AccountQuotaManager {
             lines.append(L10n.quotaExpiredHint(for: language))
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+struct ActiveAccountSnapshot: Equatable {
+    let effectiveMode: AccountTargetMode
+    let profile: AGYProfile?
+    let emailKey: String
+    let displayName: String
+    let fullEmail: String
+    let isSignedIn: Bool
+    let quota: AccountQuotaSummary?
+    let isQuotaExpired: Bool
+}
+
+enum AccountCompactSummaryPolicy {
+    static func shortName(for identifier: String) -> String {
+        if let atIdx = identifier.firstIndex(of: "@") {
+            let prefix = String(identifier[..<atIdx])
+            if !prefix.isEmpty { return prefix }
+        }
+        return identifier
+    }
+
+    static func resolveActiveAccount(
+        mode: AccountTargetMode,
+        isCLIIndependentMode: Bool,
+        profiles: [AGYProfile],
+        expectedAppEmail: String,
+        appStorageEmail: String,
+        sharedKeychainEmail: String?,
+        activeProfileName: String,
+        activeCLIProfileName: String?,
+        accountQuotas: [String: AccountQuotaSummary],
+        expiredQuotaEmails: Set<String>,
+        language: AppLanguage.Resolved = .zhHans
+    ) -> ActiveAccountSnapshot {
+        let effectiveMode: AccountTargetMode = isCLIIndependentMode ? mode : .app
+
+        if effectiveMode == .cli {
+            let cliIdentifier = (activeCLIProfileName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if cliIdentifier.isEmpty {
+                return ActiveAccountSnapshot(
+                    effectiveMode: .cli,
+                    profile: nil,
+                    emailKey: "",
+                    displayName: L10n.t(.notSignedIn, language),
+                    fullEmail: L10n.t(.notSignedIn, language),
+                    isSignedIn: false,
+                    quota: nil,
+                    isQuotaExpired: false
+                )
+            }
+            let lowerKey = cliIdentifier.lowercased()
+            let matchedProfile = profiles.first(where: {
+                let pEmail = ($0.email ?? $0.name).lowercased()
+                return pEmail == lowerKey || $0.name.lowercased() == lowerKey
+            })
+            let resolvedEmail = (matchedProfile?.email ?? matchedProfile?.name ?? cliIdentifier)
+            let lookupKey = resolvedEmail.lowercased()
+            return ActiveAccountSnapshot(
+                effectiveMode: .cli,
+                profile: matchedProfile,
+                emailKey: lookupKey,
+                displayName: shortName(for: resolvedEmail),
+                fullEmail: resolvedEmail,
+                isSignedIn: true,
+                quota: accountQuotas[lookupKey] ?? accountQuotas[lowerKey],
+                isQuotaExpired: expiredQuotaEmails.contains(lookupKey) || expiredQuotaEmails.contains(lowerKey)
+            )
+        }
+
+        let effectiveAppRaw = AccountDisplayPolicy.effectiveRunningAppEmail(
+            expectedAppEmail: expectedAppEmail,
+            appStorageEmail: appStorageEmail,
+            sharedKeychainEmail: sharedKeychainEmail,
+            activeProfileName: activeProfileName
+        )
+        let appTrimmed = effectiveAppRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if appTrimmed.isEmpty {
+            return ActiveAccountSnapshot(
+                effectiveMode: .app,
+                profile: nil,
+                emailKey: "",
+                displayName: L10n.t(.notSignedIn, language),
+                fullEmail: L10n.t(.notSignedIn, language),
+                isSignedIn: false,
+                quota: nil,
+                isQuotaExpired: false
+            )
+        }
+
+        let lowerKey = appTrimmed.lowercased()
+        let isResolved = !expectedAppEmail.isEmpty || !appStorageEmail.isEmpty || sharedKeychainEmail != nil
+        let matchedProfile = profiles.first(where: {
+            let pEmail = ($0.email ?? $0.name).lowercased()
+            return pEmail == lowerKey || (!isResolved && $0.name == activeProfileName)
+        })
+        let resolvedEmail = (matchedProfile?.email ?? matchedProfile?.name ?? appTrimmed)
+        let lookupKey = resolvedEmail.lowercased()
+        return ActiveAccountSnapshot(
+            effectiveMode: .app,
+            profile: matchedProfile,
+            emailKey: lookupKey,
+            displayName: shortName(for: resolvedEmail),
+            fullEmail: resolvedEmail,
+            isSignedIn: true,
+            quota: accountQuotas[lookupKey] ?? accountQuotas[lowerKey],
+            isQuotaExpired: expiredQuotaEmails.contains(lookupKey) || expiredQuotaEmails.contains(lowerKey)
+        )
     }
 }

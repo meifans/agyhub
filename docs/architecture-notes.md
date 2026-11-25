@@ -38,8 +38,9 @@
   - 写入 CLI 独立 token 文件（`~/.gemini/antigravity-cli/antigravity-oauth-token`）必须走唯一写盘入口：剥离 `go-keyring-base64:` 前缀、校验 `id_token_email` 与 `access_token` 后，以 `0600` 权限创建同目录临时文件再 `rename` 原子替换。
 - **切号写入核验**：捕获入库与写回共享钥匙串前，必须核对载荷内置 `id_token_email` 与目标槽位一致，且切号回写前先将共享钥匙串当前最新凭证按内置真实邮箱存回对应槽位，杜绝串槽毒化。
 
-### 2.2 周配额拉取、缓存与原生只读续期
-- **请求头与分组解析**：调用 `retrieveUserQuotaSummary` 必须携带 `Antigravity Hub 2.31.2+` 的 `User-Agent`，否则后端不会返回 `Gemini 4 Argon` 配额组；解析分组时 `"Gemini 4 Argon"` 也包含 `"gemini"` 字样，必须优先于普通 Gemini 匹配（Claude/GPT `3p-weekly` 不再误映射为 Argon）。`Ultra` 账号配额共享统一仅展示 Gemini，普通/Pro 账号分别展示 Gemini 与 Argon。
+### 2.2 双窗配额拉取、单行卡片与原生只读续期
+- **请求头与分组解析**：调用 `retrieveUserQuotaSummary` 必须携带 `Antigravity Hub 2.31.2+` 的 `User-Agent`，否则后端不会返回 `Gemini 4 Argon` 配额组；解析分组时 `"Gemini 4 Argon"` 也包含 `"gemini"` 字样，必须优先于普通 Gemini 匹配（Claude/GPT `3p-weekly` / `3p-5h` 不再误映射为 Gemini 或 Argon）。同时解析周度（`weekly`）与 5 小时滑动窗口（`5h`）配额：`Ultra` 账号配额共享统一仅展示 Gemini，普通/Pro 账号分别展示 Gemini 与 Argon；5 小时剩余容量通过账号名称背景容量条及紧凑百分比/倒计时呈现。
+- **单行账号摘要与浮层切号列表**：主面板账号区收敛为单行卡片（内嵌 `App | CLI` 切换标签、带 5h 背景容量条的当前账号名、7 天周度胶囊与`切换`触发按钮）；点击`切换`才在根坐标遮罩之上弹出账号列表浮层，选中即直切并收起，点击外部区域、右上角关闭叉号或 `Esc` 即关闭。
 - **多源凭据优先级与 401 回退**：收集同一邮箱在 CLI token 文件、系统共享钥匙串、保险箱中的全部候选凭据，按 `expiry` 新鲜度排序并按 `access_token` 去重；请求返回 401 时依次回退下一来源；回写刷新后的 token 时故意不改写共享钥匙串 `mtime`，以免触发外部漂移误判。
 - **本地配额持久化与原生续期**：
   - 最近一次成功拉取的非敏感配额数字与重置时间原子持久化至 `~/.agy-profiles/quota_cache.json`（`0600`），重启后立即恢复，避免未刷新前显示 `Expired`；

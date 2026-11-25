@@ -14,26 +14,28 @@ Agyhub/
 ├── README.zh-CN.md                 # 中文项目说明
 ├── LICENSE                         # MIT 开源协议
 ├── build_app.sh                    # 原生编译与打包脚本（支持 --universal / --dmg / --version / --sync-tools）
-├── agy-monitor.py                  # 本地只读监控引擎（3,747 行，--json / --daemon / 终端 TUI）
+├── agy-monitor.py                  # 本地只读监控引擎（3,627 行，--json / --daemon / 终端 TUI）
 ├── agy-top                         # 终端看板启动包装脚本（自动优先选用 .venv 中的 Python）
 ├── requirements.txt                # 可选终端增强依赖（仅 rich>=13.0.0；GUI --json/--daemon 模式零第三方依赖）
-├── Sources/                        # macOS 原生状态栏应用源码（6 模块，共 11,553 行）
-│   ├── Localization.swift          # 中英文双语引擎与文案表（903 行）
-│   ├── Models.swift                # 数据模型、用量统计与轮询/诊断策略（1,410 行）
-│   ├── AccountAuthManager.swift    # 账号探测、App/CLI 隔离引擎与周配额管理（2,278 行）
-│   ├── MonitorRuntime.swift        # Daemon 长连接客户端、FSEvents 监听与状态中枢（2,291 行）
-│   ├── Views.swift                 # SwiftUI 全部视图、弹窗与菜单栏三态矢量图标（3,737 行）
-│   └── AppLifecycle.swift          # 无边框毛玻璃窗口控制、AppDelegate 与 @main 入口（934 行）
+├── Sources/                        # macOS 原生状态栏应用源码（6 模块，共 15,738 行）
+│   ├── Localization.swift          # 中英文双语引擎与文案表（933 行）
+│   ├── Models.swift                # 数据模型、遥测配色/分叉策略与轮询/诊断逻辑（3,056 行）
+│   ├── AccountAuthManager.swift    # 账号探测、App/CLI 隔离引擎与双窗配额管理（2,615 行）
+│   ├── MonitorRuntime.swift        # Daemon 长连接客户端、FSEvents 监听与状态中枢（2,413 行）
+│   ├── Views.swift                 # SwiftUI 全部视图、实时遥测图表与菜单栏矢量图标（5,824 行）
+│   └── AppLifecycle.swift          # 无边框毛玻璃窗口控制、AppDelegate 与 @main 入口（897 行）
 ├── tests/
-│   ├── AGYHubTests.swift           # Swift 单元测试套件（3,760 行，72 个用例，-DAGYHUB_TESTING 编译）
-│   └── test_agy_monitor.py         # Python 单元测试套件（1,455 行，19 个用例）
+│   ├── AGYHubTests.swift           # Swift 单元测试套件（6,180 行，-DAGYHUB_TESTING 编译）
+│   └── test_agy_monitor.py         # Python 单元测试套件（1,492 行）
 ├── scripts/
 │   ├── check_i18n.py               # 确定性 I18N 门禁（校验 Swift 与 Python 英文输出零中文泄漏）
+│   ├── generate_demo_screenshots.swift # 离屏 SwiftUI Retina 宣传截图生成器（脱敏模拟数据 + 当前真实 UI）
+│   ├── generate_screenshots.sh     # 一键半自动编译打包宣传图（挂载 header-cat 资产、生成 6 张截图，支持 --open）
 │   └── generate_telemetry_card.py  # 本地开发遥测卡片生成器（输出 SVG 与 3x PNG 到 assets/）
 ├── docs/adr/
 │   ├── ADR-001-cli-app-account-isolation.md           # 架构决策 001：App 与 CLI 双轨凭证隔离
 │   └── ADR-002-low-overhead-incremental-monitoring.md # 架构决策 002：增量缓存与常驻 Daemon 架构
-├── assets/                         # 应用图标、头图与中英双语遥测卡片（.icns / .png / .svg）
+├── assets/                         # 应用图标、头图、双语宣传截图（screenshot-*.png）与遥测卡片（.icns / .png / .svg）
 └── .github/workflows/
     ├── ci.yml                      # CI 流水线（shell 语法、i18n 检查、Swift/Python 单测、应用构建）
     └── release.yml                 # Tag/手动发布流水线（单测、Universal DMG/ZIP 打包、Release 上传）
@@ -45,16 +47,16 @@ Agyhub/
 
 ## 2. `Sources/*.swift` 6 模块速查表
 
-原单文件 `AGYHub.swift` 已按职责拆分为 `Sources/` 下的 6 个 Swift 源码文件（合计 **11,553 行**）：
+原单文件 `AGYHub.swift` 已按职责拆分为 `Sources/` 下的 6 个 Swift 源码文件（合计 **15,738 行**）：
 
 | 文件 | 行数 | 职责定位 | 核心类型 / 符号 |
 | :--- | ---: | :--- | :--- |
-| [`Sources/Localization.swift`](Sources/Localization.swift) | 903 | 双语本地化引擎（跟随系统 / 简体中文 / English 即时切换） | `AppLanguage`, `EnvironmentValues.agyLanguage`, `L10nKey`, `L10n` |
-| [`Sources/Models.swift`](Sources/Models.swift) | 1,410 | 与 `agy-monitor.py` 对齐的解码模型、轮询/诊断/用量纯逻辑策略 | `MonitorPayload`, `MenuBarSummary`, `TodayStats`, `Recent503Stats`, `Recent503Policy`, `PollingSchedulePolicy`, `MonitorPayloadEquivalencePolicy`, `SessionStep`, `SessionPhaseStat`, `SessionSourceStat`, `CacheMissCauseStat`, `CacheMissEvent`, `CacheMissSummary`, `SessionConsumerItem`, `SessionDiagnosticsPayload`, `SessionDiagnosticsPolicy`, `SessionItem`, `UsageRangeOption`, `UsageMetricMode`, `UsageBreakdownDimension`, `UsageModelStat`, `UsageConversationStat`, `UsageDailyBucket`, `UsageHourlyBucket`, `UsageHistoryPayload`, `UsageAnalyticsPolicy`, `AGYProfile`, `Formatters` |
-| [`Sources/AccountAuthManager.swift`](Sources/AccountAuthManager.swift) | 2,278 | 本地账号探测、App 与 CLI 双轨凭证隔离引擎、周配额拉取与 OAuth 续期 | `AntigravityLaunchConfig`, `AccountDisplayPolicy`, `AccountSortOrder`, `KeychainDriftPolicy`, `DiscoveredAccount`, `LocalAccountDetector`, `CLIAccountManager`, `WeeklyQuotaBucket`, `QuotaDisplayItem`, `AccountQuotaSummary`, `AccountQuotaManager` |
-| [`Sources/MonitorRuntime.swift`](Sources/MonitorRuntime.swift) | 2,291 | 常驻 Python `--daemon` NDJSON 客户端、`FSEvents` 防抖监听与全局状态中枢 | `DebouncedTrigger`, `SessionDirectoryWatcher`, `MonitorDaemonClient`, `AGYHubStore` |
-| [`Sources/Views.swift`](Sources/Views.swift) | 3,737 | 全量 SwiftUI 视图组件、诊断/用量图表视图、账号行与菜单栏图标 | `ModernPrimaryButtonStyle`, `ModernSecondaryButtonStyle`, `AccountTargetMode`, `ImpeccableIconButton`, `ImpeccableActionButton`, `ImpeccableIntervalPill`, `SectionCollapseToggleButton`, `MainDashboardWindowChrome`, `MainDashboardView`, `SettingsPopoverView`, `QuotaPillView`, `ProfileRowActionPolicy`, `CompactProfileRowView`, `SessionListFilter`, `SessionLookup`, `SessionDetailSubagentPolicy`, `SessionTitleCleaner`, `SessionTitleMarqueePolicy`, `ScrollingSessionTitleView`, `SessionRowBadgePolicy`, `SessionCapsuleBadge`, `CompactSessionRowView`, `SessionDetailCardView`, `DiagnosticDistributionTab`, `SessionDiagnosticsInlineSection`, `UsageAnalyticsView`, `AGYAppDelegate.HakimiBrandIcon` |
-| [`Sources/AppLifecycle.swift`](Sources/AppLifecycle.swift) | 934 | 毛玻璃效果、原生无边框窗口拖拽/缩放控制、`NSApplicationDelegate` 与 `@main` 入口 | `VisualEffectBlurView`, `WindowSizePolicy`, `WindowClosePolicy`, `WindowResizeEdges`, `WindowResizeEdgePolicy`, `WindowResizeEdgeView`, `WindowResizeOverlay`, `ResizeCornerGripView`, `AGYMainWindow`, `WindowActivationGuard`, `WindowLifecycleView`, `WindowLifecycleConfigurator`, `WindowDragArea`, `WindowActivationPolicy`, `AGYAppDelegate`, `AGYHubApp` |
+| [`Sources/Localization.swift`](Sources/Localization.swift) | 933 | 双语本地化引擎（跟随系统 / 简体中文 / English 即时切换） | `AppLanguage`, `EnvironmentValues.agyLanguage`, `L10nKey`, `L10n` |
+| [`Sources/Models.swift`](Sources/Models.swift) | 3,056 | 与 `agy-monitor.py` 对齐的解码模型、实时遥测配色/分叉与诊断/用量纯逻辑策略 | `MonitorPayload`, `MenuBarSummary`, `TodayStats`, `Recent503Stats`, `TelemetryTimeRange`, `LiveTelemetryColorPalette`, `LiveTelemetryPolicy`, `DashboardSplitLayoutPolicy`, `SessionDiagnosticsPayload`, `SessionItem`, `UsageHistoryPayload`, `AGYProfile`, `Formatters` |
+| [`Sources/AccountAuthManager.swift`](Sources/AccountAuthManager.swift) | 2,615 | 本地账号探测、App 与 CLI 双轨凭证隔离引擎、5h/周度配额拉取与 OAuth 续期 | `AntigravityLaunchConfig`, `AccountDisplayPolicy`, `AccountSortOrder`, `KeychainDriftPolicy`, `DiscoveredAccount`, `LocalAccountDetector`, `CLIAccountManager`, `WeeklyQuotaBucket`, `AccountQuotaSummary`, `AccountCompactSummaryPolicy`, `AccountQuotaManager` |
+| [`Sources/MonitorRuntime.swift`](Sources/MonitorRuntime.swift) | 2,413 | 常驻 Python `--daemon` NDJSON 客户端、`FSEvents` 监听与全局状态中枢 | `DebouncedTrigger`, `SessionDirectoryWatcher`, `MonitorDaemonClient`, `AGYHubStore` |
+| [`Sources/Views.swift`](Sources/Views.swift) | 5,824 | 全量 SwiftUI 视图组件、实时遥测图表、单行账号浮层切号、诊断/用量视图与菜单栏图标 | `DashboardHeaderBarView`, `TodayUsagePillButton`, `AccountSummaryCardView`, `AccountSwitcherOverlayView`, `LiveTelemetryOverviewCardView`, `SplitPaneDividerBar`, `MainDashboardView`, `SettingsPopoverView`, `CompactSessionRowView`, `SessionDetailCardView`, `UsageAnalyticsView`, `AGYAppDelegate.HakimiBrandIcon` |
+| [`Sources/AppLifecycle.swift`](Sources/AppLifecycle.swift) | 897 | 毛玻璃效果、原生无边框窗口拖拽/缩放控制、`NSApplicationDelegate` 与 `@main` 入口 | `VisualEffectBlurView`, `WindowSizePolicy`, `WindowClosePolicy`, `WindowResizeEdgePolicy`, `AGYMainWindow`, `WindowActivationPolicy`, `AGYAppDelegate`, `AGYHubApp` |
 
 ---
 
@@ -81,10 +83,12 @@ Agyhub/
 | [`docs/adr/ADR-002-low-overhead-incremental-monitoring.md`](docs/adr/ADR-002-low-overhead-incremental-monitoring.md) | 解释 P0 增量缓存、P1 可见性降频与等价防重绘、P2 常驻 `--daemon` + `FSEvents` 优化方案与实测对比 |
 | [`docs/architecture-notes.md`](docs/architecture-notes.md) | 工程实现细节与踩坑记录：桌面端启动与 SwiftUI/AppKit 坑、Keychain/配额协议细节、Daemon 与 Python 采集规则 |
 | [`scripts/check_i18n.py`](scripts/check_i18n.py) | 确定性 I18N 检查脚本：扫描 `Sources/*.swift` 的 `L10nKey` 与 UI 字面量，并校验 `agy-monitor.py` 在 `lang="en"` 下的输出零中文字符 |
+| [`scripts/generate_demo_screenshots.swift`](scripts/generate_demo_screenshots.swift) | 离屏 SwiftUI 宣传图渲染源码：使用脱敏 Demo 状态直接渲染当前 `MainDashboardView` 的 2x Retina 截图 |
+| [`scripts/generate_screenshots.sh`](scripts/generate_screenshots.sh) | 半自动化生成入口：编排临时包（挂载 `header-cat.png`）并输出 6 张中英双语宣传截图到 `assets/` |
 | [`scripts/generate_telemetry_card.py`](scripts/generate_telemetry_card.py) | 读取本地 Antigravity 会话日志生成脱敏开发统计卡（需要时调用本地 Chrome 无头渲染 3x PNG，可选自动探测 `~/Library/Fonts/LXGWWenKai*.ttf`） |
-| [`tests/AGYHubTests.swift`](tests/AGYHubTests.swift) | Swift 回归测试（3,760 行，72 个测试函数），通过 `-DAGYHUB_TESTING` 屏蔽 `@main` 并使用内存保险箱隔离本机环境 |
-| [`tests/test_agy_monitor.py`](tests/test_agy_monitor.py) | Python 回归测试（1,455 行，19 个用例），覆盖子 Agent 聚合、用量统计、增量缓存、`now` 重算、`--daemon` 协议与 I18N 门禁 |
-| [`assets/`](assets/) | `app-icon.png`、`AppIcon.icns`、`header-cat.png`、中英文遥测图 `build-telemetry.svg/.png` 与 `build-telemetry-zh.svg/.png` |
+| [`tests/AGYHubTests.swift`](tests/AGYHubTests.swift) | Swift 回归测试（6,180 行），通过 `-DAGYHUB_TESTING` 屏蔽 `@main` 并使用内存保险箱隔离本机环境 |
+| [`tests/test_agy_monitor.py`](tests/test_agy_monitor.py) | Python 回归测试（1,492 行），覆盖子 Agent 聚合、用量统计、增量缓存、`now` 重算、`--daemon` 协议与 I18N 门禁 |
+| [`assets/`](assets/) | `app-icon.png`、`AppIcon.icns`、`header-cat.png`、中英文宣传图 `screenshot-*.png`（6 张）及遥测卡片 `build-telemetry*.svg/.png` |
 | [`build_app.sh`](build_app.sh) | 编译 `Sources/*.swift` 生成 `Agyhub.app`、打包 `agy-monitor.py`、ad-hoc 签名及生成 `dist/` 安装包 |
 | [`agy-top`](agy-top) | 在终端快速启动 `agy-monitor.py` 实时看板 |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) / [`release.yml`](.github/workflows/release.yml) | GitHub Actions 自动化测试与双架构发布流水线 |
@@ -142,8 +146,11 @@ env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL="${SHELL:-/bin/zsh}" \
   COMMAND_MODE=unix2003 PATH=/usr/bin:/bin:/usr/sbin:/sbin open /Applications/Agyhub.app
 ```
 
-### 5.5 生成 README 遥测卡片
+### 5.5 生成 README 遥测卡片与主页宣传图
 ```bash
-# 自动汇总本地匹配会话生成中英文 SVG 与 3x PNG 到 assets/（加 --skip-png 仅更新 SVG）
+# 半自动重新生成 6 张中英双语 Retina 主页宣传图到 assets/（可加 --open 在 Preview 中直接预览，加 --with-telemetry 同步刷新遥测卡）
+./scripts/generate_screenshots.sh
+
+# 单独更新中英文开发遥测卡片（SVG + 3x PNG 到 assets/，加 --skip-png 仅更新 SVG）
 python3 scripts/generate_telemetry_card.py
 ```

@@ -23,7 +23,7 @@ enum DemoScreenshotRunner {
             "has_alert": false,
             "menubar": [
                 "icon": "🟢",
-                "text": "162t/s | $42.85",
+                "text": "200t/s | $42.85",
                 "status_level": "working",
                 "active_count": 2
             ],
@@ -50,7 +50,7 @@ enum DemoScreenshotRunner {
                     "output_tokens": 1_840,
                     "context_tokens": 186_000,
                     "cache_pct": 96.2,
-                    "tps": 94.0,
+                    "tps": 38.0,
                     "total_tokens_consumed": 26_400_000,
                     "total_cost_usd": 4.62,
                     "total_cache_consumed": 25_390_000,
@@ -78,7 +78,7 @@ enum DemoScreenshotRunner {
                             "title": "webhook_verifier",
                             "is_running": true,
                             "interactions": 14,
-                            "context_tokens": 64_000,
+                            "context_tokens": 76_000,
                             "cache_pct": 95.0,
                             "tps": 52.0,
                             "total_tokens_consumed": 2_180_000,
@@ -97,7 +97,7 @@ enum DemoScreenshotRunner {
                             "title": "schema_migrator",
                             "is_running": true,
                             "interactions": 11,
-                            "context_tokens": 48_000,
+                            "context_tokens": 36_000,
                             "cache_pct": 94.0,
                             "tps": 42.0,
                             "total_tokens_consumed": 1_640_000,
@@ -145,8 +145,8 @@ enum DemoScreenshotRunner {
                     "health_code": "streaming",
                     "model": "gemini-4-neon",
                     "subagent_count": 3,
-                    "active_subagent_count": 1,
-                    "active_subagent_tps": 68.0,
+                    "active_subagent_count": 0,
+                    "active_subagent_tps": 0.0,
                     "exists": true
                 ],
                 [
@@ -249,6 +249,137 @@ enum DemoScreenshotRunner {
 
         let data = try! JSONSerialization.data(withJSONObject: json)
         return try! JSONDecoder().decode(MonitorPayload.self, from: data)
+    }
+
+    static func makeDemoTelemetrySamples(lang: AppLanguage.Resolved, now: Date) -> [LiveTelemetrySample] {
+        let isZH = (lang == .zhHans)
+        let s1Title = isZH ? "支付回调流水线重构" : "Refactor Webhook Pipeline"
+        let s2Title = isZH ? "GraphQL 缓存命中率优化" : "GraphQL Query Cache"
+        let s3Title = isZH ? "设计系统 Token 审计与收敛" : "Design System Token Audit"
+
+        let totalTicks = 42
+        let spacing: TimeInterval = 4.0
+        let startTime = now.addingTimeInterval(-Double(totalTicks - 1) * spacing)
+        var cumulativeTokens = 179_800_000
+        var result: [LiveTelemetrySample] = []
+
+        for idx in 0..<totalTicks {
+            let progress = Double(idx) / Double(totalTicks - 1)
+            let ts = startTime.addingTimeInterval(Double(idx) * spacing)
+            var contexts: [AgentContextPoint] = []
+            var tickTps: Double = 0.0
+            var activeAgents = 0
+
+            let s1Ctx = Int((136_000.0 + 50_000.0 * pow(progress, 0.88)).rounded())
+            contexts.append(
+                AgentContextPoint(
+                    agentId: "demo-sess-0001-webhook-pipeline",
+                    label: s1Title,
+                    contextTokens: s1Ctx,
+                    isRunning: true,
+                    tps: 38.0,
+                    parentAgentId: nil
+                )
+            )
+            tickTps += 38.0
+            activeAgents += 1
+
+            if idx <= 28 {
+                let p3 = Double(idx) / 28.0
+                let s3Ctx = Int((226_000.0 + 22_000.0 * p3).rounded())
+                let s3Running = idx < 28
+                contexts.append(
+                    AgentContextPoint(
+                        agentId: "demo-sess-0003-design-tokens",
+                        label: s3Title,
+                        contextTokens: s3Ctx,
+                        isRunning: s3Running,
+                        tps: s3Running ? 46.0 : 0.0,
+                        parentAgentId: nil
+                    )
+                )
+                if s3Running {
+                    tickTps += 46.0
+                    activeAgents += 1
+                }
+            }
+
+            if idx >= 18 {
+                let p2 = Double(idx - 18) / Double(totalTicks - 1 - 18)
+                let wave = sin(p2 * .pi * 2.0) * 1_800.0
+                let s2Ctx = Int((84_000.0 + 28_000.0 * p2 + wave).rounded())
+                contexts.append(
+                    AgentContextPoint(
+                        agentId: "demo-sess-0002-graphql-cache",
+                        label: s2Title,
+                        contextTokens: s2Ctx,
+                        isRunning: true,
+                        tps: 68.0,
+                        parentAgentId: nil
+                    )
+                )
+                tickTps += 68.0
+                activeAgents += 1
+            }
+
+            if idx >= 26 {
+                let pSub1 = Double(idx - 26) / Double(totalTicks - 1 - 26)
+                let sub1Ctx = Int((4_000.0 + 72_000.0 * pow(pSub1, 0.82)).rounded())
+                contexts.append(
+                    AgentContextPoint(
+                        agentId: "demo-sub-0001-verifier",
+                        label: "webhook_verifier",
+                        contextTokens: sub1Ctx,
+                        isRunning: true,
+                        tps: 52.0,
+                        parentAgentId: "demo-sess-0001-webhook-pipeline"
+                    )
+                )
+                tickTps += 52.0
+                activeAgents += 1
+            }
+
+            if idx >= 31 {
+                let pSub2 = Double(idx - 31) / Double(totalTicks - 1 - 31)
+                let sub2Ctx = Int((3_000.0 + 33_000.0 * pow(pSub2, 0.90)).rounded())
+                contexts.append(
+                    AgentContextPoint(
+                        agentId: "demo-sub-0002-migrator",
+                        label: "schema_migrator",
+                        contextTokens: sub2Ctx,
+                        isRunning: true,
+                        tps: 42.0,
+                        parentAgentId: "demo-sess-0001-webhook-pipeline"
+                    )
+                )
+                tickTps += 42.0
+                activeAgents += 1
+            }
+
+            let stepDelta = idx == 0 ? 0 : Int((98_000.0 + tickTps * 140.0).rounded())
+            cumulativeTokens += stepDelta
+            let cacheRatio = 0.963
+            let deltaCache = Int(Double(stepDelta) * cacheRatio)
+            let deltaNew = max(0, stepDelta - deltaCache)
+
+            result.append(
+                LiveTelemetrySample(
+                    id: idx + 1,
+                    timestamp: ts,
+                    activeAgentCount: activeAgents,
+                    totalTps: tickTps,
+                    totalTokensCumulative: cumulativeTokens,
+                    deltaTokens: stepDelta,
+                    cachePct: 96.3,
+                    isIdleCacheHold: false,
+                    deltaCacheTokens: deltaCache,
+                    deltaNewTokens: deltaNew,
+                    agentContexts: contexts
+                )
+            )
+        }
+
+        return result
     }
 
     static func makeDemoDiagnostics(lang: AppLanguage.Resolved) -> SessionDiagnosticsPayload {
@@ -508,11 +639,19 @@ enum DemoScreenshotRunner {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.set(accountsCollapsed, forKey: "agyhub.collapse.accounts")
         defaults.set(false, forKey: "agyhub.collapse.sessions")
+        defaults.set(false, forKey: "agyhub.collapse.telemetry")
+        defaults.set(TelemetryTimeRange.threeMinutes.rawValue, forKey: "agyhub.telemetry.range")
+        defaults.set(-1.0, forKey: DashboardSplitLayoutPolicy.splitFractionDefaultsKey)
         defaults.set(true, forKey: "agyhub.cliIndependentMode")
         defaults.set(true, forKey: "agyhub.cliVaultAuthorized")
+        defaults.set(5, forKey: SessionListLayoutPolicy.visibleRowsDefaultsKey)
+        defaults.set(false, forKey: SessionRowBadgePolicy.showModelDefaultsKey)
 
         UserDefaults.standard.set(accountsCollapsed, forKey: "agyhub.collapse.accounts")
         UserDefaults.standard.set(false, forKey: "agyhub.collapse.sessions")
+        UserDefaults.standard.set(false, forKey: "agyhub.collapse.telemetry")
+        UserDefaults.standard.set(TelemetryTimeRange.threeMinutes.rawValue, forKey: "agyhub.telemetry.range")
+        UserDefaults.standard.set(-1.0, forKey: DashboardSplitLayoutPolicy.splitFractionDefaultsKey)
 
         let fakeHome = "/tmp/agyhub-demo-home-\(UUID().uuidString)"
         try? FileManager.default.createDirectory(atPath: fakeHome, withIntermediateDirectories: true)
@@ -523,6 +662,8 @@ enum DemoScreenshotRunner {
             RunLoop.current.run(until: Date().addingTimeInterval(0.03))
         }
         store.appLanguage = (lang == .zhHans) ? .zhHans : .en
+        store.expandedSessionRowLimit = 5
+        store.showSessionModelColumn = false
         store.payload = makeDemoPayload(lang: lang)
         store.lastUpdatedTimeStr = "14:28:36"
         store.recent503Count = 0
@@ -574,26 +715,33 @@ enum DemoScreenshotRunner {
             p1.name: AccountQuotaSummary(
                 email: p1.name,
                 isUltra: true,
-                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.82, resetTime: now.addingTimeInterval(3 * 86400), resetTimeStr: nil),
-                argonQuota: WeeklyQuotaBucket(remainingFraction: 0.68, resetTime: now.addingTimeInterval(3 * 86400), resetTimeStr: nil),
+                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.92, resetTime: now.addingTimeInterval(3 * 86400 + 3600), resetTimeStr: nil),
+                argonQuota: nil,
+                geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.84, resetTime: now.addingTimeInterval(2 * 3600 + 1800), resetTimeStr: nil),
                 lastFetched: now
             ),
             p2.name: AccountQuotaSummary(
                 email: p2.name,
                 isUltra: true,
-                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.91, resetTime: now.addingTimeInterval(5 * 86400), resetTimeStr: nil),
-                argonQuota: WeeklyQuotaBucket(remainingFraction: 0.74, resetTime: now.addingTimeInterval(5 * 86400), resetTimeStr: nil),
+                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.88, resetTime: now.addingTimeInterval(5 * 86400 + 3600), resetTimeStr: nil),
+                argonQuota: nil,
+                geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.91, resetTime: now.addingTimeInterval(4 * 3600 + 900), resetTimeStr: nil),
                 lastFetched: now
             ),
             p3.name: AccountQuotaSummary(
                 email: p3.name,
                 isUltra: false,
-                geminiQuota: WeeklyQuotaBucket(remainingFraction: 1.0, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+                geminiQuota: WeeklyQuotaBucket(remainingFraction: 1.0, resetTime: now.addingTimeInterval(6 * 86400 + 3600), resetTimeStr: nil),
                 argonQuota: nil,
+                geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 1.0, resetTime: now.addingTimeInterval(5 * 3600), resetTimeStr: nil),
                 lastFetched: now
             )
         ]
 
+        let samples = makeDemoTelemetrySamples(lang: lang, now: now)
+        store.liveTelemetrySamples = samples
+        store.telemetryTimelineAnchor = now.addingTimeInterval(-54.0)
+        store.telemetryFamilyByRoot = LiveTelemetryPolicy.updatedPinnedFamilies(existing: [:], from: samples)
         store.sessionDiagnosticsByUUID["demo-sess-0001-webhook-pipeline"] = makeDemoDiagnostics(lang: lang)
         store.usageHistory = makeDemoUsageHistory(lang: lang)
 
@@ -612,7 +760,6 @@ enum DemoScreenshotRunner {
         let canvasH = height + padding * 2
 
         let framed = ZStack {
-
             Color(nsColor: NSColor(calibratedRed: 0.955, green: 0.962, blue: 0.975, alpha: 1.0))
             rootView
                 .frame(width: width, height: height)
@@ -676,44 +823,59 @@ enum DemoScreenshotRunner {
         print("✅ Generated \(outputPath) (\(pixelW)x\(pixelH)px)")
     }
 
-    static func runAll(outputDir: String) {
+    static func runAll(outputDir: String, targetLangFilter: String = "all") {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
 
-        let origAccountsCollapsed = UserDefaults.standard.object(forKey: "agyhub.collapse.accounts")
-        let origSessionsCollapsed = UserDefaults.standard.object(forKey: "agyhub.collapse.sessions")
-        let origUsageRange = UserDefaults.standard.object(forKey: "agyhub.usage.selectedRange")
-        let origUsageMetric = UserDefaults.standard.object(forKey: "agyhub.usage.metricMode")
-        let origUsageDim = UserDefaults.standard.object(forKey: "agyhub.usage.breakdownDimension")
+        let trackedKeys = [
+            "agyhub.collapse.accounts",
+            "agyhub.collapse.sessions",
+            "agyhub.collapse.telemetry",
+            "agyhub.telemetry.range",
+            DashboardSplitLayoutPolicy.splitFractionDefaultsKey,
+            "agyhub.usage.selectedRange",
+            "agyhub.usage.metricMode",
+            "agyhub.usage.breakdownDimension"
+        ]
+        var savedDefaults: [String: Any?] = [:]
+        for key in trackedKeys {
+            savedDefaults[key] = UserDefaults.standard.object(forKey: key)
+        }
         defer {
-            let restore: (String, Any?) -> Void = { key, val in
-                if let v = val { UserDefaults.standard.set(v, forKey: key) }
-                else { UserDefaults.standard.removeObject(forKey: key) }
+            for (key, val) in savedDefaults {
+                if let v = val {
+                    UserDefaults.standard.set(v, forKey: key)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
             }
-            restore("agyhub.collapse.accounts", origAccountsCollapsed)
-            restore("agyhub.collapse.sessions", origSessionsCollapsed)
-            restore("agyhub.usage.selectedRange", origUsageRange)
-            restore("agyhub.usage.metricMode", origUsageMetric)
-            restore("agyhub.usage.breakdownDimension", origUsageDim)
         }
 
         UserDefaults.standard.set(UsageRangeOption.last7Days.rawValue, forKey: "agyhub.usage.selectedRange")
         UserDefaults.standard.set(UsageMetricMode.cost.rawValue, forKey: "agyhub.usage.metricMode")
         UserDefaults.standard.set(UsageBreakdownDimension.model.rawValue, forKey: "agyhub.usage.breakdownDimension")
 
-        let pairs: [(AppLanguage.Resolved, String)] = [
+        let allPairs: [(AppLanguage.Resolved, String)] = [
             (.en, ""),
             (.zhHans, "-zh")
         ]
+        let pairs: [(AppLanguage.Resolved, String)]
+        switch targetLangFilter {
+        case "en":
+            pairs = [(.en, "")]
+        case "zh", "zh-cn", "zh_CN":
+            pairs = [(.zhHans, "-zh")]
+        default:
+            pairs = allPairs
+        }
 
         for (lang, suffix) in pairs {
-
             let dashStore = makeDemoStore(lang: lang, accountsCollapsed: false)
             captureView(
                 MainDashboardView(store: dashStore, isStandaloneWindow: false)
                     .environment(\.agyLanguage, lang),
-                width: 560,
-                height: 525,
+                width: 520,
+                height: 605,
                 outputPath: "\(outputDir)/screenshot-dashboard\(suffix).png"
             )
 
@@ -723,8 +885,8 @@ enum DemoScreenshotRunner {
             captureView(
                 MainDashboardView(store: detailStore, isStandaloneWindow: false)
                     .environment(\.agyLanguage, lang),
-                width: 560,
-                height: 615,
+                width: 520,
+                height: 605,
                 outputPath: "\(outputDir)/screenshot-detail\(suffix).png"
             )
 
@@ -734,8 +896,8 @@ enum DemoScreenshotRunner {
             captureView(
                 MainDashboardView(store: usageStore, isStandaloneWindow: false)
                     .environment(\.agyLanguage, lang),
-                width: 560,
-                height: 565,
+                width: 520,
+                height: 598,
                 outputPath: "\(outputDir)/screenshot-usage\(suffix).png",
                 onSettle: {
                     usageStore.usageHistory = demoUsage
@@ -748,11 +910,30 @@ enum DemoScreenshotRunner {
 @main
 struct DemoScreenshotMain {
     static func main() {
-        let outDir = CommandLine.arguments.count > 1
-            ? CommandLine.arguments[1]
-            : FileManager.default.currentDirectoryPath + "/assets"
+        var outDir = FileManager.default.currentDirectoryPath + "/assets"
+        var langFilter = "all"
+
+        let args = Array(CommandLine.arguments.dropFirst())
+        var idx = 0
+        while idx < args.count {
+            let arg = args[idx]
+            if arg == "--output-dir", idx + 1 < args.count {
+                outDir = args[idx + 1]
+                idx += 2
+            } else if arg == "--lang", idx + 1 < args.count {
+                langFilter = args[idx + 1].lowercased()
+                idx += 2
+            } else if !arg.hasPrefix("-") {
+                outDir = arg
+                idx += 1
+            } else {
+                idx += 1
+            }
+        }
+
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
         MainActor.assumeIsolated {
-            DemoScreenshotRunner.runAll(outputDir: outDir)
+            DemoScreenshotRunner.runAll(outputDir: outDir, targetLangFilter: langFilter)
         }
     }
 }

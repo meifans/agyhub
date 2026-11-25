@@ -125,6 +125,29 @@ struct AGYHubTestsRunner {
         testActiveAccountNativeRenewalPolicyAndNeutralOAuthErrorLog()
         testMonitorDaemonClientHasBoundedMemoryAcrossRepeatedSnapshots()
         testVisibilityAwareFSEventsCLIThrottleAndBoundedLogs()
+        testParseFiveHourQuotaBucketAndCapacitySummary()
+        testCompactAccountSummaryResolutionForAppAndCLI()
+        testCompactAccountCardAndPickerLayoutFitsWithinPanelWidths()
+        testLiveTelemetrySampleExtractionAndRingBufferBounds()
+        testLiveTelemetryOverviewCardFitsPanelWidthAndShowsSummary()
+        testLiveTelemetrySubagentForkHandoffAndSegmentSplit()
+        testLiveTelemetryYAxisLeftAlignedAndHighContrast()
+        testLiveTelemetryFamilyColorHierarchyAndDescendantTiers()
+        testHeaderBarNeverWrapsTodayPillVerticallyOnNarrowWidths()
+        testDashboardAdaptiveLayoutReducesMarginsWhenNarrowed()
+        testLiveTelemetrySmoothCurveInterpolationAndZeroCliffJumps()
+        testConfigurableSessionVisibleLimitAndSessionColorLinkage()
+        testDashboardSplitLayoutDraggableResizeClampingAndPersistence()
+        testLiveTelemetryForkJunctionAlignsStrictlyOnParentCurveWithoutDip()
+        testTodayUsagePillInHeaderWithoutLeadingIconAndFitsAllWidths()
+        testChartNearestCurveHitTestAndBidirectionalHighlight()
+        testLiveTelemetryColorsRemainIdenticalAcrossAllTimeRanges()
+        testLiveTelemetryPaletteEightFamiliesAndUniformPerceptualProgression()
+        testSettingsOverlayDismissesOnOutsideTapAndOmitsFooterQuitBar()
+        testRecentUIChangesEnglishLocalizationAndTelemetryLabel()
+        testLiveTelemetryIdleGapBridgingAndHollowIdleTail()
+        testTelemetryDefaultHidesHorizontalGuideRulesAndOffsetsCalloutFromDot()
+        testOneQuarterAdvancingTimelineCycleAndAdaptiveCallout()
 
         if failures > 0 {
             fputs("\n❌ 共 \(failures) 个断言失败\n", stderr)
@@ -3938,5 +3961,2434 @@ for line in sys.stdin:
         let snapshot = LocalAccountDetector.snapshotDiscoveryLogs()
         expect(snapshot.count <= LocalAccountDetector.maxInMemoryLogCount, "内存诊断日志列表必须存在上限，当前: \(snapshot.count)")
         expect(snapshot.last?.contains("bounded-log-line-1149") == true, "裁剪后应保留最新日志条目")
+    }
+
+    static func testParseFiveHourQuotaBucketAndCapacitySummary() {
+        let baseDate = Date(timeIntervalSince1970: 1700000000)
+        let reset5hISO = ISO8601DateFormatter().string(from: baseDate.addingTimeInterval(3 * 3600 + 1800))
+        let resetWeeklyISO = ISO8601DateFormatter().string(from: baseDate.addingTimeInterval(5 * 86400))
+
+        let jsonStr = """
+        {
+          "groups": [
+            {
+              "displayName": "Gemini Models",
+              "buckets": [
+                {
+                  "bucketId": "gemini-weekly",
+                  "window": "weekly",
+                  "resetTime": "\(resetWeeklyISO)",
+                  "remainingFraction": 0.83
+                },
+                {
+                  "bucketId": "gemini-5h",
+                  "window": "5h",
+                  "resetTime": "\(reset5hISO)",
+                  "remainingFraction": 0.64
+                }
+              ]
+            },
+            {
+              "displayName": "Claude and GPT models",
+              "buckets": [
+                {
+                  "bucketId": "3p-weekly",
+                  "window": "weekly",
+                  "resetTime": "\(resetWeeklyISO)",
+                  "remainingFraction": 1.0
+                },
+                {
+                  "bucketId": "3p-5h",
+                  "window": "5h",
+                  "resetTime": "\(reset5hISO)",
+                  "remainingFraction": 0.05
+                }
+              ]
+            },
+            {
+              "displayName": "Gemini 4 Argon",
+              "buckets": [
+                {
+                  "bucketId": "gemini-argon-wtu-weekly",
+                  "window": "weekly",
+                  "resetTime": "\(resetWeeklyISO)",
+                  "remainingFraction": 0.91
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        guard let data = jsonStr.data(using: .utf8),
+              let summary = AccountQuotaManager.parseQuotaSummary(data: data, email: "pro@example.com", tier: "Google AI Pro", now: baseDate) else {
+            expect(false, "应成功解析同时包含 5h 与 weekly 的配额响应")
+            return
+        }
+
+        expectEqual(summary.geminiQuota?.percentage, 83, "周 Gemini 额度应为 83%")
+        expectEqual(summary.argonQuota?.percentage, 91, "周 Argon 额度应为 91%")
+        expectEqual(summary.geminiFiveHourQuota?.percentage, 64, "5h Gemini 额度应解析为 64%（不得被 Claude/GPT 3p-5h 的 5% 污染）")
+        expectEqual(summary.effectiveFiveHourQuota?.percentage, 64, "effectiveFiveHourQuota 应返回 Gemini 5h 额度")
+
+        let display = AccountQuotaManager.fiveHourDisplay(for: summary, from: baseDate, language: .zhHans)
+        expectEqual(display?.percentage, 64, "fiveHourDisplay 百分比应为 64%")
+        expectEqual(display?.countdown, "3h", "3.5h 倒计时应显示为 3h")
+        expect(abs((display?.remainingFraction ?? 0) - 0.64) < 0.001, "capacity bar fraction 应精确对应 0.64")
+
+        let tip = AccountQuotaManager.quotaTooltip(
+            items: AccountQuotaManager.displayItems(for: summary, language: .zhHans),
+            isUltra: false,
+            fiveHourQuota: summary.effectiveFiveHourQuota,
+            from: baseDate,
+            isExpired: false,
+            language: .zhHans
+        )
+        expect(tip.contains("5h") && tip.contains("64%"), "Tooltip 应同时包含 5h 额度信息: \(tip)")
+
+        let legacyJSON = """
+        {"cached@example.com":{"email":"cached@example.com","isUltra":true,"geminiQuota":{"remainingFraction":0.75},"lastFetched":1700000000}}
+        """.data(using: .utf8)!
+        let decoded = try? JSONDecoder().decode([String: AccountQuotaSummary].self, from: legacyJSON)
+        expectEqual(decoded?["cached@example.com"]?.geminiQuota?.percentage, 75, "旧版配额缓存仍应正常解码")
+        expect(decoded?["cached@example.com"]?.geminiFiveHourQuota == nil, "旧版无 5h 字段缓存应安全解码为 nil")
+        expect(AccountQuotaManager.fiveHourDisplay(for: decoded?["cached@example.com"], from: baseDate, language: .zhHans) == nil, "无 5h 桶时 fiveHourDisplay 应为 nil 而非假 0%")
+
+        let clampedOver = AccountQuotaSummary(
+            email: "clamp@example.com",
+            isUltra: true,
+            geminiQuota: nil,
+            argonQuota: nil,
+            geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 1.4, resetTime: baseDate.addingTimeInterval(1500), resetTimeStr: nil),
+            lastFetched: baseDate
+        )
+        let clampedDisplay = AccountQuotaManager.fiveHourDisplay(for: clampedOver, from: baseDate, language: .en)
+        expectEqual(clampedDisplay?.percentage, 100, "超过 1.0 的 5h 比例应钳制在 100%")
+        expectEqual(clampedDisplay?.countdown, "25m", "不足 1h 应显示 25m")
+    }
+
+    static func testCompactAccountSummaryResolutionForAppAndCLI() {
+        let now = Date()
+        let appProfile = AGYProfile(name: "alex.dev@example.com", email: "alex.dev@example.com", userDataDir: "", isDefault: true)
+        let cliProfile = AGYProfile(name: "cli.worker@example.com", email: "cli.worker@example.com", userDataDir: "", isDefault: false)
+        let quotas: [String: AccountQuotaSummary] = [
+            "alex.dev@example.com": AccountQuotaSummary(
+                email: "alex.dev@example.com",
+                isUltra: false,
+                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.83, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+                argonQuota: WeeklyQuotaBucket(remainingFraction: 1.0, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+                geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.72, resetTime: now.addingTimeInterval(4 * 3600), resetTimeStr: nil),
+                lastFetched: now
+            ),
+            "cli.worker@example.com": AccountQuotaSummary(
+                email: "cli.worker@example.com",
+                isUltra: true,
+                geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.96, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+                argonQuota: nil,
+                geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.90, resetTime: now.addingTimeInterval(2 * 3600), resetTimeStr: nil),
+                lastFetched: now
+            )
+        ]
+
+        let appSnapshot = AccountCompactSummaryPolicy.resolveActiveAccount(
+            mode: .app,
+            isCLIIndependentMode: true,
+            profiles: [appProfile, cliProfile],
+            expectedAppEmail: "alex.dev@example.com",
+            appStorageEmail: "",
+            sharedKeychainEmail: "other@example.com",
+            activeProfileName: "default",
+            activeCLIProfileName: "cli.worker@example.com",
+            accountQuotas: quotas,
+            expiredQuotaEmails: [],
+            language: .zhHans
+        )
+        expectEqual(appSnapshot.effectiveMode, .app, "App 模式应解析为 .app")
+        expectEqual(appSnapshot.displayName, "alex.dev", "App 模式应展示短账号名")
+        expectEqual(appSnapshot.quota?.geminiFiveHourQuota?.percentage, 72, "App 模式应携带对应 5h 配额")
+        expect(appSnapshot.isSignedIn, "App 账号非空时应为已登录态")
+
+        let cliSnapshot = AccountCompactSummaryPolicy.resolveActiveAccount(
+            mode: .cli,
+            isCLIIndependentMode: true,
+            profiles: [appProfile, cliProfile],
+            expectedAppEmail: "alex.dev@example.com",
+            appStorageEmail: "",
+            sharedKeychainEmail: nil,
+            activeProfileName: "alex.dev@example.com",
+            activeCLIProfileName: "cli.worker@example.com",
+            accountQuotas: quotas,
+            expiredQuotaEmails: ["cli.worker@example.com"],
+            language: .zhHans
+        )
+        expectEqual(cliSnapshot.effectiveMode, .cli, "独立 CLI 模式切到 .cli 时应解析为 .cli")
+        expectEqual(cliSnapshot.displayName, "cli.worker", "CLI 模式应展示 CLI 活跃账号名")
+        expect(cliSnapshot.isQuotaExpired, "CLI 账号凭据过期应标记 isQuotaExpired")
+
+        let unsignedCLI = AccountCompactSummaryPolicy.resolveActiveAccount(
+            mode: .cli,
+            isCLIIndependentMode: true,
+            profiles: [appProfile, cliProfile],
+            expectedAppEmail: "alex.dev@example.com",
+            appStorageEmail: "",
+            sharedKeychainEmail: nil,
+            activeProfileName: "alex.dev@example.com",
+            activeCLIProfileName: nil,
+            accountQuotas: quotas,
+            expiredQuotaEmails: [],
+            language: .zhHans
+        )
+        expect(!unsignedCLI.isSignedIn, "CLI 无活跃账号时应标记未登录")
+        expectEqual(unsignedCLI.displayName, L10n.t(.notSignedIn, .zhHans), "CLI 未登录应显示未登录文案")
+
+        let forcedApp = AccountCompactSummaryPolicy.resolveActiveAccount(
+            mode: .cli,
+            isCLIIndependentMode: false,
+            profiles: [appProfile],
+            expectedAppEmail: "alex.dev@example.com",
+            appStorageEmail: "",
+            sharedKeychainEmail: nil,
+            activeProfileName: "alex.dev@example.com",
+            activeCLIProfileName: "cli.worker@example.com",
+            accountQuotas: quotas,
+            expiredQuotaEmails: [],
+            language: .zhHans
+        )
+        expectEqual(forcedApp.effectiveMode, .app, "未开启独立 CLI 模式时应回退展示 App 模式")
+        expectEqual(AccountTargetMode.app.toggled, .cli, "App 单框点击应切到 CLI")
+        expectEqual(AccountTargetMode.cli.toggled, .app, "CLI 单框点击应切回 App")
+    }
+
+    static func testCompactAccountCardAndPickerLayoutFitsWithinPanelWidths() {
+        let now = Date()
+        let p1 = AGYProfile(name: "alex.dev@example.com", email: "alex.dev@example.com", userDataDir: "", isDefault: true)
+        let p2 = AGYProfile(name: "cli.worker@example.com", email: "cli.worker@example.com", userDataDir: "", isDefault: false)
+        let q1 = AccountQuotaSummary(
+            email: "alex.dev@example.com",
+            isUltra: false,
+            geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.83, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+            argonQuota: WeeklyQuotaBucket(remainingFraction: 1.0, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+            geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.80, resetTime: now.addingTimeInterval(4 * 3600), resetTimeStr: nil),
+            lastFetched: now
+        )
+        let q2 = AccountQuotaSummary(
+            email: "cli.worker@example.com",
+            isUltra: true,
+            geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.96, resetTime: now.addingTimeInterval(6 * 86400), resetTimeStr: nil),
+            argonQuota: nil,
+            geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.45, resetTime: now.addingTimeInterval(2 * 3600), resetTimeStr: nil),
+            lastFetched: now
+        )
+
+        MainActor.assumeIsolated { () -> Void in
+            let snapshot = AccountCompactSummaryPolicy.resolveActiveAccount(
+                mode: .app,
+                isCLIIndependentMode: true,
+                profiles: [p1, p2],
+                expectedAppEmail: p1.name,
+                appStorageEmail: "",
+                sharedKeychainEmail: nil,
+                activeProfileName: p1.name,
+                activeCLIProfileName: p2.name,
+                accountQuotas: [p1.name: q1, p2.name: q2],
+                expiredQuotaEmails: [],
+                language: .zhHans
+            )
+
+            let targetMode = AccountTargetMode.app
+            let cardView = AccountSummaryCardView(
+                targetMode: Binding(get: { targetMode }, set: { _ in }),
+                isCLIIndependentMode: true,
+                snapshot: snapshot,
+                hasSharedKeychainMismatch: false,
+                isCLIVaultAuthorized: true,
+                isPickerOpen: false,
+                onTogglePicker: {},
+                onRefreshQuota: {}
+            )
+            .environment(\.agyLanguage, .zhHans)
+
+            for cardWidth in [CGFloat(436), CGFloat(412)] {
+                let hosting = NSHostingView(rootView: cardView.frame(width: cardWidth))
+                hosting.layoutSubtreeIfNeeded()
+                let fit = hosting.fittingSize
+                expect(fit.width <= cardWidth + 0.5, "单行 Account 卡片在 \(Int(cardWidth))pt 容器内不得横向溢出 (actual=\(fit.width))")
+                expect(fit.height <= 42.0, "单行 Account 卡片高度应严格保持在单行以内 <= 42pt (actual=\(fit.height))")
+            }
+
+            let cliSnapshot = AccountCompactSummaryPolicy.resolveActiveAccount(
+                mode: .cli,
+                isCLIIndependentMode: true,
+                profiles: [p1, p2],
+                expectedAppEmail: p1.name,
+                appStorageEmail: "",
+                sharedKeychainEmail: nil,
+                activeProfileName: p1.name,
+                activeCLIProfileName: p2.name,
+                accountQuotas: [p1.name: q1, p2.name: q2],
+                expiredQuotaEmails: [],
+                language: .zhHans
+            )
+            let cliCard = AccountSummaryCardView(
+                targetMode: Binding(get: { AccountTargetMode.cli }, set: { _ in }),
+                isCLIIndependentMode: true,
+                snapshot: cliSnapshot,
+                hasSharedKeychainMismatch: false,
+                isCLIVaultAuthorized: true,
+                isPickerOpen: false,
+                onTogglePicker: {},
+                onRefreshQuota: {}
+            )
+            .environment(\.agyLanguage, .zhHans)
+
+            let cliHosting = NSHostingView(rootView: cliCard.frame(width: 412))
+            cliHosting.layoutSubtreeIfNeeded()
+            let cliFit = cliHosting.fittingSize
+            expect(cliFit.width <= 412.5 && cliFit.height <= 42.0, "CLI 单框模式卡片在 412pt 容器内应同样单行不溢出 (actual=\(cliFit))")
+        }
+    }
+
+    static func testLiveTelemetrySampleExtractionAndRingBufferBounds() {
+        let baseDate = Date(timeIntervalSince1970: 1700000000)
+
+        let childRunning = SessionItem(
+            uuid: "child-1",
+            shortId: "c1",
+            parentConversationId: "parent-1",
+            title: "Subagent 1",
+            isRunning: true,
+            interactions: 2,
+            inputTokens: 1000,
+            cacheTokens: 9000,
+            outputTokens: 500,
+            contextTokens: 10500,
+            cachePct: 90.0,
+            tps: 120.0
+        )
+        let parentIdleWithActiveSubs = SessionItem(
+            uuid: "parent-1",
+            shortId: "p1",
+            title: "Parent",
+            isRunning: false,
+            interactions: 4,
+            inputTokens: 2000,
+            cacheTokens: 18000,
+            outputTokens: 800,
+            contextTokens: 20800,
+            cachePct: 90.0,
+            tps: 999.0,
+            subagents: [childRunning],
+            subagentCount: 1,
+            activeSubagentCount: 1,
+            activeSubagentTps: 120.0
+        )
+        let soloRunning = SessionItem(
+            uuid: "solo-1",
+            shortId: "s1",
+            title: "Solo",
+            isRunning: true,
+            interactions: 1,
+            inputTokens: 500,
+            cacheTokens: 4500,
+            outputTokens: 200,
+            contextTokens: 5200,
+            cachePct: 90.0,
+            tps: 65.0
+        )
+
+        func makePayload(totalTokens: Int, cacheTokens: Int, inputTokens: Int, outputTokens: Int, cachePct: Double, sessions: [SessionItem]) -> MonitorPayload {
+            MonitorPayload(
+                timestamp: "17:00:00",
+                dataDir: "~/.gemini/antigravity",
+                activeCount: 2,
+                totalRoundtrips: 10,
+                hasAlert: false,
+                menubar: MenuBarSummary(icon: "🟢", text: "", statusLevel: "working", activeCount: 2),
+                todayStats: TodayStats(
+                    totalTokens: totalTokens,
+                    cacheTokens: cacheTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cachePct: cachePct,
+                    costUsd: 10.0,
+                    hasData: true,
+                    source: "test"
+                ),
+                sessions: sessions
+            )
+        }
+
+        let p0 = makePayload(totalTokens: 1_000_000, cacheTokens: 900_000, inputTokens: 80_000, outputTokens: 20_000, cachePct: 90.0, sessions: [parentIdleWithActiveSubs, childRunning, soloRunning])
+        let metrics = LiveTelemetryPolicy.extractLiveMetrics(from: p0)
+        expectEqual(metrics.activeAgentCount, 2, "闲置父会话不计入运行中 Agent，应合并活跃子 Agent(1) + 独立运行会话(1)，且不得重复统计已聚合的子会话")
+        expect(abs(metrics.totalTps - 185.0) < 0.01, "总速率应为 120 + 65 = 185，不得包含闲置父会话的残余 999 t/s (actual=\(metrics.totalTps))")
+
+        var history: [LiveTelemetrySample] = []
+        var prevStats: TodayStats? = nil
+        var nextId = 1
+
+        var added = false
+        (history, prevStats, added) = LiveTelemetryPolicy.appendSample(to: history, payload: p0, previousStats: prevStats, nextId: &nextId, now: baseDate)
+        expect(added && history.count == 1, "首次采样应写入第 1 个点")
+
+        let burstSame = makePayload(totalTokens: 1_000_000, cacheTokens: 900_000, inputTokens: 80_000, outputTokens: 20_000, cachePct: 90.0, sessions: [parentIdleWithActiveSubs, childRunning, soloRunning])
+        (history, prevStats, added) = LiveTelemetryPolicy.appendSample(to: history, payload: burstSame, previousStats: prevStats, nextId: &nextId, now: baseDate.addingTimeInterval(0.4))
+        expect(!added && history.count == 1, "短间隔无变化突发轮询应被去重跳过")
+
+        let pHit = makePayload(totalTokens: 1_100_000, cacheTokens: 990_000, inputTokens: 88_000, outputTokens: 22_000, cachePct: 90.0, sessions: [soloRunning])
+        (history, prevStats, added) = LiveTelemetryPolicy.appendSample(to: history, payload: pHit, previousStats: prevStats, nextId: &nextId, now: baseDate.addingTimeInterval(5.0))
+        expect(added && history.count == 2, "5s 后应写入第 2 个点")
+        expectEqual(history.last?.deltaTokens, 100_000, "窗口消耗增量应为 +100k")
+        expect(abs((history.last?.cachePct ?? 0) - 90.0) < 0.1, "90k/100k 瞬时缓存率应为 90%")
+        expect(history.last?.isIdleCacheHold == false, "存在新增 Token 时不应标为空窗维持")
+
+        let pMiss = makePayload(totalTokens: 1_200_000, cacheTokens: 990_000, inputTokens: 185_000, outputTokens: 25_000, cachePct: 82.5, sessions: [soloRunning])
+        (history, prevStats, added) = LiveTelemetryPolicy.appendSample(to: history, payload: pMiss, previousStats: prevStats, nextId: &nextId, now: baseDate.addingTimeInterval(10.0))
+        expect(abs((history.last?.cachePct ?? 100) - 0.0) < 0.1, "全部为新输入无缓存命中时，瞬时缓存率应掉至 0% 形成波谷")
+
+        let pIdle = makePayload(totalTokens: 1_200_000, cacheTokens: 990_000, inputTokens: 185_000, outputTokens: 25_000, cachePct: 82.5, sessions: [])
+        (history, prevStats, added) = LiveTelemetryPolicy.appendSample(to: history, payload: pIdle, previousStats: prevStats, nextId: &nextId, now: baseDate.addingTimeInterval(15.0))
+        expect(history.last?.isIdleCacheHold == true, "无 Token 增量空窗期应标记 isIdleCacheHold 保持前值，不能假摔成 0%")
+        expectEqual(history.last?.activeAgentCount, 0, "全部停止后在跑 Agent 应归零")
+
+        for step in 1...750 {
+            let pN = makePayload(totalTokens: 1_200_000 + step * 1000, cacheTokens: 990_000 + step * 950, inputTokens: 185_000 + step * 40, outputTokens: 25_000 + step * 10, cachePct: 95.0, sessions: [soloRunning])
+            (history, prevStats, _) = LiveTelemetryPolicy.appendSample(to: history, payload: pN, previousStats: prevStats, nextId: &nextId, now: baseDate.addingTimeInterval(15.0 + Double(step) * 5.0))
+        }
+        expectEqual(history.count, LiveTelemetryPolicy.maxSamples, "环形缓冲区大小必须严格封顶在 maxSamples 以防内存无限增长")
+        expectEqual(LiveTelemetryPolicy.maxSamples, 720, "应支持最长 1 小时 5s 粒度历史保留 (720 点)")
+
+        let latestTime = history.last!.timestamp
+        let oneMin = LiveTelemetryPolicy.samples(in: .oneMinute, from: history, now: latestTime)
+        let threeMin = LiveTelemetryPolicy.samples(in: .threeMinutes, from: history, now: latestTime)
+        let oneHour = LiveTelemetryPolicy.samples(in: .oneHour, from: history, now: latestTime)
+        expect(oneMin.count >= 12 && oneMin.count <= 14, "1m 窗口应筛选最近 60s 样本 (actual=\(oneMin.count))")
+        expect(threeMin.count >= 36 && threeMin.count <= 38, "3m 窗口应筛选最近 180s 样本 (actual=\(threeMin.count))")
+        expectEqual(TelemetryTimeRange.threeMinutes.rawValue, "3m", "第二档时间窗标识应为 3m")
+        expectEqual(TelemetryTimeRange.resolved(from: "5m"), .threeMinutes, "旧版本持久化存储的 5m 键应平滑迁移至 3m 档位")
+        expectEqual(oneHour.count, LiveTelemetryPolicy.maxSamples, "1h 窗口应覆盖全量 3600s 样本")
+
+        let domain15m = LiveTelemetryPolicy.xAxisDomain(for: .fifteenMinutes, referenceDate: latestTime)
+        expectEqual(Int(domain15m.upperBound.timeIntervalSince(domain15m.lowerBound).rounded()), 900, "15m X轴跨度应精确为 900 秒")
+
+        let firstAgents = history.first?.agentContexts ?? []
+        let agentSeriesCheck = LiveTelemetryPolicy.agentSeries(in: Array(history.suffix(12)))
+        expect(firstAgents.count == 2 || agentSeriesCheck.count >= 1, "应能提取活跃会话与子 Agent 的上下文轨迹且不重复")
+
+        let ctxSeries = LiveTelemetryPolicy.agentSeries(in: [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: baseDate,
+                activeAgentCount: 2,
+                totalTps: 120,
+                totalTokensCumulative: 1000,
+                deltaTokens: 1000,
+                cachePct: 99.0,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "a1", label: "Coordinator", contextTokens: 120_000, isRunning: true, tps: 50),
+                    AgentContextPoint(agentId: "a2", label: "worker-1", contextTokens: 45_000, isRunning: true, tps: 70),
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 2,
+                timestamp: baseDate.addingTimeInterval(5),
+                activeAgentCount: 1,
+                totalTps: 60,
+                totalTokensCumulative: 5000,
+                deltaTokens: 4000,
+                cachePct: 95.5,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "a1", label: "Coordinator", contextTokens: 185_000, isRunning: true, tps: 60),
+                    AgentContextPoint(agentId: "a2", label: "worker-1", contextTokens: 48_000, isRunning: false, tps: 0),
+                ]
+            ),
+        ])
+        expectEqual(ctxSeries.count, 2, "每个 Agent 应独立成一条上下文曲线")
+        expectEqual(ctxSeries.first?.agentId, "a1", "活跃且上下文更大的 Agent 曲线应排在最前")
+        expect(LiveTelemetryPolicy.maxContextDomain(for: ctxSeries) >= 200_000, "185k 上下文峰值时 Y 轴上限应自动对齐到 200k+ 整档 (actual=\(LiveTelemetryPolicy.maxContextDomain(for: ctxSeries)))")
+
+        let mixedSeries = LiveTelemetryPolicy.agentSeries(in: [
+            LiveTelemetrySample(
+                id: 10,
+                timestamp: baseDate,
+                activeAgentCount: 0,
+                totalTps: 0,
+                totalTokensCumulative: 1000,
+                deltaTokens: 0,
+                cachePct: 99.0,
+                isIdleCacheHold: true,
+                agentContexts: [
+                    AgentContextPoint(agentId: "idle-giant", label: "OldSession", contextTokens: 420_000, isRunning: false, tps: 0)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 11,
+                timestamp: baseDate.addingTimeInterval(5),
+                activeAgentCount: 1,
+                totalTps: 50,
+                totalTokensCumulative: 5000,
+                deltaTokens: 4000,
+                cachePct: 98.0,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "live-one", label: "ActiveSession", contextTokens: 85_000, isRunning: true, tps: 50)
+                ]
+            ),
+        ])
+        expectEqual(mixedSeries.count, 1, "窗口内存在活跃 Agent 时应隐藏静态历史参考线，避免把 Y 轴撑爆至 450k")
+        expectEqual(mixedSeries.first?.agentId, "live-one", "应仅保留真正运行/参与工作的 Agent 曲线")
+
+        let xTicks = LiveTelemetryPolicy.xAxisTicks(for: .threeMinutes, referenceDate: latestTime)
+        expectEqual(xTicks.count, 4, "X 轴应显式生成 4 个等距时间刻度点防止末尾异常标签")
+        expectEqual(Int(xTicks.last!.timeIntervalSince(xTicks.first!).rounded()), 180, "3m 刻度首尾跨度应精确等于 180s")
+
+        let yTicks = LiveTelemetryPolicy.yAxisTicks(maxContext: 300_000)
+        expectEqual(yTicks, [0.0, 100_000.0, 200_000.0, 300_000.0], "Y 轴应提供清晰 4 档整数虚线刻度")
+
+        let nowWindow = baseDate.addingTimeInterval(600)
+        let windowTestSamples = [
+            LiveTelemetrySample(
+                id: 101,
+                timestamp: nowWindow.addingTimeInterval(-150),
+                activeAgentCount: 1,
+                totalTps: 100,
+                totalTokensCumulative: 1_900_000,
+                deltaTokens: 900_000,
+                cachePct: 98.9,
+                isIdleCacheHold: false,
+                deltaCacheTokens: 890_000,
+                deltaNewTokens: 10_000
+            ),
+            LiveTelemetrySample(
+                id: 102,
+                timestamp: nowWindow.addingTimeInterval(-30),
+                activeAgentCount: 1,
+                totalTps: 80,
+                totalTokensCumulative: 2_000_000,
+                deltaTokens: 100_000,
+                cachePct: 20.0,
+                isIdleCacheHold: false,
+                deltaCacheTokens: 20_000,
+                deltaNewTokens: 80_000
+            ),
+        ]
+        let sum1m = LiveTelemetryPolicy.windowSummary(in: .oneMinute, from: windowTestSamples, todayStats: .empty, now: nowWindow)
+        let sum3m = LiveTelemetryPolicy.windowSummary(in: .threeMinutes, from: windowTestSamples, todayStats: .empty, now: nowWindow)
+        expectEqual(sum1m.totalTokens, 100_000, "1m 窗口累计消耗应只统计最近 60 秒内的 100k")
+        expect(abs(sum1m.cachePct - 20.0) < 0.1, "1m 窗口缓存率应加权反映近 60 秒内的 20% 命中 (actual=\(sum1m.cachePct))")
+        expectEqual(sum3m.totalTokens, 1_000_000, "3m 窗口累计消耗应包含前 2.5 分钟的 900k + 近 1 分钟的 100k = 1.0M")
+        expect(abs(sum3m.cachePct - 91.0) < 0.1, "3m 窗口缓存率应为加权总计 910k / 1000k = 91.0% (actual=\(sum3m.cachePct))")
+    }
+
+    static func testLiveTelemetryOverviewCardFitsPanelWidthAndShowsSummary() {
+        let now = Date()
+        let samples: [LiveTelemetrySample] = (0..<24).map { idx in
+            let tps = idx % 5 == 0 ? 15.0 : Double(80 + (idx * 37) % 260)
+            let cache = idx == 12 ? 78.0 : (96.0 + Double(idx % 4))
+            let c1 = 140_000 + idx * 4_500
+            let c2 = 28_000 + idx * 2_200
+            let c3 = 12_000 + idx * 1_100
+            return LiveTelemetrySample(
+                id: idx + 1,
+                timestamp: now.addingTimeInterval(Double(idx - 24) * 5.0),
+                activeAgentCount: 3,
+                totalTps: tps,
+                totalTokensCumulative: 273_200_000 + idx * 120_000,
+                deltaTokens: 120_000,
+                cachePct: cache,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "parent-1", label: "保险库授权", contextTokens: c1, isRunning: true, tps: 55),
+                    AgentContextPoint(agentId: "sub-1", label: "monitor", contextTokens: c2, isRunning: true, tps: 90),
+                    AgentContextPoint(agentId: "sub-2", label: "verifier", contextTokens: c3, isRunning: idx < 18, tps: idx < 18 ? 40 : 0),
+                ]
+            )
+        }
+        let today = TodayStats(totalTokens: 276_080_000, cacheTokens: 270_000_000, inputTokens: 4_000_000, outputTokens: 2_080_000, cachePct: 97.8, costUsd: 70.16, hasData: true, source: "test")
+
+        MainActor.assumeIsolated { () -> Void in
+            let view = LiveTelemetryOverviewCardView(samples: samples, todayStats: today)
+                .environment(\.agyLanguage, .zhHans)
+
+            for cardWidth in [CGFloat(436), CGFloat(412)] {
+                let hosting = NSHostingView(rootView: view.frame(width: cardWidth))
+                hosting.layoutSubtreeIfNeeded()
+                let fit = hosting.fittingSize
+                expect(fit.width <= cardWidth + 0.5, "单图多线上下文总览卡在 \(Int(cardWidth))pt 容器内不得横向溢出 (actual=\(fit.width))")
+                expect(fit.height >= 180.0 && fit.height <= 285.0, "主图表卡片腾出空间后高度应在 180~285pt 区间清晰舒展 (actual=\(fit.height))")
+            }
+
+            expectEqual(SessionListLayoutPolicy.maxVisibleRowsWhenExpanded, 3, "底部 SESSIONS 常驻最多显示 3 条，其余滚动查看")
+            expect(abs(SessionListLayoutPolicy.scrollHeight(forCount: 15, chartExpanded: true)! - 98.0) <= 4.0, "超过 3 条且上方图表展开时 SESSIONS 滚动区应锁定 3 行高度 (~98pt)")
+            expect(SessionListLayoutPolicy.scrollHeight(forCount: 15, chartExpanded: false) == nil, "上方图表折叠时 SESSIONS 应自动释放扩展展示更多行")
+
+            let emptyView = LiveTelemetryOverviewCardView(samples: [], todayStats: .empty)
+                .environment(\.agyLanguage, .en)
+            let emptyHosting = NSHostingView(rootView: emptyView.frame(width: 412))
+            emptyHosting.layoutSubtreeIfNeeded()
+            expect(emptyHosting.fittingSize.width <= 412.5, "空采样冷启动态也不得横向溢出")
+        }
+    }
+
+    static func testLiveTelemetryYAxisLeftAlignedAndHighContrast() {
+        expectEqual(LiveTelemetryChartAxisPolicy.yAxisPosition, .leading, "Y 轴与上下文标题应位于图表左侧")
+        expectEqual(LiveTelemetryChartAxisPolicy.contextHeaderAlignment, .leading, "上下文标题容器应左对齐")
+        expect(LiveTelemetryChartAxisPolicy.yAxisTitleOpacity >= 0.70, "上下文标题透明度过低会看不清 (actual=\(LiveTelemetryChartAxisPolicy.yAxisTitleOpacity))")
+        expect(LiveTelemetryChartAxisPolicy.yAxisTickOpacity >= 0.70, "Y 轴刻度透明度过低会看不清 (actual=\(LiveTelemetryChartAxisPolicy.yAxisTickOpacity))")
+        expect(LiveTelemetryChartAxisPolicy.yAxisTitleFontSize >= 9.5, "上下文标题字号过小 (actual=\(LiveTelemetryChartAxisPolicy.yAxisTitleFontSize))")
+        expect(LiveTelemetryChartAxisPolicy.yAxisTickFontSize >= 9.5, "Y 轴刻度字号过小 (actual=\(LiveTelemetryChartAxisPolicy.yAxisTickFontSize))")
+
+        let now = Date()
+        let samples = [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: now.addingTimeInterval(-120),
+                activeAgentCount: 1,
+                totalTps: 120,
+                totalTokensCumulative: 1_000_000,
+                deltaTokens: 100_000,
+                cachePct: 98.5,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "a1", label: "impl skill", contextTokens: 29_000, isRunning: true, tps: 120)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 2,
+                timestamp: now.addingTimeInterval(-10),
+                activeAgentCount: 1,
+                totalTps: 240,
+                totalTokensCumulative: 1_120_000,
+                deltaTokens: 120_000,
+                cachePct: 98.7,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "a1", label: "impl skill", contextTokens: 120_000, isRunning: true, tps: 240)
+                ]
+            ),
+        ]
+        let today = TodayStats(totalTokens: 95_800_000, cacheTokens: 94_000_000, inputTokens: 1_200_000, outputTokens: 600_000, cachePct: 98.7, costUsd: 23.86, hasData: true, source: "test")
+
+        MainActor.assumeIsolated { () -> Void in
+            for lang in [AppLanguage.Resolved.zhHans, AppLanguage.Resolved.en] {
+                let view = LiveTelemetryOverviewCardView(samples: samples, todayStats: today)
+                    .environment(\.agyLanguage, lang)
+                for width in [CGFloat(360), CGFloat(412), CGFloat(436)] {
+                    let hosting = NSHostingView(rootView: view.frame(width: width))
+                    hosting.layoutSubtreeIfNeeded()
+                    let fit = hosting.fittingSize
+                    expect(fit.width <= width + 0.5, "左侧 Y 轴下卡片在宽度 \(width) (\(lang.rawValue)) 不应横向溢出: \(fit.width)")
+                    expect(fit.height >= 170, "卡片高度异常过矮 (\(lang.rawValue)): \(fit.height)")
+                }
+            }
+        }
+    }
+
+    static func testLiveTelemetrySubagentForkHandoffAndSegmentSplit() {
+        let baseDate = Date(timeIntervalSince1970: 1700001000)
+
+        let parentRunning = SessionItem(
+            uuid: "parent-auth",
+            shortId: "pa",
+            title: "保险库授权",
+            isRunning: true,
+            interactions: 4,
+            inputTokens: 1000,
+            cacheTokens: 9000,
+            outputTokens: 500,
+            contextTokens: 150_000,
+            cachePct: 95.0,
+            tps: 40.0
+        )
+
+        let subRunning = SessionItem(
+            uuid: "sub-keepalive",
+            shortId: "sk",
+            parentConversationId: "parent-auth",
+            agentName: "vault-ux-keepalive",
+            title: "Subagent",
+            isRunning: true,
+            interactions: 2,
+            inputTokens: 2000,
+            cacheTokens: 18000,
+            outputTokens: 800,
+            contextTokens: 445_000,
+            cachePct: 98.0,
+            tps: 80.0
+        )
+
+        let parentWaitingWithChild = SessionItem(
+            uuid: "parent-auth",
+            shortId: "pa",
+            title: "保险库授权",
+            isRunning: false,
+            interactions: 4,
+            inputTokens: 1000,
+            cacheTokens: 9000,
+            outputTokens: 500,
+            contextTokens: 150_000,
+            cachePct: 95.0,
+            tps: 0.0,
+            subagents: [subRunning],
+            subagentCount: 1,
+            activeSubagentCount: 1,
+            activeSubagentTps: 80.0
+        )
+
+        let subFinished = SessionItem(
+            uuid: "sub-keepalive",
+            shortId: "sk",
+            parentConversationId: "parent-auth",
+            agentName: "vault-ux-keepalive",
+            title: "Subagent",
+            isRunning: false,
+            interactions: 3,
+            inputTokens: 2000,
+            cacheTokens: 18000,
+            outputTokens: 800,
+            contextTokens: 63_000,
+            cachePct: 98.0,
+            tps: 0.0
+        )
+
+        let parentResumed = SessionItem(
+            uuid: "parent-auth",
+            shortId: "pa",
+            title: "保险库授权",
+            isRunning: true,
+            interactions: 5,
+            inputTokens: 1200,
+            cacheTokens: 11000,
+            outputTokens: 600,
+            contextTokens: 167_000,
+            cachePct: 95.0,
+            tps: 174.0,
+            subagents: [subFinished],
+            subagentCount: 1,
+            activeSubagentCount: 0,
+            activeSubagentTps: 0.0
+        )
+
+        func makePayload(sessions: [SessionItem], tokens: Int) -> MonitorPayload {
+            MonitorPayload(
+                timestamp: "19:40:00",
+                dataDir: "~/.gemini/antigravity",
+                activeCount: 1,
+                totalRoundtrips: 10,
+                hasAlert: false,
+                menubar: MenuBarSummary(icon: "🟢", text: "", statusLevel: "working", activeCount: 1),
+                todayStats: TodayStats(totalTokens: tokens, cacheTokens: tokens - 10_000, inputTokens: 8000, outputTokens: 2000, cachePct: 98.0, costUsd: 5.0, hasData: true, source: "test"),
+                sessions: sessions
+            )
+        }
+
+        var history: [LiveTelemetrySample] = []
+        var prevStats: TodayStats? = nil
+        var nextId = 1
+
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentRunning], tokens: 1_000_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentWaitingWithChild], tokens: 1_200_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(5.0)
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentWaitingWithChild], tokens: 1_400_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(10.0)
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentWaitingWithChild], tokens: 1_550_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(15.0)
+        )
+
+        let duringChild = LiveTelemetryPolicy.agentSeries(in: history)
+        expectEqual(duringChild.count, 2, "子 Agent 运行期应有父历史干流 + 子活跃分支两条序列")
+        if let parentMid = duringChild.first(where: { $0.agentId == "parent-auth" }),
+           let childMid = duringChild.first(where: { $0.agentId == "sub-keepalive" }) {
+            expect(!parentMid.isRunning, "子 Agent 运行且父会话未独立运行时，父曲线不得标为活跃运行以免双线争抢与平线穿底")
+            expect(childMid.isRunning, "子 Agent 运行期间应唯一标记为活跃运行")
+            expectEqual(parentMid.points.count, 1, "父会话等待子 Agent 期间应在分叉点停止记录，不得继续拉平线 (actual=\(parentMid.points.count))")
+            expectEqual(childMid.parentAgentId, "parent-auth", "子 Agent 曲线必须关联所属父 Agent UUID")
+            expect(childMid.points.first?.isForkAnchor == true, "子 Agent 首点应标记为分叉锚点 isForkAnchor")
+            expectEqual(childMid.points.first?.timestamp, baseDate, "分叉锚点时间应接在父线停下的分叉点上")
+            expectEqual(childMid.points.first?.contextTokens, 150_000, "分叉锚点高度应从父线当时 150k 上下文直接引出")
+        } else {
+            expect(false, "应分别生成父曲线 parent-auth 与子曲线 sub-keepalive")
+        }
+
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentResumed], tokens: 1_750_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(20.0)
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload(sessions: [parentResumed], tokens: 1_950_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(25.0)
+        )
+
+        let afterResume = LiveTelemetryPolicy.agentSeries(in: history)
+        if let parentAfter = afterResume.first(where: { $0.agentId == "parent-auth" }),
+           let childAfter = afterResume.first(where: { $0.agentId == "sub-keepalive" }) {
+            expect(parentAfter.isRunning, "父会话恢复运行后应成为当前活跃曲线")
+            expect(!childAfter.isRunning, "子 Agent 结束后应退出活跃态且不再向右延伸")
+            expectEqual(parentAfter.segments.count, 2, "父会话分叉前与恢复后之间存在子分支运行间隔，必须拆成 2 段避免一条蓝色横线直接穿过绿色分支下方 (actual=\(parentAfter.segments.count))")
+        } else {
+            expect(false, "恢复运行后仍应保留完整父子记录")
+        }
+
+        var childOnlyHistory: [LiveTelemetrySample] = []
+        var nextChildOnlyId = 1
+        var childOnlyStats: TodayStats? = nil
+        (childOnlyHistory, childOnlyStats, _) = LiveTelemetryPolicy.appendSample(
+            to: childOnlyHistory,
+            payload: makePayload(sessions: [parentWaitingWithChild], tokens: 500_000),
+            previousStats: childOnlyStats,
+            nextId: &nextChildOnlyId,
+            now: baseDate
+        )
+        (childOnlyHistory, childOnlyStats, _) = LiveTelemetryPolicy.appendSample(
+            to: childOnlyHistory,
+            payload: makePayload(sessions: [parentWaitingWithChild], tokens: 700_000),
+            previousStats: childOnlyStats,
+            nextId: &nextChildOnlyId,
+            now: baseDate.addingTimeInterval(5.0)
+        )
+        let childOnlySeries = LiveTelemetryPolicy.agentSeries(in: childOnlyHistory)
+        expectEqual(childOnlySeries.count, 1, "窗口内仅子 Agent 在跑且父会话从未运行过时，不应画出空闲父线 (actual=\(childOnlySeries.count))")
+        expectEqual(childOnlySeries.first?.agentId, "sub-keepalive", "此时窗口内唯一曲线必须是绿色的子 Agent")
+    }
+
+    static func testLiveTelemetrySmoothCurveInterpolationAndZeroCliffJumps() {
+        let baseDate = Date(timeIntervalSince1970: 1700002000)
+        let rawPoints: [AgentSeriesSamplePoint] = [
+            AgentSeriesSamplePoint(timestamp: baseDate, contextTokens: 167_000, isRunning: false, tps: 0.0, isForkAnchor: true),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(5.0), contextTokens: 508_000, isRunning: true, tps: 90.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(10.0), contextTokens: 508_000, isRunning: true, tps: 90.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(20.0), contextTokens: 508_000, isRunning: true, tps: 90.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(40.0), contextTokens: 508_000, isRunning: true, tps: 90.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(45.0), contextTokens: 40_000, isRunning: true, tps: 60.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(50.0), contextTokens: 42_000, isRunning: true, tps: 60.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(60.0), contextTokens: 48_000, isRunning: true, tps: 60.0),
+            AgentSeriesSamplePoint(timestamp: baseDate.addingTimeInterval(90.0), contextTokens: 63_000, isRunning: true, tps: 60.0)
+        ]
+
+        let smoothed = LiveTelemetryPolicy.smoothedCurvePoints(rawPoints, windowSeconds: 300.0)
+        expect(smoothed.count >= 25, "平滑曲线插值后应具备足够加密采样以形成流畅 S 曲线 (actual=\(smoothed.count))")
+        expectEqual(smoothed.first?.timestamp, rawPoints.first?.timestamp, "曲线首点时间必须精确钉在原分叉起点")
+        expectEqual(smoothed.first?.contextTokens, 167_000, "曲线首点高度必须精确钉在 167k")
+        expectEqual(smoothed.last?.timestamp, rawPoints.last?.timestamp, "曲线末点时间必须精确钉在原终点")
+        expectEqual(smoothed.last?.contextTokens, 63_000, "曲线末点高度必须精确钉在 63k")
+
+        for i in 1..<smoothed.count {
+            expect(smoothed[i].timestamp > smoothed[i - 1].timestamp, "平滑曲线时间戳必须严格递增")
+            expect(smoothed[i].contextTokens >= 40_000 && smoothed[i].contextTokens <= 508_000, "平滑曲线不得出现上下过冲越界 (y=\(smoothed[i].contextTokens))")
+        }
+
+        var maxSingleStepSlope = 0.0
+        for i in 1..<smoothed.count {
+            let dt = smoothed[i].timestamp.timeIntervalSince(smoothed[i - 1].timestamp)
+            let dy = abs(Double(smoothed[i].contextTokens - smoothed[i - 1].contextTokens))
+            if dt > 0 {
+                maxSingleStepSlope = max(maxSingleStepSlope, dy / dt)
+            }
+        }
+        let rawCliffSlope = abs(508_000.0 - 40_000.0) / 5.0
+        expect(maxSingleStepSlope < rawCliffSlope * 0.65, "原本 5 秒内 90° 垂直跳变应被舒展为柔和过渡，最大瞬时斜率须显著下降 (actual=\(Int(maxSingleStepSlope)), raw=\(Int(rawCliffSlope)))")
+
+        let stairLevels = [62_000, 78_000, 94_000, 110_000, 126_000, 144_000]
+        var stairRaw: [AgentSeriesSamplePoint] = []
+        for (levelIdx, tokens) in stairLevels.enumerated() {
+            for tick in 0..<6 {
+                let t = Double(levelIdx * 6 + tick) * 3.0
+                stairRaw.append(
+                    AgentSeriesSamplePoint(
+                        timestamp: baseDate.addingTimeInterval(t),
+                        contextTokens: tokens,
+                        isRunning: true,
+                        tps: 96.0
+                    )
+                )
+            }
+        }
+        let smoothedStair = LiveTelemetryPolicy.smoothedCurvePoints(stairRaw, windowSeconds: 300.0)
+        expectEqual(smoothedStair.first?.contextTokens, 62_000, "去台阶化曲线首点高度必须精确保留 62k")
+        expectEqual(smoothedStair.last?.contextTokens, 144_000, "去台阶化曲线末点高度必须精确保留 144k")
+
+        var stairMaxSlope = 0.0
+        var middleFlatSteps = 0
+        for i in 1..<smoothedStair.count {
+            let dt = smoothedStair[i].timestamp.timeIntervalSince(smoothedStair[i - 1].timestamp)
+            let dy = Double(smoothedStair[i].contextTokens - smoothedStair[i - 1].contextTokens)
+            if dt > 0 {
+                stairMaxSlope = max(stairMaxSlope, abs(dy) / dt)
+            }
+            if i > smoothedStair.count / 5 && i < (smoothedStair.count * 4) / 5 && abs(dy) < 1.0 {
+                middleFlatSteps += 1
+            }
+        }
+        let rawStairStepSlope = 16_000.0 / 3.0
+        expect(stairMaxSlope < rawStairStepSlope * 0.45, "高频轮询造成的锯齿台阶必须被抹平为连续流线，峰值瞬时斜率须明显下降 (actual=\(Int(stairMaxSlope)), raw=\(Int(rawStairStepSlope)))")
+        expectEqual(middleFlatSteps, 0, "连续爬坡区间中段不得残留 0 斜率水平死台阶 (flatSteps=\(middleFlatSteps))")
+    }
+
+    static func testLiveTelemetryFamilyColorHierarchyAndDescendantTiers() {
+        let baseDate = Date(timeIntervalSince1970: 1700003000)
+
+        let samples: [LiveTelemetrySample] = [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: baseDate,
+                activeAgentCount: 2,
+                totalTps: 100,
+                totalTokensCumulative: 1_000_000,
+                deltaTokens: 10_000,
+                cachePct: 98.0,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-a", label: "会话A", contextTokens: 120_000, isRunning: true, tps: 50, parentAgentId: nil),
+                    AgentContextPoint(agentId: "root-b", label: "会话B", contextTokens: 90_000, isRunning: true, tps: 50, parentAgentId: nil)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 2,
+                timestamp: baseDate.addingTimeInterval(5.0),
+                activeAgentCount: 3,
+                totalTps: 180,
+                totalTokensCumulative: 1_050_000,
+                deltaTokens: 50_000,
+                cachePct: 97.5,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-a", label: "会话A", contextTokens: 120_000, isRunning: false, tps: 0, parentAgentId: nil),
+                    AgentContextPoint(agentId: "child-a1", label: "子A1", contextTokens: 45_000, isRunning: true, tps: 60, parentAgentId: "root-a"),
+                    AgentContextPoint(agentId: "child-a2", label: "子A2", contextTokens: 32_000, isRunning: true, tps: 50, parentAgentId: "root-a"),
+                    AgentContextPoint(agentId: "root-b", label: "会话B", contextTokens: 92_000, isRunning: false, tps: 0, parentAgentId: nil),
+                    AgentContextPoint(agentId: "child-b1", label: "子B1", contextTokens: 28_000, isRunning: true, tps: 70, parentAgentId: "root-b")
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 3,
+                timestamp: baseDate.addingTimeInterval(10.0),
+                activeAgentCount: 2,
+                totalTps: 210,
+                totalTokensCumulative: 1_120_000,
+                deltaTokens: 70_000,
+                cachePct: 98.2,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "grand-a1a", label: "孙A1a", contextTokens: 24_000, isRunning: true, tps: 110, parentAgentId: "child-a1"),
+                    AgentContextPoint(agentId: "child-b1", label: "子B1", contextTokens: 410_000, isRunning: true, tps: 100, parentAgentId: "root-b")
+                ]
+            )
+        ]
+
+        let seriesList = LiveTelemetryPolicy.agentSeries(in: samples)
+        let byId = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0) })
+
+        guard let rootA = byId["root-a"],
+              let childA1 = byId["child-a1"],
+              let childA2 = byId["child-a2"],
+              let grandA1a = byId["grand-a1a"],
+              let rootB = byId["root-b"],
+              let childB1 = byId["child-b1"] else {
+            expect(false, "三代祖孙链与并行会话族应全部保留在 seriesList 中 (actualIds=\(seriesList.map(\.agentId)))")
+            return
+        }
+
+        expectEqual(rootA.familyIndex, 0, "先出现的根会话 A 应归属第 0 色系")
+        expectEqual(childA1.familyIndex, rootA.familyIndex, "子 Agent A1 必须继承父会话 A 的色系")
+        expectEqual(childA2.familyIndex, rootA.familyIndex, "子 Agent A2 必须继承父会话 A 的色系")
+        expectEqual(grandA1a.familyIndex, rootA.familyIndex, "孙 Agent A1a 必须沿祖孙链继承根会话 A 的色系")
+
+        expectEqual(rootB.familyIndex, 1, "另一个独立根会话 B 应使用不同的第 1 色系")
+        expectEqual(childB1.familyIndex, rootB.familyIndex, "子 Agent B1 必须继承父会话 B 的色系")
+
+        expectEqual(rootA.familyTier, 0, "父会话 A 本身必须处于第 0 梯队(主色)")
+        expectEqual(rootB.familyTier, 0, "父会话 B 本身必须处于第 0 梯队(主色)")
+        expectEqual(childB1.familyTier, 1, "B 的直接子 Agent 应处于第 1 梯队")
+
+        let aChildTiers = [childA1.familyTier, childA2.familyTier, grandA1a.familyTier]
+        expect(aChildTiers.allSatisfy { $0 >= 1 }, "所有子孙 Agent 的梯队必须 >= 1，避免与父会话完全同色")
+        expectEqual(Set(aChildTiers).count, 3, "同族子孙之间梯队编号应互不相同以做出视觉区分 (tiers=\(aChildTiers))")
+        expect(grandA1a.familyTier > childA1.familyTier, "孙 Agent 梯队应排在父级子 Agent 之后形成逐层递进")
+
+        let toneA0 = LiveTelemetryColorPalette.tone(familyIndex: rootA.familyIndex, tier: rootA.familyTier)
+        let toneA1 = LiveTelemetryColorPalette.tone(familyIndex: childA1.familyIndex, tier: childA1.familyTier)
+        let toneA2 = LiveTelemetryColorPalette.tone(familyIndex: childA2.familyIndex, tier: childA2.familyTier)
+        let toneA3 = LiveTelemetryColorPalette.tone(familyIndex: grandA1a.familyIndex, tier: grandA1a.familyTier)
+        let toneB0 = LiveTelemetryColorPalette.tone(familyIndex: rootB.familyIndex, tier: rootB.familyTier)
+        let toneB1 = LiveTelemetryColorPalette.tone(familyIndex: childB1.familyIndex, tier: childB1.familyTier)
+        let toneB2 = LiveTelemetryColorPalette.tone(familyIndex: rootB.familyIndex, tier: 2)
+        let toneB3 = LiveTelemetryColorPalette.tone(familyIndex: rootB.familyIndex, tier: 3)
+
+        for (name, tone) in [("rootA", toneA0), ("childA1", toneA1), ("childA2", toneA2), ("grandA1a", toneA3)] {
+            expect(tone.hueDegrees >= 190.0 && tone.hueDegrees <= 235.0, "\(name) 应保持在蓝色色相区间 [190°, 235°] 内，不能变成绿色或橙色 (hue=\(tone.hueDegrees))")
+        }
+        for (name, tone) in [("rootB", toneB0), ("childB1", toneB1), ("childB2", toneB2), ("childB3", toneB3)] {
+            expect(tone.hueDegrees >= 80.0 && tone.hueDegrees <= 185.0, "\(name) 应保持在绿色色相区间 [80°, 185°] 内 (hue=\(tone.hueDegrees))")
+        }
+
+        expect(toneA0.euclideanDistance(to: toneA1) >= 0.28, "父蓝与子天蓝之间必须有明显色差以便一眼区分 (actual=\(toneA0.euclideanDistance(to: toneA1)))")
+        expect(toneA1.euclideanDistance(to: toneA2) >= 0.28, "子1天蓝与子2浅蓝之间必须有明显色差以便一眼区分 (actual=\(toneA1.euclideanDistance(to: toneA2)))")
+        expect(toneA0.relativeLuminance + 0.15 < toneA1.relativeLuminance, "蓝色父会话应明显深于子1天蓝")
+        expect(toneA1.relativeLuminance + 0.10 < toneA2.relativeLuminance, "蓝色子2应明显浅于子1天蓝形成梯度")
+
+        expect(toneB0.euclideanDistance(to: toneB1) >= 0.28, "绿色父会话与子1之间必须有明显色差，不能看起来像同一个绿 (actual=\(toneB0.euclideanDistance(to: toneB1)))")
+        expect(toneB1.euclideanDistance(to: toneB2) >= 0.28, "绿色子1与子2之间必须有明显色差 (actual=\(toneB1.euclideanDistance(to: toneB2)))")
+        expect(toneB2.euclideanDistance(to: toneB3) >= 0.28, "绿色子2与子3之间必须有明显色差 (actual=\(toneB2.euclideanDistance(to: toneB3)))")
+        expect(toneB0.relativeLuminance + 0.15 < toneB1.relativeLuminance, "绿色父会话应明显深于子1亮绿")
+        expect(toneB1.relativeLuminance + 0.10 < toneB2.relativeLuminance, "绿色子2薄荷绿应明显浅于子1")
+
+        let swappedOrderSamples = samples + [
+            LiveTelemetrySample(
+                id: 4,
+                timestamp: baseDate.addingTimeInterval(15.0),
+                activeAgentCount: 2,
+                totalTps: 240,
+                totalTokensCumulative: 1_200_000,
+                deltaTokens: 80_000,
+                cachePct: 98.5,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-b", label: "会话B", contextTokens: 600_000, isRunning: true, tps: 180, parentAgentId: nil),
+                    AgentContextPoint(agentId: "root-a", label: "会话A", contextTokens: 130_000, isRunning: true, tps: 60, parentAgentId: nil)
+                ]
+            )
+        ]
+        let swappedSeries = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: swappedOrderSamples).map { ($0.agentId, $0) })
+        expectEqual(swappedSeries["root-a"]?.familyIndex, 0, "当会话 B 上下文反超会话 A 时，会话 A 色系不能抖动跳变")
+        expectEqual(swappedSeries["root-b"]?.familyIndex, 1, "当会话 B 上下文反超会话 A 时，会话 B 色系应保持稳定")
+
+        let orphanSiblingSamples = [
+            LiveTelemetrySample(
+                id: 10,
+                timestamp: baseDate,
+                activeAgentCount: 3,
+                totalTps: 150,
+                totalTokensCumulative: 500_000,
+                deltaTokens: 20_000,
+                cachePct: 95.0,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "orphan-sub-1", label: "孤儿子1", contextTokens: 40_000, isRunning: true, tps: 50, parentAgentId: "hidden-parent-x"),
+                    AgentContextPoint(agentId: "orphan-sub-2", label: "孤儿子2", contextTokens: 60_000, isRunning: true, tps: 50, parentAgentId: "hidden-parent-x"),
+                    AgentContextPoint(agentId: "root-y", label: "会话Y", contextTokens: 90_000, isRunning: true, tps: 50, parentAgentId: nil)
+                ]
+            )
+        ]
+        let orphanSeries = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: orphanSiblingSamples).map { ($0.agentId, $0) })
+        if let o1 = orphanSeries["orphan-sub-1"], let o2 = orphanSeries["orphan-sub-2"], let ry = orphanSeries["root-y"] {
+            expectEqual(o1.familyIndex, o2.familyIndex, "父会话不在窗口内时，同父的两个子 Agent 仍应归属同一色系")
+            expect(o1.familyIndex != ry.familyIndex, "同父子 Agent 与无关会话 Y 应分属不同色系")
+            expect(o1.familyTier >= 1 && o2.familyTier >= 1 && o1.familyTier != o2.familyTier, "父会话不在窗口内时，子 Agent 仍应拿到不同的子梯队序号")
+        } else {
+            expect(false, "缺失父节点的孤儿兄弟子 Agent 序列生成失败")
+        }
+    }
+
+    static func testHeaderBarNeverWrapsTodayPillVerticallyOnNarrowWidths() {
+        let stats = TodayStats(
+            totalTokens: 99_600_000,
+            cacheTokens: 92_000_000,
+            inputTokens: 5_000_000,
+            outputTokens: 2_600_000,
+            cachePct: 92.4,
+            costUsd: 25.97,
+            hasData: true,
+            source: "test"
+        )
+        let bigStats = TodayStats(
+            totalTokens: 999_800_000,
+            cacheTokens: 920_000_000,
+            inputTokens: 50_000_000,
+            outputTokens: 29_800_000,
+            cachePct: 92.0,
+            costUsd: 185.42,
+            hasData: true,
+            source: "test"
+        )
+
+        MainActor.assumeIsolated { () -> Void in
+            for sampleStats in [stats, bigStats] {
+                for lang in [AppLanguage.Resolved.zhHans, AppLanguage.Resolved.en] {
+                    let bar = DashboardHeaderBarView(
+                        stats: sampleStats,
+                        hasAlert: false,
+                        isUsageOpen: false,
+                        isStandaloneWindow: false,
+                        lang: lang,
+                        refreshSpinCount: 0,
+                        onToggleUsage: {},
+                        onRefresh: {},
+                        onOpenStandalone: {},
+                        onClose: {}
+                    )
+                    for width in [CGFloat(320), CGFloat(360), CGFloat(390), CGFloat(412), CGFloat(440), CGFloat(464)] {
+                        let hosting = NSHostingView(rootView: bar.frame(width: width))
+                        hosting.layoutSubtreeIfNeeded()
+                        let fit = hosting.fittingSize
+                        expect(fit.width <= width + 0.5, "顶部标题栏在宽度 \(width) (\(lang.rawValue)) 不应横向溢出: \(fit.width)")
+                        expect(fit.height <= 46.0, "缩小窗口到宽度 \(width) 时 Today 胶囊不得竖向换行撑高 (actualHeight=\(fit.height))")
+                    }
+                }
+            }
+        }
+    }
+
+    static func testDashboardAdaptiveLayoutReducesMarginsWhenNarrowed() {
+        let narrow = DashboardAdaptiveLayoutMetrics.metrics(forWidth: 440)
+        let extraNarrow = DashboardAdaptiveLayoutMetrics.metrics(forWidth: 360)
+        let wide = DashboardAdaptiveLayoutMetrics.metrics(forWidth: 476)
+
+        expect(narrow.isCompact, "440pt 窄窗口应触发紧凑左右边距策略")
+        expect(extraNarrow.isCompact, "360pt 超窄窗口应触发紧凑左右边距策略")
+        expect(!wide.isCompact, "476pt 宽窗口应保持常规边距")
+
+        expect(narrow.outerHorizontalPadding < wide.outerHorizontalPadding, "窄窗口外层左右边距应明显小于宽窗口 (\(narrow.outerHorizontalPadding) vs \(wide.outerHorizontalPadding))")
+        expect(narrow.outerHorizontalPadding <= 8.0, "窄窗口外层左右边距应压缩到 <= 8pt 以提高空间利用率 (actual=\(narrow.outerHorizontalPadding))")
+        expect(narrow.outerHorizontalPadding >= WindowResizeEdgePolicy.horizontalEdgeInset, "外层边距不得小于边缘缩放热区以免遮挡按钮点击")
+        expect(narrow.telemetryCardHorizontalPadding < wide.telemetryCardHorizontalPadding, "窄窗口图表卡片内边距应同步收窄")
+        expect(narrow.telemetryPlotHorizontalPadding < wide.telemetryPlotHorizontalPadding, "窄窗口图表绘图区内边距应同步收窄")
+        expect(narrow.totalChartEdgeInset <= 18.0, "窄窗口图表总左右留白应从原 33pt 显著压缩到 <= 18pt (actual=\(narrow.totalChartEdgeInset))")
+
+        let now = Date()
+        let samples = [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: now.addingTimeInterval(-60),
+                activeAgentCount: 1,
+                totalTps: 116,
+                totalTokensCumulative: 1_000_000,
+                deltaTokens: 100_000,
+                cachePct: 98.0,
+                isIdleCacheHold: false,
+                agentContexts: [AgentContextPoint(agentId: "s1", label: "Improve Codebase", contextTokens: 427_000, isRunning: true, tps: 116)]
+            )
+        ]
+        let today = TodayStats(totalTokens: 99_600_000, cacheTokens: 95_000_000, inputTokens: 3_000_000, outputTokens: 1_600_000, cachePct: 98.0, costUsd: 26.75, hasData: true, source: "test")
+
+        MainActor.assumeIsolated { () -> Void in
+            for width in [CGFloat(360), CGFloat(412), CGFloat(440)] {
+                let metrics = DashboardAdaptiveLayoutMetrics.metrics(forWidth: width)
+                let bar = DashboardHeaderBarView(
+                    stats: today,
+                    hasAlert: false,
+                    isUsageOpen: false,
+                    isStandaloneWindow: false,
+                    lang: .zhHans,
+                    refreshSpinCount: 0,
+                    outerHorizontalPadding: metrics.outerHorizontalPadding,
+                    onToggleUsage: {},
+                    onRefresh: {},
+                    onOpenStandalone: {},
+                    onClose: {}
+                )
+                let barHost = NSHostingView(rootView: bar.frame(width: width))
+                barHost.layoutSubtreeIfNeeded()
+                expect(barHost.fittingSize.height <= 46.0, "紧凑边距下标题栏高度不应溢出 (w=\(width), h=\(barHost.fittingSize.height))")
+
+                let card = LiveTelemetryOverviewCardView(
+                    samples: samples,
+                    todayStats: today,
+                    cardHorizontalPadding: metrics.telemetryCardHorizontalPadding,
+                    plotHorizontalPadding: metrics.telemetryPlotHorizontalPadding
+                )
+                .environment(\.agyLanguage, .zhHans)
+                let cardHost = NSHostingView(rootView: card.frame(width: width - metrics.outerHorizontalPadding * 2))
+                cardHost.layoutSubtreeIfNeeded()
+                expect(cardHost.fittingSize.width <= (width - metrics.outerHorizontalPadding * 2) + 0.5, "紧凑边距下监控卡片不应横向溢出 (w=\(width))")
+            }
+        }
+    }
+
+    static func testConfigurableSessionVisibleLimitAndSessionColorLinkage() {
+        expectEqual(SessionListLayoutPolicy.defaultVisibleRowsWhenExpanded, 3, "默认展开展示会话条数应为 3")
+        expectEqual(SessionListLayoutPolicy.minVisibleRowsWhenExpanded, 1, "最小展示条数下限应为 1")
+        expectEqual(SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded, 12, "最大展示条数上限应为 12")
+        expectEqual(SessionListLayoutPolicy.clampedVisibleRows(0), 1, "低于下限时应夹紧为 1")
+        expectEqual(SessionListLayoutPolicy.clampedVisibleRows(5), 5, "合法条数 5 应原样保留")
+        expectEqual(SessionListLayoutPolicy.clampedVisibleRows(99), 12, "超过上限时应夹紧为 12")
+
+        let fiveRowHeight = SessionListLayoutPolicy.scrollHeight(forCount: 15, visibleLimit: 5, chartExpanded: true)
+        let expectedFiveRowHeight = SessionListLayoutPolicy.rowEstimatedHeight * 5 + SessionListLayoutPolicy.rowSpacing * 4
+        expect(abs((fiveRowHeight ?? 0) - expectedFiveRowHeight) <= 0.1, "配置为 5 条且会话数为 15 时高度应严格等于 5 行总高 (actual=\(String(describing: fiveRowHeight)), expected=\(expectedFiveRowHeight))")
+        let twoRowWhenLimitFive = SessionListLayoutPolicy.scrollHeight(forCount: 2, visibleLimit: 5, chartExpanded: true)
+        let expectedTwoRowHeight = SessionListLayoutPolicy.rowEstimatedHeight * 2 + SessionListLayoutPolicy.rowSpacing
+        expect(abs((twoRowWhenLimitFive ?? 0) - expectedTwoRowHeight) <= 0.1, "只有 2 条会话时不应按上限 5 条留空 (actual=\(String(describing: twoRowWhenLimitFive)))")
+
+        let suiteName = "agyhub.tdd.visibleRows.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        expectEqual(SessionListLayoutPolicy.loadVisibleRows(from: defaults), 3, "未配置过时应读取默认值 3")
+        MainActor.assumeIsolated { () -> Void in
+            let store1 = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            expectEqual(store1.expandedSessionRowLimit, 3, "新初始化 Store 默认展示条数应为 3")
+            store1.updateExpandedSessionRowLimit(6)
+            expectEqual(store1.expandedSessionRowLimit, 6, "更新后内存状态应立刻变为 6")
+
+            let store2 = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            expectEqual(store2.expandedSessionRowLimit, 6, "重连相同 UserDefaults 后应持久化保留 6 条")
+        }
+
+        let now = Date()
+        let parentSession = SessionItem(
+            uuid: "sess-parent",
+            shortId: "sp",
+            clientType: nil,
+            parentConversationId: "",
+            agentName: "",
+            agentRole: "",
+            title: "生成近7天线上情况报告",
+            isRunning: true,
+            statusLabel: nil,
+            interactions: 1,
+            inputTokens: 0,
+            cacheTokens: 0,
+            outputTokens: 0,
+            contextTokens: 338_000,
+            cachePct: 98,
+            tps: 88,
+            totalTokensConsumed: 5_000_000,
+            totalCostUsd: 1.0,
+            totalCacheConsumed: 4_800_000,
+            totalInputConsumed: 100_000,
+            totalOutputConsumed: 100_000,
+            currentStall: 0,
+            health: "ok",
+            healthCode: nil,
+            healthDesc: "",
+            errorCode: nil,
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-2.5-pro",
+            subagents: [
+                SessionItem(
+                    uuid: "sub-1",
+                    shortId: "s1",
+                    clientType: nil,
+                    parentConversationId: "sess-parent",
+                    agentName: "research",
+                    agentRole: "research",
+                    title: "research",
+                    isRunning: true,
+                    statusLabel: nil,
+                    interactions: 1,
+                    inputTokens: 0,
+                    cacheTokens: 0,
+                    outputTokens: 0,
+                    contextTokens: 120_000,
+                    cachePct: 95,
+                    tps: 45,
+                    totalTokensConsumed: 500_000,
+                    totalCostUsd: 0.1,
+                    totalCacheConsumed: 400_000,
+                    totalInputConsumed: 50_000,
+                    totalOutputConsumed: 50_000,
+                    currentStall: 0,
+                    health: "ok",
+                    healthCode: nil,
+                    healthDesc: "",
+                    errorCode: nil,
+                    currentPhase: "",
+                    currentAction: "",
+                    recentError: nil,
+                    historySteps: [],
+                    exists: true,
+                    model: "gemini-2.5-flash",
+                    subagents: [],
+                    subagentCount: 0,
+                    activeSubagentCount: 0,
+                    activeSubagentTps: 0,
+                    totalActiveSec: 0,
+                    totalLocalSec: 0,
+                    totalRemoteSec: 0,
+                    totalErrorSec: 0,
+                    localPct: nil,
+                    remotePct: nil,
+                    breakdownStr: ""
+                )
+            ],
+            subagentCount: 1,
+            activeSubagentCount: 1,
+            activeSubagentTps: 45,
+            totalActiveSec: 0,
+            totalLocalSec: 0,
+            totalRemoteSec: 0,
+            totalErrorSec: 0,
+            localPct: nil,
+            remotePct: nil,
+            breakdownStr: ""
+        )
+
+        let waitingParentWithSelfSub = SessionItem(
+            uuid: "sess-waiting",
+            shortId: "sw",
+            clientType: nil,
+            parentConversationId: "",
+            agentName: "",
+            agentRole: "",
+            title: "🔥 插件-web 页面残影",
+            isRunning: false,
+            statusLabel: nil,
+            interactions: 1,
+            inputTokens: 0,
+            cacheTokens: 0,
+            outputTokens: 0,
+            contextTokens: 212_000,
+            cachePct: 99,
+            tps: 0,
+            totalTokensConsumed: 5_800_000,
+            totalCostUsd: 1.2,
+            totalCacheConsumed: 5_600_000,
+            totalInputConsumed: 100_000,
+            totalOutputConsumed: 100_000,
+            currentStall: 0,
+            health: "ok",
+            healthCode: nil,
+            healthDesc: "",
+            errorCode: nil,
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-2.5-pro",
+            subagents: [
+                SessionItem(
+                    uuid: "sub-self",
+                    shortId: "ss",
+                    clientType: nil,
+                    parentConversationId: "sess-waiting",
+                    agentName: "self",
+                    agentRole: "self",
+                    title: "self",
+                    isRunning: true,
+                    statusLabel: nil,
+                    interactions: 1,
+                    inputTokens: 0,
+                    cacheTokens: 0,
+                    outputTokens: 0,
+                    contextTokens: 279_000,
+                    cachePct: 96,
+                    tps: 118,
+                    totalTokensConsumed: 900_000,
+                    totalCostUsd: 0.2,
+                    totalCacheConsumed: 850_000,
+                    totalInputConsumed: 30_000,
+                    totalOutputConsumed: 20_000,
+                    currentStall: 0,
+                    health: "ok",
+                    healthCode: nil,
+                    healthDesc: "",
+                    errorCode: nil,
+                    currentPhase: "",
+                    currentAction: "",
+                    recentError: nil,
+                    historySteps: [],
+                    exists: true,
+                    model: "gemini-2.5-pro",
+                    subagents: [],
+                    subagentCount: 0,
+                    activeSubagentCount: 0,
+                    activeSubagentTps: 0,
+                    totalActiveSec: 0,
+                    totalLocalSec: 0,
+                    totalRemoteSec: 0,
+                    totalErrorSec: 0,
+                    localPct: nil,
+                    remotePct: nil,
+                    breakdownStr: ""
+                )
+            ],
+            subagentCount: 1,
+            activeSubagentCount: 1,
+            activeSubagentTps: 118,
+            totalActiveSec: 0,
+            totalLocalSec: 0,
+            totalRemoteSec: 0,
+            totalErrorSec: 0,
+            localPct: nil,
+            remotePct: nil,
+            breakdownStr: ""
+        )
+
+        let unplottedSession = SessionItem(
+            uuid: "sess-idle",
+            shortId: "si",
+            clientType: nil,
+            parentConversationId: "",
+            agentName: "",
+            agentRole: "",
+            title: "历史空闲会话",
+            isRunning: false,
+            statusLabel: nil,
+            interactions: 1,
+            inputTokens: 0,
+            cacheTokens: 0,
+            outputTokens: 0,
+            contextTokens: 62_000,
+            cachePct: 96,
+            tps: 0,
+            totalTokensConsumed: 489_000,
+            totalCostUsd: 0.1,
+            totalCacheConsumed: 450_000,
+            totalInputConsumed: 20_000,
+            totalOutputConsumed: 19_000,
+            currentStall: 0,
+            health: "ok",
+            healthCode: nil,
+            healthDesc: "",
+            errorCode: nil,
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-2.5-pro",
+            subagents: [],
+            subagentCount: 0,
+            activeSubagentCount: 0,
+            activeSubagentTps: 0,
+            totalActiveSec: 0,
+            totalLocalSec: 0,
+            totalRemoteSec: 0,
+            totalErrorSec: 0,
+            localPct: nil,
+            remotePct: nil,
+            breakdownStr: ""
+        )
+
+        let telemetrySamples = [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: now.addingTimeInterval(-30),
+                activeAgentCount: 3,
+                totalTps: 251,
+                totalTokensCumulative: 1_000_000,
+                deltaTokens: 100_000,
+                cachePct: 96,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "sess-parent", label: "生成近7天线上情况报告", contextTokens: 338_000, isRunning: true, tps: 88),
+                    AgentContextPoint(agentId: "sub-1", label: "research", contextTokens: 120_000, isRunning: true, tps: 45, parentAgentId: "sess-parent"),
+                    AgentContextPoint(agentId: "sub-self", label: "self", contextTokens: 279_000, isRunning: true, tps: 118, parentAgentId: "sess-waiting")
+                ]
+            )
+        ]
+
+        let seriesList = LiveTelemetryPolicy.agentSeries(in: telemetrySamples)
+        let links = LiveTelemetryPolicy.sessionColorLinks(
+            sessions: [parentSession, waitingParentWithSelfSub, unplottedSession],
+            seriesList: seriesList
+        )
+
+        expect(links["sess-idle"] == nil, "没有曲线的空闲会话不应挂载图表颜色关联")
+
+        if let parentLink = links["sess-parent"],
+           let rootSeries = seriesList.first(where: { $0.agentId == "sess-parent" }),
+           let subSeries = seriesList.first(where: { $0.agentId == "sub-1" }) {
+            expect(parentLink.hasDirectSeries, "自身有曲线的父会话 hasDirectSeries 应为 true")
+            expectEqual(parentLink.primaryTone, LiveTelemetryColorPalette.tone(familyIndex: rootSeries.familyIndex, tier: rootSeries.familyTier), "主色调应等于父曲线本身颜色")
+            expectEqual(parentLink.childTones, [LiveTelemetryColorPalette.tone(familyIndex: subSeries.familyIndex, tier: subSeries.familyTier)], "子色标应包含其子 Agent 曲线颜色")
+            expectEqual(parentLink.seriesIds, Set(["sess-parent", "sub-1"]), "关联的 seriesIds 应同时覆盖父曲线和子曲线")
+        } else {
+            expect(false, "sess-parent 必须建立颜色映射")
+        }
+
+        if let waitingLink = links["sess-waiting"],
+           let selfSeries = seriesList.first(where: { $0.agentId == "sub-self" }) {
+            expect(!waitingLink.hasDirectSeries, "仅子 Agent 在图上有曲线时父会话 hasDirectSeries 应为 false")
+            let expectedChildTone = LiveTelemetryColorPalette.tone(familyIndex: selfSeries.familyIndex, tier: selfSeries.familyTier)
+            expectEqual(waitingLink.primaryTone, expectedChildTone, "仅子 Agent 出线时父会话行应继承子曲线家族色以便视觉追溯")
+            expectEqual(waitingLink.childTones, [expectedChildTone], "childTones 应记录子曲线颜色")
+            expectEqual(waitingLink.seriesIds, Set(["sub-self"]), "seriesIds 应包含 sub-self")
+        } else {
+            expect(false, "sess-waiting 仅通过 sub-self 出线时也必须能关联到颜色")
+        }
+
+        expect(!LiveTelemetryOverviewCardView.showsStandaloneLegendStrip, "图表底部独立 legend 盒子应默认隐藏，改为通过 SESSIONS 行关联")
+
+        MainActor.assumeIsolated { () -> Void in
+            let rowWithLink = CompactSessionRowView(
+                session: waitingParentWithSelfSub,
+                chartColorLink: links["sess-waiting"]
+            )
+            .environment(\.agyLanguage, .zhHans)
+            let rowHost = NSHostingView(rootView: rowWithLink.frame(width: 420))
+            rowHost.layoutSubtreeIfNeeded()
+            expect(rowHost.fittingSize.width <= 420.5, "带图表颜色标识的会话行不得横向溢出")
+            expect(abs(rowHost.fittingSize.height - SessionListLayoutPolicy.rowEstimatedHeight) <= 0.5, "带图标和子Agent胶囊的行高度必须严格等于 rowEstimatedHeight 才不会露出下一行半行 (actual=\(rowHost.fittingSize.height), policy=\(SessionListLayoutPolicy.rowEstimatedHeight))")
+
+            let plainRow = CompactSessionRowView(session: unplottedSession)
+                .environment(\.agyLanguage, .zhHans)
+            let plainHost = NSHostingView(rootView: plainRow.frame(width: 420))
+            plainHost.layoutSubtreeIfNeeded()
+            expect(abs(plainHost.fittingSize.height - SessionListLayoutPolicy.rowEstimatedHeight) <= 0.5, "普通纯文本行高度也必须严格等于 rowEstimatedHeight 保证 4 条刚好是整数行 (actual=\(plainHost.fittingSize.height), policy=\(SessionListLayoutPolicy.rowEstimatedHeight))")
+
+            for count in [3, 4, 5, 6] {
+                let alloc = DashboardSplitLayoutPolicy.resolveAllocation(
+                    totalAvailableHeight: 600.0,
+                    storedFraction: -1,
+                    displaySessionsCount: 15,
+                    expandedSessionRowLimit: count
+                )
+                let listViewport = alloc.sessionsHeight - (SessionListLayoutPolicy.headerHeight + SessionListLayoutPolicy.headerToListSpacing)
+                let exactRowsHeight = CGFloat(count) * SessionListLayoutPolicy.rowEstimatedHeight + CGFloat(count - 1) * SessionListLayoutPolicy.rowSpacing
+                expect(abs(listViewport - exactRowsHeight) <= 0.1, "设置为 \(count) 条时 SESSIONS 滚动视口必须严格等于 \(count) 整行高度，零半行露出 (actual=\(listViewport), exact=\(exactRowsHeight))")
+            }
+        }
+    }
+
+    static func testDashboardSplitLayoutDraggableResizeClampingAndPersistence() {
+        expect(DashboardSplitLayoutPolicy.embedsDragHandleInSessionsHeader, "拖拽手柄应内嵌到 SESSIONS 标题栏中，不再额外占用独立的中间横条高度")
+        expect(DashboardSplitLayoutPolicy.dividerHeight <= 6.0, "嵌入标题栏后两区外间距应收紧到 <= 6pt 以节约纵向空间 (actual=\(DashboardSplitLayoutPolicy.dividerHeight))")
+
+        let totalHeight: CGFloat = 480.0
+        let dividerH = DashboardSplitLayoutPolicy.dividerHeight
+        let usable = totalHeight - dividerH
+
+        let autoDefault = DashboardSplitLayoutPolicy.resolveAllocation(
+            totalAvailableHeight: totalHeight,
+            storedFraction: -1,
+            displaySessionsCount: 15,
+            expandedSessionRowLimit: 3
+        )
+        expect(abs((autoDefault.telemetryHeight + autoDefault.dividerHeight + autoDefault.sessionsHeight) - totalHeight) <= 0.5, "双区高度与分隔栏之和必须严格等于可用总高度以防挤压底部状态栏")
+        expect(autoDefault.sessionsHeight >= 115.0 && autoDefault.sessionsHeight <= 140.0, "未拖拽前默认 3 条会话区应占 ~126pt (actual=\(autoDefault.sessionsHeight))")
+
+        let dragUpFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+            startTelemetryHeight: autoDefault.telemetryHeight,
+            dragDeltaY: -130.0,
+            totalAvailableHeight: totalHeight
+        )
+        let afterDragUp = DashboardSplitLayoutPolicy.resolveAllocation(
+            totalAvailableHeight: totalHeight,
+            storedFraction: dragUpFraction,
+            displaySessionsCount: 15,
+            expandedSessionRowLimit: 3
+        )
+        expect(afterDragUp.telemetryHeight < autoDefault.telemetryHeight, "向上拖动分隔条应压缩实时监控区高度")
+        expect(afterDragUp.sessionsHeight > autoDefault.sessionsHeight, "向上拖动分隔条应同步扩大 SESSIONS 区域高度")
+        expect(abs((afterDragUp.telemetryHeight + afterDragUp.dividerHeight + afterDragUp.sessionsHeight) - totalHeight) <= 0.5, "上拉后总高度不得溢出")
+
+        let extremeUpFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+            startTelemetryHeight: autoDefault.telemetryHeight,
+            dragDeltaY: -999.0,
+            totalAvailableHeight: totalHeight
+        )
+        let clampedUp = DashboardSplitLayoutPolicy.resolveAllocation(
+            totalAvailableHeight: totalHeight,
+            storedFraction: extremeUpFraction,
+            displaySessionsCount: 15,
+            expandedSessionRowLimit: 3
+        )
+        expect(clampedUp.telemetryHeight >= DashboardSplitLayoutPolicy.minTelemetryHeight - 0.5, "极限上拖仍应保留实时监控区最小可读高度 (actual=\(clampedUp.telemetryHeight))")
+
+        let extremeDownFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+            startTelemetryHeight: autoDefault.telemetryHeight,
+            dragDeltaY: 999.0,
+            totalAvailableHeight: totalHeight
+        )
+        let clampedDown = DashboardSplitLayoutPolicy.resolveAllocation(
+            totalAvailableHeight: totalHeight,
+            storedFraction: extremeDownFraction,
+            displaySessionsCount: 15,
+            expandedSessionRowLimit: 3
+        )
+        expect(clampedDown.sessionsHeight >= DashboardSplitLayoutPolicy.minSessionsHeight - 0.5, "极限下拖仍应保留 SESSIONS 区最小可用高度 (actual=\(clampedDown.sessionsHeight))")
+
+        let compactWindowAlloc = DashboardSplitLayoutPolicy.resolveAllocation(
+            totalAvailableHeight: 300.0,
+            storedFraction: -1,
+            displaySessionsCount: 15,
+            expandedSessionRowLimit: 10
+        )
+        expect(abs((compactWindowAlloc.telemetryHeight + compactWindowAlloc.dividerHeight + compactWindowAlloc.sessionsHeight) - 300.0) <= 0.5, "即使设置展示 10 条会话且窗口较矮，总高度也不得越界遮挡底部状态栏")
+        expect(compactWindowAlloc.telemetryHeight >= usable * 0.1 || compactWindowAlloc.telemetryHeight >= DashboardSplitLayoutPolicy.minTelemetryHeight - 1.0, "较矮窗口下图表区也应保底可见")
+
+        let now = Date()
+        let sample = LiveTelemetrySample(
+            id: 1,
+            timestamp: now,
+            activeAgentCount: 1,
+            totalTps: 100,
+            totalTokensCumulative: 1000,
+            deltaTokens: 100,
+            cachePct: 95,
+            isIdleCacheHold: false,
+            agentContexts: [AgentContextPoint(agentId: "a1", label: "s1", contextTokens: 100_000, isRunning: true, tps: 100)]
+        )
+        let today = TodayStats(totalTokens: 1000, cacheTokens: 900, inputTokens: 50, outputTokens: 50, cachePct: 90, costUsd: 1.0, hasData: true, source: "test")
+        MainActor.assumeIsolated { () -> Void in
+            let compactChartCard = LiveTelemetryOverviewCardView(
+                samples: [sample],
+                todayStats: today,
+                minPlotHeight: DashboardSplitLayoutPolicy.splitMinPlotHeight
+            )
+            .environment(\.agyLanguage, .zhHans)
+            let host = NSHostingView(rootView: compactChartCard.frame(width: 420))
+            host.layoutSubtreeIfNeeded()
+            expect(host.fittingSize.height <= DashboardSplitLayoutPolicy.minTelemetryHeight + 2.0, "可拖拽模式下的监控卡片最小自然高度应能在 minTelemetryHeight (~\(Int(DashboardSplitLayoutPolicy.minTelemetryHeight))pt) 内放得下而不溢出 (actual=\(host.fittingSize.height))")
+        }
+    }
+
+    static func testLiveTelemetryForkJunctionAlignsStrictlyOnParentCurveWithoutDip() {
+        let baseDate = Date(timeIntervalSince1970: 1700003000)
+        var history: [LiveTelemetrySample] = []
+        var nextId = 1
+        var prevStats: TodayStats? = nil
+
+        func makeSession(uuid: String, title: String, isRunning: Bool, contextTokens: Int, tps: Double, subagents: [SessionItem] = []) -> SessionItem {
+            SessionItem(
+                uuid: uuid,
+                shortId: String(uuid.prefix(4)),
+                clientType: nil,
+                parentConversationId: "",
+                agentName: "",
+                agentRole: "",
+                title: title,
+                isRunning: isRunning,
+                statusLabel: nil,
+                interactions: 1,
+                inputTokens: 0,
+                cacheTokens: 0,
+                outputTokens: 0,
+                contextTokens: contextTokens,
+                cachePct: 95.0,
+                tps: tps,
+                totalTokensConsumed: 1_000_000,
+                totalCostUsd: 1.0,
+                totalCacheConsumed: 950_000,
+                totalInputConsumed: 30_000,
+                totalOutputConsumed: 20_000,
+                currentStall: 0,
+                health: "ok",
+                healthCode: nil,
+                healthDesc: "",
+                errorCode: nil,
+                currentPhase: "",
+                currentAction: "",
+                recentError: nil,
+                historySteps: [],
+                exists: true,
+                model: "gemini-2.5-pro",
+                subagents: subagents,
+                subagentCount: subagents.count,
+                activeSubagentCount: subagents.filter(\.isRunning).count,
+                activeSubagentTps: subagents.filter(\.isRunning).reduce(0.0) { $0 + $1.tps },
+                totalActiveSec: 0,
+                totalLocalSec: 0,
+                totalRemoteSec: 0,
+                totalErrorSec: 0,
+                localPct: nil,
+                remotePct: nil,
+                breakdownStr: ""
+            )
+        }
+
+        func makeSubagent(uuid: String, parentId: String, contextTokens: Int, tps: Double) -> SessionItem {
+            SessionItem(
+                uuid: uuid,
+                shortId: String(uuid.prefix(4)),
+                clientType: nil,
+                parentConversationId: parentId,
+                agentName: "research",
+                agentRole: "research",
+                title: "research",
+                isRunning: true,
+                statusLabel: nil,
+                interactions: 1,
+                inputTokens: 0,
+                cacheTokens: 0,
+                outputTokens: 0,
+                contextTokens: contextTokens,
+                cachePct: 95.0,
+                tps: tps,
+                totalTokensConsumed: 200_000,
+                totalCostUsd: 0.2,
+                totalCacheConsumed: 180_000,
+                totalInputConsumed: 10_000,
+                totalOutputConsumed: 10_000,
+                currentStall: 0,
+                health: "ok",
+                healthCode: nil,
+                healthDesc: "",
+                errorCode: nil,
+                currentPhase: "",
+                currentAction: "",
+                recentError: nil,
+                historySteps: [],
+                exists: true,
+                model: "gemini-2.5-flash",
+                subagents: [],
+                subagentCount: 0,
+                activeSubagentCount: 0,
+                activeSubagentTps: 0,
+                totalActiveSec: 0,
+                totalLocalSec: 0,
+                totalRemoteSec: 0,
+                totalErrorSec: 0,
+                localPct: nil,
+                remotePct: nil,
+                breakdownStr: ""
+            )
+        }
+
+        func makePayload(_ sessions: [SessionItem], tokens: Int) -> MonitorPayload {
+            MonitorPayload(
+                timestamp: "15:27:30",
+                dataDir: "~/.gemini/antigravity",
+                activeCount: sessions.filter(\.isActivelyWorking).count,
+                totalRoundtrips: 10,
+                hasAlert: false,
+                menubar: MenuBarSummary(icon: "🟢", text: "", statusLevel: "working", activeCount: sessions.filter(\.isActivelyWorking).count),
+                todayStats: TodayStats(totalTokens: tokens, cacheTokens: tokens - 10_000, inputTokens: 8000, outputTokens: 2000, cachePct: 95.0, costUsd: 5.0, hasData: true, source: "test"),
+                sessions: sessions
+            )
+        }
+
+        let parentHigh = makeSession(uuid: "p-blue", title: "生成近7天线上情况报告", isRunning: true, contextTokens: 235_000, tps: 90)
+        for offset in [0.0, 10.0, 20.0, 30.0] {
+            (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+                to: history,
+                payload: makePayload([parentHigh], tokens: 1_000_000 + Int(offset) * 10_000),
+                previousStats: prevStats,
+                nextId: &nextId,
+                now: baseDate.addingTimeInterval(offset)
+            )
+        }
+
+        let parentCompactedWithParallelChild = makeSession(
+            uuid: "p-blue",
+            title: "生成近7天线上情况报告",
+            isRunning: true,
+            contextTokens: 29_000,
+            tps: 30,
+            subagents: [makeSubagent(uuid: "sub-sky", parentId: "p-blue", contextTokens: 12_000, tps: 78)]
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload([parentCompactedWithParallelChild], tokens: 1_500_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(34.0)
+        )
+
+        let parentWaitingChild = makeSession(
+            uuid: "p-blue",
+            title: "生成近7天线上情况报告",
+            isRunning: false,
+            contextTokens: 29_000,
+            tps: 0,
+            subagents: [makeSubagent(uuid: "sub-sky", parentId: "p-blue", contextTokens: 45_000, tps: 85)]
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload([parentWaitingChild], tokens: 1_700_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(40.0)
+        )
+
+        let childLater = makeSession(
+            uuid: "p-blue",
+            title: "生成近7天线上情况报告",
+            isRunning: false,
+            contextTokens: 29_000,
+            tps: 0,
+            subagents: [makeSubagent(uuid: "sub-sky", parentId: "p-blue", contextTokens: 129_000, tps: 95)]
+        )
+        (history, prevStats, _) = LiveTelemetryPolicy.appendSample(
+            to: history,
+            payload: makePayload([childLater], tokens: 1_900_000),
+            previousStats: prevStats,
+            nextId: &nextId,
+            now: baseDate.addingTimeInterval(55.0)
+        )
+
+        let seriesList = LiveTelemetryPolicy.agentSeries(in: history)
+        let resolved = LiveTelemetryPolicy.resolvedCurveSegments(for: seriesList, windowSeconds: 300)
+
+        guard let parentResolved = resolved.first(where: { $0.agentId == "p-blue" }),
+              let childResolved = resolved.first(where: { $0.agentId == "sub-sky" }),
+              let parentPts = parentResolved.segments.first?.points,
+              let childSeg = childResolved.segments.first,
+              let junction = childSeg.forkJunction else {
+            expect(false, "必须为子 Agent 生成带精确交点 forkJunction 的分叉曲线")
+            return
+        }
+
+        let parentFirstT = parentPts.first!.timestamp
+        let parentLastT = parentPts.last!.timestamp
+        expect(junction.timestamp >= parentFirstT && junction.timestamp <= parentLastT, "分叉交点时间必须严格落在父曲线平滑时间区间内")
+
+        let parentYAtFork = LiveTelemetryPolicy.interpolatedContext(in: parentPts, at: junction.timestamp)
+        expect(abs(parentYAtFork - Double(junction.contextTokens)) <= 2.0, "分叉交点 Y 坐标必须严格贴合在平滑后的父曲线上，绝不能悬空脱离 (parentY=\(parentYAtFork), forkY=\(junction.contextTokens))")
+
+        expectEqual(childSeg.points.first?.timestamp, junction.timestamp, "子曲线渲染首点时间必须严格从分叉交点出发")
+        expectEqual(childSeg.points.first?.contextTokens, junction.contextTokens, "子曲线渲染首点高度必须严格等于分叉交点高度")
+
+        for idx in 1..<childSeg.points.count {
+            expect(childSeg.points[idx].timestamp >= childSeg.points[idx - 1].timestamp, "分叉后子曲线时间轴必须单调向右推进，不得回跳")
+        }
+    }
+
+    static func testTodayUsagePillInHeaderWithoutLeadingIconAndFitsAllWidths() {
+        expect(DashboardHeaderBarView.showsTodayPillInHeader, "Today 用量入口应重新放在顶部标题栏中央以便第一眼查看到花费与用量")
+        expect(!DashboardHeaderBarView.showsLeadingLogoOnTodayPill, "Today 左侧无用柱状图图标仍应保持移除以维持极简清晰")
+        expect(!DashboardFooterBarView.showsTodayPillInFooter, "底部栏应恢复为左时间戳 + 右设置按钮的纯净样式")
+        expectEqual(TodayUsagePillButton.closedChevronSystemName, "chevron.down", "折叠态箭头应向下指示可展开今日账单明细")
+        expectEqual(TodayUsagePillButton.openChevronSystemName, "chevron.up", "展开态箭头应向上指示可收起今日账单明细")
+        expect(TodayUsagePillButton.usesElevatedCrispSurface, "Today 用量胶囊在浅色底上应使用通透亮白卡片面而非灰扑扑的半透明灰底")
+
+        let stats = TodayStats(
+            totalTokens: 218_900_000,
+            cacheTokens: 210_000_000,
+            inputTokens: 6_000_000,
+            outputTokens: 2_900_000,
+            cachePct: 96.0,
+            costUsd: 57.03,
+            hasData: true,
+            source: "test"
+        )
+        let bigStats = TodayStats(
+            totalTokens: 999_800_000,
+            cacheTokens: 920_000_000,
+            inputTokens: 50_000_000,
+            outputTokens: 29_800_000,
+            cachePct: 92.0,
+            costUsd: 185.42,
+            hasData: true,
+            source: "test"
+        )
+
+        MainActor.assumeIsolated { () -> Void in
+            for sampleStats in [stats, bigStats] {
+                for isOpen in [false, true] {
+                    for lang in [AppLanguage.Resolved.zhHans, AppLanguage.Resolved.en] {
+                        for width in [CGFloat(320), CGFloat(360), CGFloat(390), CGFloat(412), CGFloat(440), CGFloat(464)] {
+                            let metrics = DashboardAdaptiveLayoutMetrics.metrics(forWidth: width)
+                            let header = DashboardHeaderBarView(
+                                stats: sampleStats,
+                                hasAlert: false,
+                                isUsageOpen: isOpen,
+                                isStandaloneWindow: false,
+                                lang: lang,
+                                refreshSpinCount: 0,
+                                outerHorizontalPadding: metrics.outerHorizontalPadding,
+                                onToggleUsage: {},
+                                onRefresh: {},
+                                onOpenStandalone: {},
+                                onClose: {}
+                            )
+                            let headerHost = NSHostingView(rootView: header.frame(width: width))
+                            headerHost.layoutSubtreeIfNeeded()
+                            let hFit = headerHost.fittingSize
+                            expect(hFit.width <= width + 0.5, "顶部栏在宽度 \(width) (\(lang.rawValue)) 不得横向溢出 (actual=\(hFit.width))")
+                            expect(hFit.height <= 46.0, "顶部栏在宽度 \(width) 必须保持单行紧凑高度 (actual=\(hFit.height))")
+
+                            let footer = DashboardFooterBarView(
+                                lastUpdatedTimeStr: "16:07:52",
+                                stats: sampleStats,
+                                isUsageOpen: isOpen,
+                                lang: lang,
+                                horizontalPadding: metrics.footerHorizontalPadding,
+                                onToggleUsage: {},
+                                onOpenSettings: {}
+                            )
+                            let footerHost = NSHostingView(rootView: footer.frame(width: width))
+                            footerHost.layoutSubtreeIfNeeded()
+                            let fFit = footerHost.fittingSize
+                            expect(fFit.width <= width + 0.5, "底部栏在宽度 \(width) (\(lang.rawValue)) 不得横向溢出 (actual=\(fFit.width))")
+                            expect(fFit.height <= 42.0, "底部栏在宽度 \(width) 必须保持单行紧凑高度 (actual=\(fFit.height))")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static func testChartNearestCurveHitTestAndBidirectionalHighlight() {
+        let now = Date(timeIntervalSince1970: 1700004000)
+        let domain = now.addingTimeInterval(-300)...now
+        let plotSize = CGSize(width: 360, height: 140)
+        let maxCtx = 360_000
+
+        let topSeries = AgentContextSeries(
+            agentId: "sess-top",
+            label: "Agyhub 开源",
+            isRunning: true,
+            latestContextTokens: 277_000,
+            latestTps: 88,
+            colorIndex: 0,
+            familyIndex: 0,
+            familyTier: 0,
+            parentAgentId: nil,
+            segments: [
+                AgentCurveSegment(
+                    id: "top-0",
+                    isForkSegment: false,
+                    points: [
+                        AgentSeriesSamplePoint(timestamp: now.addingTimeInterval(-240), contextTokens: 265_000, isRunning: true, tps: 80),
+                        AgentSeriesSamplePoint(timestamp: now, contextTokens: 277_000, isRunning: true, tps: 88)
+                    ]
+                )
+            ]
+        )
+
+        let childSeries = AgentContextSeries(
+            agentId: "sub-green",
+            label: "self",
+            isRunning: false,
+            latestContextTokens: 60_000,
+            latestTps: 0,
+            colorIndex: 1,
+            familyIndex: 1,
+            familyTier: 1,
+            parentAgentId: "sess-parent",
+            segments: [
+                AgentCurveSegment(
+                    id: "sub-0",
+                    isForkSegment: false,
+                    points: [
+                        AgentSeriesSamplePoint(timestamp: now.addingTimeInterval(-240), contextTokens: 55_000, isRunning: false, tps: 0),
+                        AgentSeriesSamplePoint(timestamp: now, contextTokens: 65_000, isRunning: false, tps: 0)
+                    ]
+                )
+            ]
+        )
+
+        let seriesList = [topSeries, childSeries]
+        let resolved = LiveTelemetryPolicy.resolvedCurveSegments(for: seriesList, windowSeconds: 300)
+
+        let nearTopY = (1.0 - 270_000.0 / Double(maxCtx)) * Double(plotSize.height) + 6.0
+        let hitTop = LiveTelemetryPolicy.nearestAgentId(
+            in: resolved,
+            seriesList: seriesList,
+            timeDomain: domain,
+            maxContext: maxCtx,
+            plotSize: plotSize,
+            hoverLocation: CGPoint(x: 240, y: nearTopY)
+        )
+        expectEqual(hitTop, "sess-top", "鼠标靠近上方 270k 曲线时应命中 sess-top")
+
+        let nearBottomY = (1.0 - 60_000.0 / Double(maxCtx)) * Double(plotSize.height) - 8.0
+        let hitBottom = LiveTelemetryPolicy.nearestAgentId(
+            in: resolved,
+            seriesList: seriesList,
+            timeDomain: domain,
+            maxContext: maxCtx,
+            plotSize: plotSize,
+            hoverLocation: CGPoint(x: 240, y: nearBottomY)
+        )
+        expectEqual(hitBottom, "sub-green", "鼠标靠近下方 60k 子曲线时应命中 sub-green")
+
+        let middleGapY = (1.0 - 165_000.0 / Double(maxCtx)) * Double(plotSize.height)
+        let hitGap = LiveTelemetryPolicy.nearestAgentId(
+            in: resolved,
+            seriesList: seriesList,
+            timeDomain: domain,
+            maxContext: maxCtx,
+            plotSize: plotSize,
+            hoverLocation: CGPoint(x: 240, y: middleGapY)
+        )
+        expect(hitGap == nil, "鼠标停留在两条线之间的空白远区时不应误触高亮 (actual=\(String(describing: hitGap)))")
+
+        let topSession = SessionItem(uuid: "sess-top", shortId: "st", title: "Agyhub 开源", isRunning: true, contextTokens: 277_000, tps: 88)
+        let subItem = SessionItem(uuid: "sub-green", shortId: "sg", parentConversationId: "sess-parent", agentName: "self", title: "self", isRunning: false, contextTokens: 65_000)
+        let parentSession = SessionItem(uuid: "sess-parent", shortId: "sp", title: "生成近7天线上情况报告", isRunning: false, contextTokens: 55_000, subagents: [subItem], subagentCount: 1)
+        let links = LiveTelemetryPolicy.sessionColorLinks(sessions: [topSession, parentSession], seriesList: seriesList)
+
+        expectEqual(
+            LiveTelemetryPolicy.matchingSessionId(forAgentId: "sub-green", links: links),
+            "sess-parent",
+            "图上悬停子 Agent 曲线 sub-green 时，应反向映射高亮所属的父会话 sess-parent"
+        )
+        expectEqual(
+            LiveTelemetryPolicy.matchingSessionId(forAgentId: "sess-top", links: links),
+            "sess-top",
+            "图上悬停 sess-top 曲线时，应反向映射高亮对应的会话 sess-top"
+        )
+
+        MainActor.assumeIsolated { () -> Void in
+            let row = CompactSessionRowView(
+                session: parentSession,
+                chartColorLink: links["sess-parent"],
+                isHighlightedFromChart: true
+            )
+            .environment(\.agyLanguage, .zhHans)
+            let host = NSHostingView(rootView: row.frame(width: 420))
+            host.layoutSubtreeIfNeeded()
+            expect(host.fittingSize.width <= 420.5, "被图表反向高亮的会话行不得横向溢出")
+            expect(abs(host.fittingSize.height - SessionListLayoutPolicy.rowEstimatedHeight) <= 0.5, "被图表反向高亮的会话行必须保持严格单行高度 (actual=\(host.fittingSize.height))")
+        }
+    }
+
+    static func testLiveTelemetryColorsRemainIdenticalAcrossAllTimeRanges() {
+        let now = Date(timeIntervalSince1970: 1700005000)
+        let fullHistory: [LiveTelemetrySample] = [
+            LiveTelemetrySample(
+                id: 1,
+                timestamp: now.addingTimeInterval(-900),
+                activeAgentCount: 1,
+                totalTps: 60,
+                totalTokensCumulative: 100_000,
+                deltaTokens: 100_000,
+                cachePct: 95,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-early", label: "早期会话", contextTokens: 180_000, isRunning: true, tps: 60)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 2,
+                timestamp: now.addingTimeInterval(-500),
+                activeAgentCount: 2,
+                totalTps: 120,
+                totalTokensCumulative: 250_000,
+                deltaTokens: 150_000,
+                cachePct: 96,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-early", label: "早期会话", contextTokens: 190_000, isRunning: false, tps: 0),
+                    AgentContextPoint(agentId: "root-mid", label: "Agyhub 开源", contextTokens: 280_000, isRunning: true, tps: 120)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 3,
+                timestamp: now.addingTimeInterval(-180),
+                activeAgentCount: 2,
+                totalTps: 160,
+                totalTokensCumulative: 450_000,
+                deltaTokens: 200_000,
+                cachePct: 96,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-mid", label: "Agyhub 开源", contextTokens: 299_000, isRunning: true, tps: 90),
+                    AgentContextPoint(agentId: "root-late", label: "生成近7天报告", contextTokens: 55_000, isRunning: true, tps: 70)
+                ]
+            ),
+            LiveTelemetrySample(
+                id: 4,
+                timestamp: now.addingTimeInterval(-40),
+                activeAgentCount: 3,
+                totalTps: 240,
+                totalTokensCumulative: 700_000,
+                deltaTokens: 250_000,
+                cachePct: 97,
+                isIdleCacheHold: false,
+                agentContexts: [
+                    AgentContextPoint(agentId: "root-mid", label: "Agyhub 开源", contextTokens: 299_000, isRunning: true, tps: 80),
+                    AgentContextPoint(agentId: "sub-late-1", label: "research-1", contextTokens: 75_000, isRunning: true, tps: 90, parentAgentId: "root-late"),
+                    AgentContextPoint(agentId: "sub-late-2", label: "research-2", contextTokens: 82_000, isRunning: true, tps: 70, parentAgentId: "root-late")
+                ]
+            )
+        ]
+
+        let pinned = LiveTelemetryPolicy.updatedPinnedFamilies(existing: [:], from: fullHistory)
+        let samples1m = LiveTelemetryPolicy.samples(in: .oneMinute, from: fullHistory, now: now)
+        let samples3m = LiveTelemetryPolicy.samples(in: .threeMinutes, from: fullHistory, now: now)
+        let samples15m = LiveTelemetryPolicy.samples(in: .fifteenMinutes, from: fullHistory, now: now)
+        let samples1h = LiveTelemetryPolicy.samples(in: .oneHour, from: fullHistory, now: now)
+
+        let s1m = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: samples1m, colorAnchorSamples: fullHistory, pinnedFamilyByRoot: pinned).map { ($0.agentId, $0) })
+        let s3m = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: samples3m, colorAnchorSamples: fullHistory, pinnedFamilyByRoot: pinned).map { ($0.agentId, $0) })
+        let s15m = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: samples15m, colorAnchorSamples: fullHistory, pinnedFamilyByRoot: pinned).map { ($0.agentId, $0) })
+        let s1h = Dictionary(uniqueKeysWithValues: LiveTelemetryPolicy.agentSeries(in: samples1h, colorAnchorSamples: fullHistory, pinnedFamilyByRoot: pinned).map { ($0.agentId, $0) })
+
+        for agentId in ["root-mid", "sub-late-1", "sub-late-2"] {
+            expectEqual(s1m[agentId]?.familyIndex, s3m[agentId]?.familyIndex, "切换 1m vs 3m 时 \(agentId) 家族色系必须完全一致")
+            expectEqual(s3m[agentId]?.familyIndex, s15m[agentId]?.familyIndex, "切换 3m vs 15m 时 \(agentId) 家族色系必须完全一致")
+            expectEqual(s15m[agentId]?.familyIndex, s1h[agentId]?.familyIndex, "切换 15m vs 1h 时 \(agentId) 家族色系必须完全一致")
+            expectEqual(s1m[agentId]?.familyTier, s3m[agentId]?.familyTier, "切换 1m vs 3m 时 \(agentId) 子梯队色阶必须完全一致")
+            expectEqual(s3m[agentId]?.familyTier, s15m[agentId]?.familyTier, "切换 3m vs 15m 时 \(agentId) 子梯队色阶必须完全一致")
+            expectEqual(s15m[agentId]?.familyTier, s1h[agentId]?.familyTier, "切换 15m vs 1h 时 \(agentId) 子梯队色阶必须完全一致")
+        }
+
+        expect(s3m["root-mid"]?.familyIndex != s3m["root-late"]?.familyIndex, "不同根会话必须持有各自独立的家族色系")
+    }
+
+    static func testLiveTelemetryPaletteEightFamiliesAndUniformPerceptualProgression() {
+        expectEqual(LiveTelemetryColorPalette.familySpecs.count, 8, "预设主色系配色表应包含 8 组高区分度家族")
+        expectEqual(LiveTelemetryColorPalette.families.count, 8, "families 数组应与 8 组 familySpecs 严格对齐")
+
+        for (famIdx, spec) in LiveTelemetryColorPalette.familySpecs.enumerated() {
+            expect(!spec.nameZh.isEmpty && !spec.nameEn.isEmpty, "第 \(famIdx) 组配色方案必须有中英文名称")
+            expect(spec.childTones.count >= 4, "第 \(famIdx) 组 (\(spec.nameZh)) 至少应定义 4 个子 Agent 梯队色")
+            let t0 = LiveTelemetryColorPalette.tone(familyIndex: famIdx, tier: 0)
+            let t1 = LiveTelemetryColorPalette.tone(familyIndex: famIdx, tier: 1)
+            let t2 = LiveTelemetryColorPalette.tone(familyIndex: famIdx, tier: 2)
+            expectEqual(t0, spec.rootTone, "family \(famIdx) tier 0 必须严格等于主会话预设色")
+            expect(t0.euclideanDistance(to: t1) >= 0.28, "family \(famIdx) (\(spec.nameZh)) 主色与子1之间必须有 >= 0.28 的明显色差 (actual=\(t0.euclideanDistance(to: t1)))")
+            expect(t1.euclideanDistance(to: t2) >= 0.28, "family \(famIdx) (\(spec.nameZh)) 子1与子2之间必须有 >= 0.28 的明显色差 (actual=\(t1.euclideanDistance(to: t2)))")
+            expect(t0.relativeLuminance + 0.14 < t1.relativeLuminance, "family \(famIdx) 主色亮度应明显深于子1形成自然视觉锚点")
+            expect(t1.relativeLuminance + 0.10 < t2.relativeLuminance, "family \(famIdx) 子2应明显浅于子1")
+        }
+
+        let roots = LiveTelemetryColorPalette.familySpecs.map(\.rootTone)
+        for i in 0..<roots.count {
+            for j in (i + 1)..<roots.count {
+                let d = roots[i].euclideanDistance(to: roots[j])
+                expect(d >= 0.24, "主会话色系 \(i) 与 \(j) 之间色彩间距过近会混淆 (d=\(d))")
+            }
+        }
+    }
+
+    static func testSettingsOverlayDismissesOnOutsideTapAndOmitsFooterQuitBar() {
+        expect(!SettingsPopoverView.showsFooterQuitAndHintBar, "设置弹窗底部“关闭窗口不退出常驻”提示与退出按钮应移除")
+        expect(SettingsPopoverView.dismissesOnOutsideScrimTap, "设置弹窗应改用支持点击外部遮罩关闭的悬浮浮层承载")
+
+        let suiteName = "agyhub.tdd.settings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        MainActor.assumeIsolated { () -> Void in
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            for lang in [AppLanguage.Resolved.zhHans, AppLanguage.Resolved.en] {
+                for width in [CGFloat(328), CGFloat(360)] {
+                    let view = SettingsPopoverView(store: store, onClose: {})
+                        .environment(\.agyLanguage, lang)
+                    let host = NSHostingView(rootView: view.frame(width: width))
+                    host.layoutSubtreeIfNeeded()
+                    expect(host.fittingSize.width <= width + 0.5, "精简后的设置卡片在 \(width)pt 宽度内不得横向溢出 (actual=\(host.fittingSize.width))")
+                    expect(host.fittingSize.height <= 475.0, "去掉底部常驻提示与退出栏后设置卡片高度应更紧凑 (actual=\(host.fittingSize.height))")
+                }
+            }
+        }
+    }
+
+    static func testRecentUIChangesEnglishLocalizationAndTelemetryLabel() {
+        expectEqual(L10n.t(.telemetryAgentsLabel, .zhHans), "Agent", "实时监控首列标题应去掉冗余的“运行”，直接显示 Agent")
+        expectEqual(L10n.t(.telemetryAgentsLabel, .en), "Agents", "英文模式实时监控首列标题应为 Agents")
+        expectEqual(L10n.telemetryAgentCount(2, .zhHans), "2 运行", "中文数值行应保留运行态提示")
+        expectEqual(L10n.telemetryAgentCount(0, .zhHans), "0 待命", "中文空闲数值行应显示 0 待命")
+        expectEqual(L10n.telemetryAgentCount(2, .en), "2 Running", "英文数值行应显示 2 Running")
+        expectEqual(L10n.telemetryAgentCount(0, .en), "0 Idle", "英文空闲数值行应显示 0 Idle")
+
+        let sub1 = SessionItem(uuid: "sub-en-1", parentConversationId: "p-en-1", agentName: "worker", isRunning: true, tps: 120.4)
+        let sub2 = SessionItem(uuid: "sub-en-2", parentConversationId: "p-en-1", agentName: "verifier", isRunning: true, tps: 79.6)
+        let pSingleRun = SessionItem(uuid: "p-en-1", isRunning: false, subagents: [sub1], subagentCount: 1, activeSubagentCount: 1, activeSubagentTps: 120.4)
+        let pMultiRun = SessionItem(uuid: "p-en-2", isRunning: false, subagents: [sub1, sub2], subagentCount: 2, activeSubagentCount: 2, activeSubagentTps: 200.0)
+        let pSingleIdle = SessionItem(uuid: "p-en-3", isRunning: false, subagents: [SessionItem(uuid: "sub-en-3", parentConversationId: "p-en-3", agentName: "worker", isRunning: false)], subagentCount: 1, activeSubagentCount: 0, activeSubagentTps: 0.0)
+        let pMultiIdle = SessionItem(uuid: "p-en-4", isRunning: false, subagents: [SessionItem(uuid: "sub-en-4", parentConversationId: "p-en-4", agentName: "w1", isRunning: false), SessionItem(uuid: "sub-en-5", parentConversationId: "p-en-4", agentName: "w2", isRunning: false)], subagentCount: 2, activeSubagentCount: 0, activeSubagentTps: 0.0)
+
+        expectEqual(SessionRowBadgePolicy.subagentBadgeText(for: pSingleRun, language: .en), "1 Agent · 120t/s", "英文单数子 Agent 运行徽章应使用单数 Agent")
+        expectEqual(SessionRowBadgePolicy.subagentBadgeText(for: pMultiRun, language: .en), "2 Agents · 200t/s", "英文复数子 Agent 运行徽章应使用复数 Agents")
+        expectEqual(SessionRowBadgePolicy.subagentBadgeText(for: pSingleIdle, language: .en), "1 Agent", "英文单数折叠子 Agent 徽章应使用单数 Agent")
+        expectEqual(SessionRowBadgePolicy.subagentBadgeText(for: pMultiIdle, language: .en), "2 Agents", "英文复数折叠子 Agent 徽章应使用复数 Agents")
+
+        let hoverSingle = L10n.telemetryHoverSummary(time: "17:02:10", agents: 1, tps: 88, cachePct: 91.5, deltaTokens: 1200, .en)
+        let hoverMulti = L10n.telemetryHoverSummary(time: "17:02:10", agents: 3, tps: 297, cachePct: 79.3, deltaTokens: 2400, .en)
+        expect(hoverSingle.contains("1 Agent ·") && !containsCJK(hoverSingle), "英文悬停摘要单数应为 1 Agent 且无中文: \(hoverSingle)")
+        expect(hoverMulti.contains("3 Agents ·") && !containsCJK(hoverMulti), "英文悬停摘要复数应为 3 Agents 且无中文: \(hoverMulti)")
+        expectEqual(L10n.visibleSessionsCountValue(1, .en), "1 row", "英文 1 条配置应为 1 row")
+        expectEqual(L10n.visibleSessionsCountValue(5, .en), "5 rows", "英文多条配置应为 5 rows")
+        expectEqual(L10n.localizeAgentLabel("未知会话", language: .en), "Unknown Session", "英文未知会话标签应本地化")
+        expectEqual(L10n.t(.telemetrySectionTitle, .en), "LIVE", "英文实时监控卡片标题应为 LIVE")
+        expectEqual(L10n.t(.telemetryTrackContextTitle, .en), "Context", "英文 Y 轴标题应为 Context")
+        expect(!containsCJK(L10n.t(.splitResizeTooltip, .en)), "英文分割拖拽提示不得包含中文")
+
+        let suiteName = "agyhub.tdd.i18n.recent.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        MainActor.assumeIsolated { () -> Void in
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            store.isFetching = true
+            store.updateAppLanguage(.en, userDefaults: defaults)
+            expect(store.pendingMonitorRefetch, "后台正在拉取时切换语言必须登记 pendingMonitorRefetch，防止切语种后的首次拉取被静默丢弃")
+            store.isFetching = false
+            store.pendingMonitorRefetch = false
+
+            let stats = TodayStats(
+                totalTokens: 254_000_000,
+                cacheTokens: 201_422_000,
+                inputTokens: 40_000_000,
+                outputTokens: 12_578_000,
+                cachePct: 79.3,
+                costUsd: 67.39,
+                hasData: true,
+                source: "test"
+            )
+            let header = DashboardHeaderBarView(
+                stats: stats,
+                hasAlert: false,
+                isUsageOpen: false,
+                isStandaloneWindow: false,
+                lang: .en,
+                refreshSpinCount: 0,
+                onToggleUsage: {},
+                onRefresh: {},
+                onOpenStandalone: {},
+                onClose: {}
+            )
+            let headerHost = NSHostingView(rootView: header.frame(width: 340))
+            headerHost.layoutSubtreeIfNeeded()
+            expect(headerHost.fittingSize.width <= 340.5, "英文顶部栏在 340pt 下不得横向溢出 (actual=\(headerHost.fittingSize.width))")
+            expect(headerHost.fittingSize.height <= 46.0, "英文顶部栏不得折行变高 (actual=\(headerHost.fittingSize.height))")
+
+            let telemetryView = LiveTelemetryOverviewCardView(
+                samples: [
+                    LiveTelemetrySample(
+                        id: 1,
+                        timestamp: Date(),
+                        activeAgentCount: 2,
+                        totalTps: 297,
+                        totalTokensCumulative: 2_400_000,
+                        deltaTokens: 120_000,
+                        cachePct: 79.3,
+                        isIdleCacheHold: false,
+                        agentContexts: [AgentContextPoint(agentId: "r1", label: "主会话", contextTokens: 177_000, isRunning: true, tps: 162)]
+                    )
+                ],
+                todayStats: stats
+            )
+            .environment(\.agyLanguage, .en)
+            let telemetryHost = NSHostingView(rootView: telemetryView.frame(width: 340))
+            telemetryHost.layoutSubtreeIfNeeded()
+            expect(telemetryHost.fittingSize.width <= 340.5, "英文实时监控卡片在 340pt 下不得横向溢出 (actual=\(telemetryHost.fittingSize.width))")
+
+            let settings = SettingsPopoverView(store: store, onClose: {})
+                .environment(\.agyLanguage, .en)
+            let settingsHost = NSHostingView(rootView: settings.frame(width: 280))
+            settingsHost.layoutSubtreeIfNeeded()
+            expect(settingsHost.fittingSize.width <= 280.5, "英文设置面板在最小宽度 280pt 下不得横向溢出 (actual=\(settingsHost.fittingSize.width))")
+        }
+    }
+
+    static func testLiveTelemetryIdleGapBridgingAndHollowIdleTail() {
+        let baseDate = Date(timeIntervalSince1970: 1700005000)
+        func pt(_ id: String, _ label: String, _ ctx: Int, running: Bool, tps: Double, parent: String? = nil) -> AgentContextPoint {
+            AgentContextPoint(agentId: id, label: label, contextTokens: ctx, isRunning: running, tps: tps, parentAgentId: parent)
+        }
+        func makeSample(_ id: Int, _ offset: TimeInterval, _ agents: [AgentContextPoint]) -> LiveTelemetrySample {
+            LiveTelemetrySample(
+                id: id,
+                timestamp: baseDate.addingTimeInterval(offset),
+                activeAgentCount: agents.filter(\.isRunning).count,
+                totalTps: agents.reduce(0.0) { $0 + ($1.isRunning ? $1.tps : 0.0) },
+                totalTokensCumulative: 1_000_000 + id * 10_000,
+                deltaTokens: 10_000,
+                cachePct: 97.5,
+                isIdleCacheHold: false,
+                agentContexts: agents
+            )
+        }
+
+        let samples: [LiveTelemetrySample] = [
+            makeSample(1, 0, [
+                pt("sess-paused", "PausedRoot", 140_000, running: true, tps: 60),
+                pt("sess-micro", "MicroRoot", 190_000, running: true, tps: 50),
+                pt("sess-idle-tail", "IdleRoot", 288_000, running: true, tps: 40),
+                pt("sess-parent-with-sub", "SubParent", 120_000, running: true, tps: 30)
+            ]),
+            makeSample(2, 4, [
+                pt("sess-paused", "PausedRoot", 144_000, running: true, tps: 60),
+                pt("sess-micro", "MicroRoot", 192_000, running: true, tps: 50),
+                pt("sess-idle-tail", "IdleRoot", 288_000, running: false, tps: 0),
+                pt("sub-finished", "worker_sub", 45_000, running: true, tps: 45, parent: "sess-parent-with-sub")
+            ]),
+            makeSample(3, 10, [
+                pt("sess-micro", "MicroRoot", 195_000, running: true, tps: 50),
+                pt("sess-parent-with-sub", "SubParent", 124_000, running: true, tps: 35)
+            ]),
+            makeSample(4, 18, [
+                pt("sess-paused", "PausedRoot", 146_000, running: true, tps: 65),
+                pt("sess-micro", "MicroRoot", 198_000, running: true, tps: 50),
+                pt("sess-parent-with-sub", "SubParent", 128_000, running: true, tps: 35)
+            ]),
+            makeSample(5, 22, [
+                pt("sess-paused", "PausedRoot", 150_000, running: true, tps: 65),
+                pt("sess-micro", "MicroRoot", 201_000, running: true, tps: 50),
+                pt("sess-parent-with-sub", "SubParent", 130_000, running: true, tps: 35)
+            ])
+        ]
+
+        let seriesList = LiveTelemetryPolicy.agentSeries(in: samples)
+        let seriesById = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0) })
+        let resolvedList = LiveTelemetryPolicy.resolvedCurveSegments(
+            for: seriesList,
+            windowSeconds: TelemetryTimeRange.threeMinutes.seconds
+        )
+        let resolvedById = Dictionary(uniqueKeysWithValues: resolvedList.map { ($0.agentId, $0) })
+
+        guard let pausedSeries = seriesById["sess-paused"],
+              let pausedResolved = resolvedById["sess-paused"] else {
+            expect(false, "sess-paused 应生成曲线序列")
+            return
+        }
+        expectEqual(pausedSeries.segments.count, 1, "无子分支交替的长停顿不得打断父/独立曲线，必须连成连续整段")
+        let pausedRuns = pausedResolved.segments.first?.strokeRuns ?? []
+        expect(pausedRuns.contains(where: { $0.isIdle }), "超过 8s 阈值的停顿区间必须标注为虚线空闲过渡 run (runs=\(pausedRuns.count))")
+        expect(pausedRuns.contains(where: { !$0.isIdle }), "恢复生成后的区间必须保持实线激活 run")
+        if pausedRuns.count >= 2 {
+            for i in 1..<pausedRuns.count {
+                expectEqual(pausedRuns[i].points.first?.timestamp, pausedRuns[i - 1].points.last?.timestamp, "实线与虚线分段首尾必须无缝重合")
+            }
+        }
+
+        if let microRuns = resolvedById["sess-micro"]?.segments.first?.strokeRuns {
+            expect(microRuns.allSatisfy { !$0.isIdle }, "不超过 8s 的短回合停顿应直接平滑为连续实线，避免碎虚线")
+        } else {
+            expect(false, "sess-micro 应产出有效 strokeRuns")
+        }
+
+        guard let idleTailSeries = seriesById["sess-idle-tail"],
+              let idleTailResolved = resolvedById["sess-idle-tail"] else {
+            expect(false, "窗口内曾激活而后转入空闲的根会话必须保留显示")
+            return
+        }
+        expect(!idleTailSeries.isRunning, "当前已停机的历史根会话 isRunning 必须为 false 以触发空心圆圈与虚线尾巴")
+        expectEqual(idleTailSeries.points.last?.timestamp, baseDate.addingTimeInterval(22), "窗口内激活过的根会话停止后应以水平虚线无缝延伸至当前最新采样点")
+        expect(idleTailResolved.segments.last?.strokeRuns.last?.isIdle == true, "已停机会话延伸到右侧的尾巴必须标记为虚线空闲 run")
+
+        if let subSeries = seriesById["sub-finished"] {
+            expect(subSeries.points.last!.timestamp < baseDate.addingTimeInterval(22), "已结束的子 Agent 不得额外拖出虚线尾巴穿到父会话恢复区")
+        }
+        if let subParentSeries = seriesById["sess-parent-with-sub"] {
+            expectEqual(subParentSeries.segments.count, 2, "因等待运行中子 Agent 产生的分叉让位仍须保持 2 段不穿底")
+        }
+        expect(LiveTelemetryOverviewCardView.drawsHollowEndpointForIdleSeries, "未激活历史曲线末端应使用空心圆环标记")
+    }
+
+    static func testTelemetryDefaultHidesHorizontalGuideRulesAndOffsetsCalloutFromDot() {
+        let now = Date(timeIntervalSince1970: 1700006000)
+        let seg = AgentCurveSegment(
+            id: "seg",
+            isForkSegment: false,
+            points: [AgentSeriesSamplePoint(timestamp: now, contextTokens: 231_000, isRunning: true, tps: 90)]
+        )
+        let s1 = AgentContextSeries(
+            agentId: "s-1",
+            label: "One",
+            isRunning: true,
+            latestContextTokens: 231_000,
+            latestTps: 90,
+            colorIndex: 0,
+            segments: [seg]
+        )
+        let s2 = AgentContextSeries(
+            agentId: "s-2",
+            label: "Two",
+            isRunning: true,
+            latestContextTokens: 228_000,
+            latestTps: 85,
+            colorIndex: 1,
+            segments: [seg]
+        )
+
+        let defaultGuides = LiveTelemetryChartAxisPolicy.horizontalGuideIndices(
+            seriesList: [s1, s2],
+            focusedSeriesIds: []
+        )
+        expectEqual(defaultGuides, [], "未悬停/未高亮时不得绘制横穿全图的水平参考虚线，避免与空闲曲线虚线混淆并污染左侧空白")
+
+        let hoverSingleGuides = LiveTelemetryChartAxisPolicy.horizontalGuideIndices(
+            seriesList: [s1, s2],
+            focusedSeriesIds: ["s-2"]
+        )
+        expectEqual(hoverSingleGuides, [1], "悬停或聚焦到 s-2 时应展示 s-2 对应的单根水平参考线")
+
+        let hoverMultiGuides = LiveTelemetryChartAxisPolicy.horizontalGuideIndices(
+            seriesList: [s1, s2],
+            focusedSeriesIds: ["s-1", "s-2"]
+        )
+        expectEqual(hoverMultiGuides.count, 1, "悬停整个多子 Agent 会话时最多只绘制 1 根辅助读数线，避免双线叠成铁轨")
+
+        let plotRect = CGRect(x: 40, y: 10, width: 380, height: 140)
+        let calloutAtQuarter = LiveTelemetryChartAxisPolicy.calloutCenterX(
+            forReferenceX: plotRect.minX + plotRect.width * 0.25,
+            in: plotRect
+        )
+        expect(calloutAtQuarter - (plotRect.minX + plotRect.width * 0.25) >= 22.0, "处于 1/4 位置时胶囊应在当前圆点右侧空白区")
+        let calloutAtRightEdge = LiveTelemetryChartAxisPolicy.calloutCenterX(
+            forReferenceX: plotRect.maxX - 4.0,
+            in: plotRect
+        )
+        expect((plotRect.maxX - 4.0) - calloutAtRightEdge >= 22.0, "临近 100% 右边界时胶囊应自动向左避让圆点，不能挤出或压住圆点")
+    }
+
+    static func testOneQuarterAdvancingTimelineCycleAndAdaptiveCallout() {
+        let anchor = Date(timeIntervalSince1970: 1700008000)
+
+        let d0 = LiveTelemetryPolicy.xAxisDomain(for: .threeMinutes, referenceDate: anchor, anchorDate: anchor)
+        expectEqual(Int(d0.upperBound.timeIntervalSince(d0.lowerBound).rounded()), 180, "3m 窗口总跨度必须为 180s")
+        expectEqual(Int(anchor.timeIntervalSince(d0.lowerBound).rounded()), 45, "初始时刻应位于整段宽度的前 1/4 处 (now - lowerBound = 45s)")
+        expectEqual(Int(d0.upperBound.timeIntervalSince(anchor).rounded()), 135, "右侧前瞻区间应占 3/4 (135s)")
+
+        let t67 = anchor.addingTimeInterval(67.5)
+        let d67 = LiveTelemetryPolicy.xAxisDomain(for: .threeMinutes, referenceDate: t67, anchorDate: anchor)
+        expectEqual(d67.lowerBound, d0.lowerBound, "前 135s 生长期间左边界必须锚定不动，曲线自然向右生长")
+        expectEqual(Int(t67.timeIntervalSince(d67.lowerBound).rounded()), 113, "经过 67.5s 后，曲线应生长到 112.5/180 处")
+
+        let t134 = anchor.addingTimeInterval(134)
+        let d134 = LiveTelemetryPolicy.xAxisDomain(for: .threeMinutes, referenceDate: t134, anchorDate: anchor)
+        expectEqual(d134.lowerBound, d0.lowerBound, "尚未抵达 100% 右边界时不得提前翻页")
+
+        let t135 = anchor.addingTimeInterval(135)
+        let d135 = LiveTelemetryPolicy.xAxisDomain(for: .threeMinutes, referenceDate: t135, anchorDate: anchor)
+        expectEqual(Int(t135.timeIntervalSince(d135.lowerBound).rounded()), 45, "抵达右边界 100% 时必须平滑回落到前 1/4 位置继续向前生长")
+        expectEqual(Int(d135.upperBound.timeIntervalSince(t135).rounded()), 135, "翻页后右方保留 3/4 生长空间")
+
+        let ticks0 = LiveTelemetryPolicy.xAxisTicks(for: .threeMinutes, referenceDate: anchor, anchorDate: anchor, count: 5)
+        expectEqual(ticks0.count, 5, "4 等分时间轴应产出 5 个刻度点 (0, 1/4, 2/4, 3/4, 1)")
+        expectEqual(ticks0[1], anchor, "第 2 个刻度线 (1/4 处) 在重置时刻应精确对齐当前时刻")
+
+        let tooOldAtReset = LiveTelemetrySample(
+            id: 1,
+            timestamp: t135.addingTimeInterval(-70),
+            activeAgentCount: 1,
+            totalTps: 50,
+            totalTokensCumulative: 1000,
+            deltaTokens: 100,
+            cachePct: 95,
+            isIdleCacheHold: false
+        )
+        let keptLeftQuarter = LiveTelemetrySample(
+            id: 2,
+            timestamp: t135.addingTimeInterval(-20),
+            activeAgentCount: 1,
+            totalTps: 60,
+            totalTokensCumulative: 1200,
+            deltaTokens: 200,
+            cachePct: 96,
+            isIdleCacheHold: false
+        )
+        let visible = LiveTelemetryPolicy.visibleChartSamples(
+            in: .threeMinutes,
+            from: [tooOldAtReset, keptLeftQuarter],
+            anchorDate: anchor,
+            now: t135
+        )
+        expectEqual(visible.map(\.id), [2], "回落到 1/4 时左侧保留最新 1/4 (45s) 历史，早于左边界的采样不得刺穿 Y 轴")
+        let fullWindowSamples = LiveTelemetryPolicy.samples(in: .threeMinutes, from: [tooOldAtReset, keptLeftQuarter], now: t135)
+        expectEqual(fullWindowSamples.map(\.id), [1, 2], "KPI 累计窗口统计仍保留完整 3m(180s) 口径")
+
+        expect(LiveTelemetryOverviewCardView.usesOneQuarterGrowingTimelinePage, "实时图表应启用从 1/4 向前生长至最右端后回落 1/4 的分页模式")
     }
 }

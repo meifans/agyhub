@@ -932,6 +932,7 @@ final class AGYHubStore: ObservableObject {
     @Published var lastUpdatedTimeStr: String = "-"
     @Published var unifyLogMonitoring: Bool = true
     @Published var showSessionModelColumn: Bool = false
+    @Published var expandedSessionRowLimit: Int = SessionListLayoutPolicy.defaultVisibleRowsWhenExpanded
     @Published var appLanguage: AppLanguage = .system
     @Published var accountQuotas: [String: AccountQuotaSummary] = [:]
     @Published var expiredQuotaEmails: Set<String> = []
@@ -943,10 +944,16 @@ final class AGYHubStore: ObservableObject {
     @Published var activeDiagnosticSessionUUID: String? = nil
     @Published var sessionDiagnosticsByUUID: [String: SessionDiagnosticsPayload] = [:]
     @Published var isLoadingDiagnosticsUUID: String? = nil
+    @Published var liveTelemetrySamples: [LiveTelemetrySample] = []
+    @Published var telemetryTimelineAnchor: Date? = nil
+    @Published var telemetryFamilyByRoot: [String: Int] = [:]
 
     private var timer: Timer?
     private var scheduledTimerInterval: Double? = nil
-    private var isFetching: Bool = false
+    private var lastTelemetryTodayStats: TodayStats? = nil
+    private var nextTelemetrySampleId: Int = 1
+    var isFetching: Bool = false
+    var pendingMonitorRefetch: Bool = false
     private var isFetchingUsageHistory: Bool = false
     private var lastUsageHistoryFetchTime: Date? = nil
     private var isFetchingRecent503: Bool = false
@@ -998,7 +1005,11 @@ final class AGYHubStore: ObservableObject {
         language.save(to: userDefaults ?? self.userDefaults)
         sessionDiagnosticsByUUID.removeAll()
         lastSnapshotEtag = nil
-        fetchMonitorData()
+        if isFetching {
+            pendingMonitorRefetch = true
+        } else {
+            fetchMonitorData()
+        }
         if let activeUUID = selectedSessionUUID {
             fetchSessionDiagnostics(uuid: activeUUID, force: true)
         }
@@ -1191,6 +1202,7 @@ final class AGYHubStore: ObservableObject {
         self.homeDir = homeDir
         self.appLanguage = AppLanguage.load(from: userDefaults)
         self.showSessionModelColumn = userDefaults.bool(forKey: SessionRowBadgePolicy.showModelDefaultsKey)
+        self.expandedSessionRowLimit = SessionListLayoutPolicy.loadVisibleRows(from: userDefaults)
         loadPersistedQuotaCache()
         loadProfiles()
         checkLaunchAtLoginStatus()
@@ -1343,6 +1355,12 @@ final class AGYHubStore: ObservableObject {
         userDefaults.set(enabled, forKey: SessionRowBadgePolicy.showModelDefaultsKey)
     }
 
+    func updateExpandedSessionRowLimit(_ limit: Int) {
+        let clamped = SessionListLayoutPolicy.clampedVisibleRows(limit)
+        expandedSessionRowLimit = clamped
+        userDefaults.set(clamped, forKey: SessionListLayoutPolicy.visibleRowsDefaultsKey)
+    }
+
     func toggleCLIIndependentMode(_ enabled: Bool) {
         isCLIIndependentMode = enabled
         UserDefaults.standard.set(enabled, forKey: "agyhub.cliIndependentMode")
@@ -1440,17 +1458,13 @@ final class AGYHubStore: ObservableObject {
                             if let newEtag, !newEtag.isEmpty {
                                 self.lastSnapshotEtag = newEtag
                             }
+                            self.recordLiveTelemetrySample(for: self.payload)
                         case .updated(let decoded, let newEtag):
                             self.lastSnapshotEtag = newEtag
                             _ = self.applyMonitorPayloadIfChanged(decoded)
+                            self.recordLiveTelemetrySample(for: decoded)
                         }
-                        self.isFetching = false
-                        self.refreshCLIAccountState(force: false)
-                        self.refreshQuotasIfNeeded()
-                        self.refreshRecent503IfNeeded()
-                        if self.isUsageDashboardPresented {
-                            self.fetchUsageHistory(force: false)
-                        }
+                        self.completeMonitorFetchCycle(refreshAncillary: true)
                     }
                     return
                 }
@@ -1463,20 +1477,56 @@ final class AGYHubStore: ObservableObject {
                     Task { @MainActor in
                         self.lastSnapshotEtag = nil
                         _ = self.applyMonitorPayloadIfChanged(decoded)
-                        self.isFetching = false
-                        self.refreshCLIAccountState(force: false)
-                        self.refreshQuotasIfNeeded()
-                        self.refreshRecent503IfNeeded()
-                        if self.isUsageDashboardPresented {
-                            self.fetchUsageHistory(force: false)
-                        }
+                        self.recordLiveTelemetrySample(for: decoded)
+                        self.completeMonitorFetchCycle(refreshAncillary: true)
                     }
                     return
                 }
 
                 Task { @MainActor in
-                    self.isFetching = false
+                    self.completeMonitorFetchCycle(refreshAncillary: false)
                 }
+            }
+        }
+    }
+
+    @MainActor
+    private func completeMonitorFetchCycle(refreshAncillary: Bool) {
+        isFetching = false
+        if refreshAncillary {
+            refreshCLIAccountState(force: false)
+            refreshQuotasIfNeeded()
+            refreshRecent503IfNeeded()
+            if isUsageDashboardPresented {
+                fetchUsageHistory(force: false)
+            }
+        }
+        if pendingMonitorRefetch {
+            pendingMonitorRefetch = false
+            lastSnapshotEtag = nil
+            fetchMonitorData()
+        }
+    }
+
+    private func recordLiveTelemetrySample(for targetPayload: MonitorPayload) {
+        let (updated, nextPrev, added) = LiveTelemetryPolicy.appendSample(
+            to: liveTelemetrySamples,
+            payload: targetPayload,
+            previousStats: lastTelemetryTodayStats,
+            nextId: &nextTelemetrySampleId
+        )
+        lastTelemetryTodayStats = nextPrev
+        if added {
+            liveTelemetrySamples = updated
+            if telemetryTimelineAnchor == nil {
+                telemetryTimelineAnchor = updated.first?.timestamp
+            }
+            let nextPinned = LiveTelemetryPolicy.updatedPinnedFamilies(
+                existing: telemetryFamilyByRoot,
+                from: updated
+            )
+            if nextPinned != telemetryFamilyByRoot {
+                telemetryFamilyByRoot = nextPinned
             }
         }
     }

@@ -68,6 +68,17 @@ struct TodayStats: Codable, Equatable {
         case hasData = "has_data"
         case source
     }
+
+    static let empty = TodayStats(
+        totalTokens: 0,
+        cacheTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachePct: 0,
+        costUsd: 0,
+        hasData: false,
+        source: "none"
+    )
 }
 
 struct Recent503Stats: Codable, Equatable {
@@ -1418,5 +1429,1825 @@ enum Formatters {
         if h > 0 { return "\(h)h\(m)m\(sec)s" }
         if m > 0 { return "\(m)m\(sec)s" }
         return "\(sec)s"
+    }
+}
+
+struct AgentContextPoint: Equatable, Hashable {
+    let agentId: String
+    let label: String
+    let contextTokens: Int
+    let isRunning: Bool
+    let tps: Double
+    var parentAgentId: String? = nil
+}
+
+struct AgentSeriesSamplePoint: Identifiable, Equatable {
+    var id: String { customId ?? "\(isForkAnchor ? "fork-" : "")\(timestamp.timeIntervalSince1970)" }
+    let timestamp: Date
+    let contextTokens: Int
+    let isRunning: Bool
+    let tps: Double
+    var isForkAnchor: Bool = false
+    var customId: String? = nil
+}
+
+struct AgentCurveSegment: Identifiable, Equatable {
+    let id: String
+    let isForkSegment: Bool
+    let points: [AgentSeriesSamplePoint]
+}
+
+struct AgentCurveStrokeRun: Identifiable, Equatable {
+    let id: String
+    let isIdle: Bool
+    let points: [AgentSeriesSamplePoint]
+}
+
+struct ResolvedAgentCurveSegment: Identifiable, Equatable {
+    let id: String
+    let points: [AgentSeriesSamplePoint]
+    let forkJunction: AgentSeriesSamplePoint?
+    var strokeRuns: [AgentCurveStrokeRun] = []
+}
+
+struct ResolvedAgentCurveSeries: Identifiable, Equatable {
+    var id: String { agentId }
+    let agentId: String
+    let parentAgentId: String?
+    let segments: [ResolvedAgentCurveSegment]
+}
+
+struct TelemetrySeriesTone: Equatable {
+    let red: Double
+    let green: Double
+    let blue: Double
+
+    var color: Color {
+        Color(red: red, green: green, blue: blue)
+    }
+
+    var relativeLuminance: Double {
+        0.2126 * red + 0.7152 * green + 0.0722 * blue
+    }
+
+    var capsuleForegroundColor: Color {
+        relativeLuminance > 0.48 ? Color.black.opacity(0.86) : .white
+    }
+
+    var hueDegrees: Double {
+        let maxC = max(red, max(green, blue))
+        let minC = min(red, min(green, blue))
+        let delta = maxC - minC
+        guard delta > 1e-6 else { return 0.0 }
+        var hue: Double
+        if maxC == red {
+            hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6.0)
+        } else if maxC == green {
+            hue = ((blue - red) / delta) + 2.0
+        } else {
+            hue = ((red - green) / delta) + 4.0
+        }
+        hue *= 60.0
+        if hue < 0 { hue += 360.0 }
+        return hue
+    }
+
+    func euclideanDistance(to other: TelemetrySeriesTone) -> Double {
+        let dr = red - other.red
+        let dg = green - other.green
+        let db = blue - other.blue
+        return sqrt(dr * dr + dg * dg + db * db)
+    }
+}
+
+struct TelemetryColorFamilySpec: Equatable {
+    let index: Int
+    let nameZh: String
+    let nameEn: String
+    let rootHex: String
+    let childHexes: [String]
+    let rootTone: TelemetrySeriesTone
+    let childTones: [TelemetrySeriesTone]
+
+    var allTones: [TelemetrySeriesTone] {
+        [rootTone] + childTones
+    }
+}
+
+enum LiveTelemetryColorPalette {
+    static let familySpecs: [TelemetryColorFamilySpec] = [
+        TelemetryColorFamilySpec(
+            index: 0,
+            nameZh: "钴蓝海系",
+            nameEn: "Cobalt Blue",
+            rootHex: "#004FC8",
+            childHexes: ["#00A7E9", "#5FD3EC", "#566BE9", "#004E80"],
+            rootTone: TelemetrySeriesTone(red: 0.000, green: 0.311, blue: 0.784),
+            childTones: [
+                TelemetrySeriesTone(red: 0.000, green: 0.654, blue: 0.913),
+                TelemetrySeriesTone(red: 0.371, green: 0.828, blue: 0.926),
+                TelemetrySeriesTone(red: 0.337, green: 0.419, blue: 0.912),
+                TelemetrySeriesTone(red: 0.000, green: 0.305, blue: 0.501)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 1,
+            nameZh: "翡翠森绿",
+            nameEn: "Emerald Jade",
+            rootHex: "#157E2C",
+            childHexes: ["#5BC25D", "#92E8AA", "#72A01D", "#00622F"],
+            rootTone: TelemetrySeriesTone(red: 0.081, green: 0.495, blue: 0.172),
+            childTones: [
+                TelemetrySeriesTone(red: 0.355, green: 0.762, blue: 0.365),
+                TelemetrySeriesTone(red: 0.574, green: 0.909, blue: 0.667),
+                TelemetrySeriesTone(red: 0.449, green: 0.629, blue: 0.112),
+                TelemetrySeriesTone(red: 0.000, green: 0.383, blue: 0.184)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 2,
+            nameZh: "赤陶琥珀",
+            nameEn: "Terracotta Amber",
+            rootHex: "#BB3F00",
+            childHexes: ["#FA7C20", "#FFB76D", "#ED4B40", "#8E3609"],
+            rootTone: TelemetrySeriesTone(red: 0.735, green: 0.248, blue: 0.000),
+            childTones: [
+                TelemetrySeriesTone(red: 0.981, green: 0.486, blue: 0.124),
+                TelemetrySeriesTone(red: 1.000, green: 0.716, blue: 0.427),
+                TelemetrySeriesTone(red: 0.929, green: 0.295, blue: 0.252),
+                TelemetrySeriesTone(red: 0.555, green: 0.210, blue: 0.034)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 3,
+            nameZh: "鸢尾紫系",
+            nameEn: "Iris Violet",
+            rootHex: "#5731BB",
+            childHexes: ["#7C6FF2", "#A7A9FF", "#AE74ED", "#505DCC"],
+            rootTone: TelemetrySeriesTone(red: 0.341, green: 0.194, blue: 0.732),
+            childTones: [
+                TelemetrySeriesTone(red: 0.487, green: 0.435, blue: 0.950),
+                TelemetrySeriesTone(red: 0.656, green: 0.663, blue: 1.000),
+                TelemetrySeriesTone(red: 0.682, green: 0.454, blue: 0.931),
+                TelemetrySeriesTone(red: 0.315, green: 0.366, blue: 0.800)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 4,
+            nameZh: "石榴玫红",
+            nameEn: "Crimson Rose",
+            rootHex: "#AD0445",
+            childHexes: ["#F24471", "#FF96AE", "#E03CA0", "#831C42"],
+            rootTone: TelemetrySeriesTone(red: 0.680, green: 0.016, blue: 0.269),
+            childTones: [
+                TelemetrySeriesTone(red: 0.948, green: 0.267, blue: 0.445),
+                TelemetrySeriesTone(red: 1.000, green: 0.587, blue: 0.681),
+                TelemetrySeriesTone(red: 0.880, green: 0.235, blue: 0.628),
+                TelemetrySeriesTone(red: 0.513, green: 0.108, blue: 0.257)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 5,
+            nameZh: "湖水青碧",
+            nameEn: "Teal Lagoon",
+            rootHex: "#008391",
+            childHexes: ["#00C3C5", "#7CE7DD", "#00A6C8", "#006069"],
+            rootTone: TelemetrySeriesTone(red: 0.000, green: 0.513, blue: 0.568),
+            childTones: [
+                TelemetrySeriesTone(red: 0.000, green: 0.766, blue: 0.774),
+                TelemetrySeriesTone(red: 0.487, green: 0.904, blue: 0.867),
+                TelemetrySeriesTone(red: 0.000, green: 0.650, blue: 0.786),
+                TelemetrySeriesTone(red: 0.000, green: 0.377, blue: 0.413)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 6,
+            nameZh: "琉璃金茶",
+            nameEn: "Ochre Gold",
+            rootHex: "#AD8700",
+            childHexes: ["#E3BE1F", "#F8E277", "#DE8E00", "#815C00"],
+            rootTone: TelemetrySeriesTone(red: 0.678, green: 0.530, blue: 0.000),
+            childTones: [
+                TelemetrySeriesTone(red: 0.890, green: 0.744, blue: 0.123),
+                TelemetrySeriesTone(red: 0.973, green: 0.887, blue: 0.467),
+                TelemetrySeriesTone(red: 0.869, green: 0.556, blue: 0.000),
+                TelemetrySeriesTone(red: 0.504, green: 0.362, blue: 0.000)
+            ]
+        ),
+        TelemetryColorFamilySpec(
+            index: 7,
+            nameZh: "梅子品红",
+            nameEn: "Plum Fuchsia",
+            rootHex: "#A71C96",
+            childHexes: ["#E25CDB", "#F3A3F5", "#D034A4", "#702B77"],
+            rootTone: TelemetrySeriesTone(red: 0.653, green: 0.109, blue: 0.588),
+            childTones: [
+                TelemetrySeriesTone(red: 0.888, green: 0.361, blue: 0.857),
+                TelemetrySeriesTone(red: 0.952, green: 0.640, blue: 0.959),
+                TelemetrySeriesTone(red: 0.817, green: 0.204, blue: 0.643),
+                TelemetrySeriesTone(red: 0.440, green: 0.168, blue: 0.467)
+            ]
+        )
+    ]
+
+    static let families: [[TelemetrySeriesTone]] = familySpecs.map(\.allTones)
+
+    static func tone(familyIndex: Int, tier: Int) -> TelemetrySeriesTone {
+        let family = families[abs(familyIndex) % families.count]
+        if tier <= 0 {
+            return family[0]
+        }
+        let childTiers = family.count - 1
+        let childOffset = ((tier - 1) % childTiers) + 1
+        return family[childOffset]
+    }
+}
+
+struct AgentContextSeries: Identifiable, Equatable {
+    var id: String { agentId }
+    let agentId: String
+    let label: String
+    let isRunning: Bool
+    let latestContextTokens: Int
+    let latestTps: Double
+    let colorIndex: Int
+    var familyIndex: Int = 0
+    var familyTier: Int = 0
+    var parentAgentId: String? = nil
+    let segments: [AgentCurveSegment]
+    var points: [AgentSeriesSamplePoint] { segments.flatMap(\.points) }
+}
+
+struct SessionTelemetryColorLink: Equatable {
+    let primaryTone: TelemetrySeriesTone
+    let childTones: [TelemetrySeriesTone]
+    let seriesIds: Set<String>
+    let hasDirectSeries: Bool
+}
+
+struct LiveTelemetrySample: Identifiable, Equatable {
+    let id: Int
+    let timestamp: Date
+    let activeAgentCount: Int
+    let totalTps: Double
+    let totalTokensCumulative: Int
+    let deltaTokens: Int
+    let cachePct: Double
+    let isIdleCacheHold: Bool
+    var deltaCacheTokens: Int = 0
+    var deltaNewTokens: Int = 0
+    var agentContexts: [AgentContextPoint] = []
+}
+
+struct TelemetryWindowSummary: Equatable {
+    let totalTokens: Int
+    let cachePct: Double
+    let hasWindowTraffic: Bool
+}
+
+enum TelemetryTimeRange: String, CaseIterable, Identifiable {
+    case oneMinute = "1m"
+    case threeMinutes = "3m"
+    case fifteenMinutes = "15m"
+    case oneHour = "1h"
+
+    var id: String { rawValue }
+
+    var seconds: TimeInterval {
+        switch self {
+        case .oneMinute: return 60
+        case .threeMinutes: return 180
+        case .fifteenMinutes: return 900
+        case .oneHour: return 3600
+        }
+    }
+
+    static func resolved(from raw: String) -> TelemetryTimeRange {
+        if raw == "5m" {
+            return .threeMinutes
+        }
+        return TelemetryTimeRange(rawValue: raw) ?? .threeMinutes
+    }
+}
+
+enum LiveTelemetryPolicy {
+    struct ChartDomains: Equatable {
+        let maxTps: Double
+        let maxAgents: Int
+        let cacheMinY: Double
+    }
+
+    static let maxSamples: Int = 720
+    static let minimumSampleSpacingSeconds: TimeInterval = 1.5
+
+    static func extractLiveMetrics(from payload: MonitorPayload) -> (activeAgentCount: Int, totalTps: Double) {
+        let topIds = Set(payload.sessions.map(\.uuid))
+        let topSessions = payload.sessions.filter {
+            $0.parentConversationId.isEmpty || !topIds.contains($0.parentConversationId)
+        }
+        var agents = 0
+        var tps = 0.0
+        for s in topSessions {
+            let selfRunning = s.isRunning ? 1 : 0
+            let subRunning = s.effectiveActiveSubagentCount
+            agents += selfRunning + subRunning
+            if s.isRunning {
+                tps += max(0.0, s.tps)
+            }
+            tps += max(0.0, s.effectiveActiveSubagentTps)
+        }
+        return (agents, tps)
+    }
+
+    static func cleanAgentLabel(session: SessionItem, isSubagent: Bool) -> String {
+        if isSubagent {
+            let name = session.agentName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+            let role = session.agentRole.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !role.isEmpty { return role }
+        }
+        let raw = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invalid: Set<String> = ["{", "}", "{}", "未命名会话", "[", "]", "[]", ""]
+        if invalid.contains(raw) {
+            return String(session.shortId.prefix(6))
+        }
+        return raw
+    }
+
+    static func extractAgentSnapshots(
+        from payload: MonitorPayload,
+        previouslyActiveIds: Set<String>
+    ) -> [AgentContextPoint] {
+        var byId: [String: (session: SessionItem, isSubagent: Bool, parentId: String?)] = [:]
+        var order: [String] = []
+
+        func register(_ item: SessionItem, isSubagent: Bool, explicitParentId: String?) {
+            let resolvedParent = explicitParentId ?? (item.parentConversationId.isEmpty ? nil : item.parentConversationId)
+            if let existing = byId[item.uuid] {
+                let preferNew = (item.isActivelyWorking && !existing.session.isActivelyWorking)
+                    || (item.isActivelyWorking == existing.session.isActivelyWorking && item.contextTokens > existing.session.contextTokens)
+                if preferNew {
+                    byId[item.uuid] = (item, existing.isSubagent && isSubagent, resolvedParent ?? existing.parentId)
+                }
+            } else {
+                byId[item.uuid] = (item, isSubagent, resolvedParent)
+                order.append(item.uuid)
+            }
+            for sub in item.subagents {
+                register(sub, isSubagent: true, explicitParentId: item.uuid)
+            }
+        }
+
+        for top in payload.sessions {
+            let pId = top.parentConversationId.isEmpty ? nil : top.parentConversationId
+            register(top, isSubagent: pId != nil, explicitParentId: pId)
+        }
+
+        var points: [AgentContextPoint] = []
+        for uid in order {
+            guard let entry = byId[uid] else { continue }
+            let s = entry.session
+            let isRunningSelf = s.isRunning
+            let waitingOnActiveChild = !isRunningSelf && s.effectiveActiveSubagentCount > 0
+            if isRunningSelf || (previouslyActiveIds.contains(uid) && !waitingOnActiveChild) {
+                points.append(
+                    AgentContextPoint(
+                        agentId: uid,
+                        label: cleanAgentLabel(session: s, isSubagent: entry.isSubagent),
+                        contextTokens: max(0, s.contextTokens),
+                        isRunning: isRunningSelf,
+                        tps: isRunningSelf ? max(0.0, s.tps) : 0.0,
+                        parentAgentId: entry.parentId
+                    )
+                )
+            }
+        }
+
+        if points.isEmpty {
+            let fallbackTop = payload.sessions
+                .filter { $0.parentConversationId.isEmpty && $0.contextTokens > 0 }
+                .prefix(3)
+            for s in fallbackTop {
+                points.append(
+                    AgentContextPoint(
+                        agentId: s.uuid,
+                        label: cleanAgentLabel(session: s, isSubagent: false),
+                        contextTokens: max(0, s.contextTokens),
+                        isRunning: false,
+                        tps: 0.0,
+                        parentAgentId: nil
+                    )
+                )
+            }
+        }
+
+        return points
+    }
+
+    private static func globalAncestryAndTiers(
+        in anchorSamples: [LiveTelemetrySample],
+        existingPinnedFamilies: [String: Int]
+    ) -> (
+        familyByRoot: [String: Int],
+        tierByAgentId: [String: Int],
+        ancestryById: [String: (rootKey: String, depth: Int)]
+    ) {
+        var firstSeenByAgent: [String: Int] = [:]
+        var parentByAgent: [String: String] = [:]
+
+        for (sIdx, sample) in anchorSamples.enumerated() {
+            for pt in sample.agentContexts {
+                if firstSeenByAgent[pt.agentId] == nil {
+                    firstSeenByAgent[pt.agentId] = sIdx
+                }
+                if let pid = pt.parentAgentId, !pid.isEmpty {
+                    parentByAgent[pt.agentId] = pid
+                }
+            }
+        }
+
+        func resolve(_ agentId: String) -> (rootKey: String, depth: Int) {
+            var cur = agentId
+            var depth = 0
+            var visited = Set<String>([cur])
+            while let pid = parentByAgent[cur], !pid.isEmpty {
+                depth += 1
+                if firstSeenByAgent[pid] != nil, !visited.contains(pid) {
+                    visited.insert(pid)
+                    cur = pid
+                } else {
+                    return (pid, depth)
+                }
+            }
+            return (cur, depth)
+        }
+
+        var membersByRoot: [String: [(agentId: String, depth: Int, firstIdx: Int)]] = [:]
+        var ancestryById: [String: (rootKey: String, depth: Int)] = [:]
+        for (uid, firstIdx) in firstSeenByAgent {
+            let info = resolve(uid)
+            ancestryById[uid] = info
+            membersByRoot[info.rootKey, default: []].append((uid, info.depth, firstIdx))
+        }
+
+        let sortedRoots = membersByRoot.keys.sorted { a, b in
+            let aMin = membersByRoot[a]?.map(\.firstIdx).min() ?? Int.max
+            let bMin = membersByRoot[b]?.map(\.firstIdx).min() ?? Int.max
+            if aMin != bMin { return aMin < bMin }
+            return a < b
+        }
+
+        let familyCount = max(1, LiveTelemetryColorPalette.families.count)
+        var familyByRoot = existingPinnedFamilies
+        var slotUsage = Array(repeating: 0, count: familyCount)
+        for rootKey in sortedRoots {
+            if let assigned = familyByRoot[rootKey] {
+                let normalized = abs(assigned) % familyCount
+                familyByRoot[rootKey] = normalized
+                slotUsage[normalized] += 1
+            }
+        }
+        for (_, assigned) in existingPinnedFamilies.filter({ membersByRoot[$0.key] == nil }) {
+            let normalized = abs(assigned) % familyCount
+            slotUsage[normalized] += 1
+        }
+
+        for rootKey in sortedRoots where familyByRoot[rootKey] == nil {
+            let bestSlot = (0..<familyCount).min { a, b in
+                if slotUsage[a] != slotUsage[b] {
+                    return slotUsage[a] < slotUsage[b]
+                }
+                return a < b
+            } ?? 0
+            familyByRoot[rootKey] = bestSlot
+            slotUsage[bestSlot] += 1
+        }
+
+        var tierByAgentId: [String: Int] = [:]
+        for rootKey in sortedRoots {
+            let sortedMembers = (membersByRoot[rootKey] ?? []).sorted { a, b in
+                if a.depth != b.depth { return a.depth < b.depth }
+                if a.firstIdx != b.firstIdx { return a.firstIdx < b.firstIdx }
+                return a.agentId < b.agentId
+            }
+            var nextChildTier = 1
+            for member in sortedMembers {
+                if member.depth == 0 {
+                    tierByAgentId[member.agentId] = 0
+                } else {
+                    tierByAgentId[member.agentId] = nextChildTier
+                    nextChildTier += 1
+                }
+            }
+        }
+
+        return (familyByRoot, tierByAgentId, ancestryById)
+    }
+
+    static func updatedPinnedFamilies(
+        existing: [String: Int],
+        from samples: [LiveTelemetrySample]
+    ) -> [String: Int] {
+        globalAncestryAndTiers(in: samples, existingPinnedFamilies: existing).familyByRoot
+    }
+
+    static func agentSeries(
+        in samples: [LiveTelemetrySample],
+        colorAnchorSamples: [LiveTelemetrySample]? = nil,
+        pinnedFamilyByRoot: [String: Int] = [:],
+        maxSeries: Int = 8
+    ) -> [AgentContextSeries] {
+        struct IndexedSeriesPoint {
+            let sampleIdx: Int
+            let point: AgentSeriesSamplePoint
+        }
+
+        struct GroupedAccumulator {
+            var label: String
+            var parentAgentId: String?
+            var indexedPoints: [IndexedSeriesPoint]
+            var hadRunning: Bool
+            var firstSampleIndex: Int
+            var lastSampleIndex: Int
+        }
+
+        var grouped: [String: GroupedAccumulator] = [:]
+        var sampleAgentMap: [[String: AgentContextPoint]] = []
+        var directChildrenByParent: [String: Set<String>] = [:]
+
+        for (sampleIdx, sample) in samples.enumerated() {
+            var mapForTick: [String: AgentContextPoint] = [:]
+            for pt in sample.agentContexts {
+                mapForTick[pt.agentId] = pt
+                if let pid = pt.parentAgentId, !pid.isEmpty {
+                    directChildrenByParent[pid, default: []].insert(pt.agentId)
+                }
+                let seriesPt = AgentSeriesSamplePoint(
+                    timestamp: sample.timestamp,
+                    contextTokens: pt.contextTokens,
+                    isRunning: pt.isRunning,
+                    tps: pt.tps,
+                    isForkAnchor: false
+                )
+                let indexed = IndexedSeriesPoint(sampleIdx: sampleIdx, point: seriesPt)
+                if var existing = grouped[pt.agentId] {
+                    existing.label = pt.label
+                    if existing.parentAgentId == nil, let pid = pt.parentAgentId {
+                        existing.parentAgentId = pid
+                    }
+                    existing.indexedPoints.append(indexed)
+                    existing.lastSampleIndex = sampleIdx
+                    existing.hadRunning = existing.hadRunning || pt.isRunning
+                    grouped[pt.agentId] = existing
+                } else {
+                    grouped[pt.agentId] = GroupedAccumulator(
+                        label: pt.label,
+                        parentAgentId: pt.parentAgentId,
+                        indexedPoints: [indexed],
+                        hadRunning: pt.isRunning,
+                        firstSampleIndex: sampleIdx,
+                        lastSampleIndex: sampleIdx
+                    )
+                }
+            }
+            sampleAgentMap.append(mapForTick)
+        }
+
+        let hasAnyRunningInWindow = grouped.values.contains { $0.hadRunning }
+        var keptIds = Set(
+            grouped
+                .filter { !hasAnyRunningInWindow || $0.value.hadRunning }
+                .map(\.key)
+        )
+        var pendingAncestors = Array(keptIds)
+        while let uid = pendingAncestors.popLast() {
+            if let pid = grouped[uid]?.parentAgentId,
+               grouped[pid] != nil,
+               !keptIds.contains(pid) {
+                keptIds.insert(pid)
+                pendingAncestors.append(pid)
+            }
+        }
+
+        func resolveAncestry(_ agentId: String) -> (rootKey: String, depth: Int) {
+            var cur = agentId
+            var depth = 0
+            var visited = Set<String>([cur])
+            while let pid = grouped[cur]?.parentAgentId, !pid.isEmpty {
+                depth += 1
+                if grouped[pid] != nil, !visited.contains(pid) {
+                    visited.insert(pid)
+                    cur = pid
+                } else {
+                    return (pid, depth)
+                }
+            }
+            return (cur, depth)
+        }
+
+        let anchorPool = (colorAnchorSamples?.isEmpty == false) ? colorAnchorSamples! : samples
+        let anchorInfo = globalAncestryAndTiers(
+            in: anchorPool,
+            existingPinnedFamilies: pinnedFamilyByRoot
+        )
+
+        var familyMembers: [String: [(agentId: String, depth: Int, firstSampleIndex: Int)]] = [:]
+        var ancestryById: [String: (rootKey: String, depth: Int)] = [:]
+        for uid in keptIds {
+            guard let entry = grouped[uid] else { continue }
+            let info = resolveAncestry(uid)
+            let resolvedInfo = anchorInfo.ancestryById[uid] ?? info
+            ancestryById[uid] = resolvedInfo
+            familyMembers[resolvedInfo.rootKey, default: []].append((uid, resolvedInfo.depth, entry.firstSampleIndex))
+        }
+
+        let sortedRoots = familyMembers.keys.sorted { a, b in
+            let aMin = familyMembers[a]?.map(\.firstSampleIndex).min() ?? Int.max
+            let bMin = familyMembers[b]?.map(\.firstSampleIndex).min() ?? Int.max
+            if aMin != bMin { return aMin < bMin }
+            return a < b
+        }
+        var familyIndexByRoot = anchorInfo.familyByRoot
+        var tierByAgentId = anchorInfo.tierByAgentId
+        let familyCount = max(1, LiveTelemetryColorPalette.families.count)
+        var usedSlots = Set(familyIndexByRoot.values)
+
+        for rootKey in sortedRoots {
+            if familyIndexByRoot[rootKey] == nil {
+                let fallbackSlot = (0..<familyCount).first(where: { !usedSlots.contains($0) })
+                    ?? (familyIndexByRoot.count % familyCount)
+                familyIndexByRoot[rootKey] = fallbackSlot
+                usedSlots.insert(fallbackSlot)
+            }
+            let sortedMembers = (familyMembers[rootKey] ?? []).sorted { a, b in
+                if a.depth != b.depth { return a.depth < b.depth }
+                if a.firstSampleIndex != b.firstSampleIndex { return a.firstSampleIndex < b.firstSampleIndex }
+                return a.agentId < b.agentId
+            }
+            var nextChildTier = max(
+                1,
+                (sortedMembers.compactMap { tierByAgentId[$0.agentId] }.max() ?? 0) + 1
+            )
+            for member in sortedMembers where tierByAgentId[member.agentId] == nil {
+                if member.depth == 0 {
+                    tierByAgentId[member.agentId] = 0
+                } else {
+                    tierByAgentId[member.agentId] = nextChildTier
+                    nextChildTier += 1
+                }
+            }
+        }
+
+        var descendantsCache: [String: Set<String>] = [:]
+        func descendants(of parentId: String) -> Set<String> {
+            if let cached = descendantsCache[parentId] {
+                return cached
+            }
+            var visited = Set<String>()
+            var queue = Array(directChildrenByParent[parentId] ?? [])
+            while let cur = queue.popLast() {
+                if visited.insert(cur).inserted {
+                    queue.append(contentsOf: directChildrenByParent[cur] ?? [])
+                }
+            }
+            descendantsCache[parentId] = visited
+            return visited
+        }
+
+        func hasDescendantActivity(of agentId: String, between startExclusive: Int, and endExclusive: Int) -> Bool {
+            guard startExclusive + 1 < endExclusive else { return false }
+            let desc = descendants(of: agentId)
+            guard !desc.isEmpty else { return false }
+            for sIdx in (startExclusive + 1)..<endExclusive {
+                if sampleAgentMap[sIdx].keys.contains(where: { desc.contains($0) }) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        let latestSampleIndex = samples.count - 1
+        let built: [AgentContextSeries] = keptIds.compactMap { agentId in
+            guard let entry = grouped[agentId],
+                  let firstIndexed = entry.indexedPoints.first,
+                  let latestIndexed = entry.indexedPoints.last else { return nil }
+            let latest = latestIndexed.point
+            var runs: [[AgentSeriesSamplePoint]] = [[firstIndexed.point]]
+            var prevSampleIdx = firstIndexed.sampleIdx
+            for item in entry.indexedPoints.dropFirst() {
+                if item.sampleIdx - prevSampleIdx > 1,
+                   hasDescendantActivity(of: agentId, between: prevSampleIdx, and: item.sampleIdx) {
+                    runs.append([item.point])
+                } else {
+                    runs[runs.count - 1].append(item.point)
+                }
+                prevSampleIdx = item.sampleIdx
+            }
+
+            if entry.parentAgentId == nil,
+               entry.lastSampleIndex < latestSampleIndex,
+               !hasDescendantActivity(of: agentId, between: entry.lastSampleIndex, and: samples.count),
+               !runs.isEmpty {
+                let tailPoint = AgentSeriesSamplePoint(
+                    timestamp: samples[latestSampleIndex].timestamp,
+                    contextTokens: latest.contextTokens,
+                    isRunning: false,
+                    tps: 0.0,
+                    isForkAnchor: false,
+                    customId: "idle-tail"
+                )
+                runs[runs.count - 1].append(tailPoint)
+            }
+
+            var didAttachFork = false
+
+            if let pid = entry.parentAgentId,
+               keptIds.contains(pid),
+               entry.firstSampleIndex > 0,
+               !runs.isEmpty {
+                let lookbackStart = max(0, entry.firstSampleIndex - 2)
+                var anchorPair: (timestamp: Date, point: AgentContextPoint)? = nil
+                for idx in stride(from: entry.firstSampleIndex - 1, through: lookbackStart, by: -1) {
+                    if let parentPt = sampleAgentMap[idx][pid] {
+                        anchorPair = (samples[idx].timestamp, parentPt)
+                        break
+                    }
+                }
+                if let anchorInfo = anchorPair,
+                   anchorInfo.timestamp < runs[0][0].timestamp {
+                    let anchor = AgentSeriesSamplePoint(
+                        timestamp: anchorInfo.timestamp,
+                        contextTokens: anchorInfo.point.contextTokens,
+                        isRunning: false,
+                        tps: 0.0,
+                        isForkAnchor: true
+                    )
+                    runs[0].insert(anchor, at: 0)
+                    didAttachFork = true
+                }
+            }
+
+            let segments: [AgentCurveSegment] = runs.enumerated().map { idx, segPoints in
+                AgentCurveSegment(
+                    id: "\(agentId)#\(idx)",
+                    isForkSegment: didAttachFork && idx == 0,
+                    points: segPoints
+                )
+            }
+
+            let isLiveRunning = (entry.lastSampleIndex == latestSampleIndex) && latest.isRunning
+            let hash = agentId.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
+            let rootKey = ancestryById[agentId]?.rootKey ?? agentId
+            return AgentContextSeries(
+                agentId: agentId,
+                label: entry.label,
+                isRunning: isLiveRunning,
+                latestContextTokens: latest.contextTokens,
+                latestTps: isLiveRunning ? latest.tps : 0.0,
+                colorIndex: abs(hash),
+                familyIndex: familyIndexByRoot[rootKey] ?? 0,
+                familyTier: tierByAgentId[agentId] ?? 0,
+                parentAgentId: entry.parentAgentId,
+                segments: segments
+            )
+        }
+
+        func sortKey(_ a: AgentContextSeries, _ b: AgentContextSeries) -> Bool {
+            if a.isRunning != b.isRunning { return a.isRunning }
+            if a.latestContextTokens != b.latestContextTokens { return a.latestContextTokens > b.latestContextTokens }
+            return a.agentId < b.agentId
+        }
+
+        let builtIds = Set(built.map(\.agentId))
+        let roots = built.filter { $0.parentAgentId == nil || !builtIds.contains($0.parentAgentId!) }.sorted(by: sortKey)
+        var ordered: [AgentContextSeries] = []
+        var appended = Set<String>()
+
+        func appendTree(_ node: AgentContextSeries) {
+            guard !appended.contains(node.agentId) else { return }
+            appended.insert(node.agentId)
+            ordered.append(node)
+            let children = built.filter { $0.parentAgentId == node.agentId }.sorted(by: sortKey)
+            for child in children {
+                appendTree(child)
+            }
+        }
+
+        for root in roots {
+            appendTree(root)
+        }
+        return Array(ordered.prefix(maxSeries))
+    }
+
+    static func sessionColorLinks(
+        sessions: [SessionItem],
+        seriesList: [AgentContextSeries]
+    ) -> [String: SessionTelemetryColorLink] {
+        guard !sessions.isEmpty, !seriesList.isEmpty else { return [:] }
+        let seriesById = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0) })
+
+        func collectIds(of item: SessionItem, into set: inout Set<String>) {
+            set.insert(item.uuid)
+            for sub in item.subagents {
+                collectIds(of: sub, into: &set)
+            }
+        }
+
+        func belongsToFamily(_ series: AgentContextSeries, memberIds: Set<String>) -> Bool {
+            if memberIds.contains(series.agentId) { return true }
+            var cur = series.parentAgentId
+            var visited = Set<String>([series.agentId])
+            while let pid = cur, !pid.isEmpty {
+                if memberIds.contains(pid) { return true }
+                guard !visited.contains(pid) else { break }
+                visited.insert(pid)
+                cur = seriesById[pid]?.parentAgentId
+            }
+            return false
+        }
+
+        var result: [String: SessionTelemetryColorLink] = [:]
+        for session in sessions {
+            var memberIds = Set<String>()
+            collectIds(of: session, into: &memberIds)
+
+            let directSeries = seriesList.first(where: { $0.agentId == session.uuid })
+            let matching = seriesList.filter { belongsToFamily($0, memberIds: memberIds) }
+            guard !matching.isEmpty else { continue }
+
+            let childSeries = matching.filter { $0.agentId != session.uuid }
+            let childTones = childSeries.map {
+                LiveTelemetryColorPalette.tone(familyIndex: $0.familyIndex, tier: $0.familyTier)
+            }
+            let primarySource = directSeries ?? childSeries[0]
+            let primaryTone = LiveTelemetryColorPalette.tone(
+                familyIndex: primarySource.familyIndex,
+                tier: primarySource.familyTier
+            )
+            result[session.uuid] = SessionTelemetryColorLink(
+                primaryTone: primaryTone,
+                childTones: childTones,
+                seriesIds: Set(matching.map(\.agentId)),
+                hasDirectSeries: directSeries != nil
+            )
+        }
+        return result
+    }
+
+    static func smoothedCurvePoints(
+        _ points: [AgentSeriesSamplePoint],
+        windowSeconds: TimeInterval
+    ) -> [AgentSeriesSamplePoint] {
+        guard points.count > 1 else { return points }
+
+        var clean: [AgentSeriesSamplePoint] = []
+        clean.reserveCapacity(points.count)
+        for pt in points {
+            if let last = clean.last, pt.timestamp <= last.timestamp {
+                clean[clean.count - 1] = pt
+            } else {
+                clean.append(pt)
+            }
+        }
+        guard clean.count > 1 else { return clean }
+
+        if clean.count == 2 {
+            let p0 = clean[0]
+            let p1 = clean[1]
+            let dt = p1.timestamp.timeIntervalSince(p0.timestamp)
+            guard dt > 0 else { return clean }
+            let y0 = Double(p0.contextTokens)
+            let y1 = Double(p1.contextTokens)
+            let steps = 14
+            return (0...steps).map { s in
+                if s == 0 {
+                    return AgentSeriesSamplePoint(
+                        timestamp: p0.timestamp,
+                        contextTokens: p0.contextTokens,
+                        isRunning: p0.isRunning,
+                        tps: p0.tps,
+                        isForkAnchor: p0.isForkAnchor,
+                        customId: "s-\(s)"
+                    )
+                }
+                if s == steps {
+                    return AgentSeriesSamplePoint(
+                        timestamp: p1.timestamp,
+                        contextTokens: p1.contextTokens,
+                        isRunning: p1.isRunning,
+                        tps: p1.tps,
+                        isForkAnchor: false,
+                        customId: "s-\(s)"
+                    )
+                }
+                let u = Double(s) / Double(steps)
+                let ease = (3.0 * u * u) - (2.0 * u * u * u)
+                let y = y0 + (y1 - y0) * ease
+                return AgentSeriesSamplePoint(
+                    timestamp: p0.timestamp.addingTimeInterval(dt * u),
+                    contextTokens: Int(y.rounded()),
+                    isRunning: p0.isRunning,
+                    tps: p0.tps,
+                    isForkAnchor: false,
+                    customId: "s-\(s)"
+                )
+            }
+        }
+
+        let ys = clean.map { Double($0.contextTokens) }
+        let minY = ys.min() ?? 0.0
+        let maxY = ys.max() ?? 0.0
+        let ySpan = max(1.0, maxY - minY)
+        let steepThreshold = max(20_000.0, ySpan * 0.16)
+        let rampDuration = max(4.0, windowSeconds * 0.065)
+
+        struct BridgeNode {
+            let timestamp: Date
+            let y: Double
+            let isRunning: Bool
+            let tps: Double
+        }
+
+        var bridged: [BridgeNode] = [
+            BridgeNode(
+                timestamp: clean[0].timestamp,
+                y: Double(clean[0].contextTokens),
+                isRunning: clean[0].isRunning,
+                tps: clean[0].tps
+            )
+        ]
+
+        var i = 0
+        while i < clean.count - 1 {
+            let curr = bridged[bridged.count - 1]
+            let nextIdx = i + 1
+            let next = clean[nextIdx]
+            let dy = Double(next.contextTokens) - curr.y
+            let dt = next.timestamp.timeIntervalSince(curr.timestamp)
+
+            if abs(dy) >= steepThreshold && dt < rampDuration && nextIdx < clean.count - 1 {
+                let targetTime = curr.timestamp.addingTimeInterval(rampDuration)
+                let plateauRef = Double(next.contextTokens)
+                let plateauTol = max(14_000.0, abs(dy) * 0.15)
+                var furthestIdx = nextIdx
+                var beyondIdx: Int? = nil
+
+                var k = nextIdx + 1
+                while k < clean.count {
+                    let pt = clean[k]
+                    if abs(Double(pt.contextTokens) - plateauRef) <= plateauTol {
+                        if pt.timestamp <= targetTime {
+                            furthestIdx = k
+                            k += 1
+                            continue
+                        } else {
+                            beyondIdx = k
+                            break
+                        }
+                    } else {
+                        break
+                    }
+                }
+
+                var endTime = clean[furthestIdx].timestamp
+                var endY = Double(clean[furthestIdx].contextTokens)
+                let endRunning = clean[furthestIdx].isRunning
+                let endTps = clean[furthestIdx].tps
+
+                if let bIdx = beyondIdx, bIdx == furthestIdx + 1 {
+                    let prevPt = clean[furthestIdx]
+                    let beyondPt = clean[bIdx]
+                    let span = beyondPt.timestamp.timeIntervalSince(prevPt.timestamp)
+                    if span > 0 && targetTime > prevPt.timestamp && targetTime < clean[clean.count - 1].timestamp {
+                        let frac = targetTime.timeIntervalSince(prevPt.timestamp) / span
+                        endTime = targetTime
+                        endY = Double(prevPt.contextTokens) + (Double(beyondPt.contextTokens) - Double(prevPt.contextTokens)) * frac
+                    }
+                }
+
+                let easeSpan = endTime.timeIntervalSince(curr.timestamp)
+                if easeSpan > 0 {
+                    let easeSteps = 6
+                    for s in 1...easeSteps {
+                        let u = Double(s) / Double(easeSteps)
+                        let ease = (3.0 * u * u) - (2.0 * u * u * u)
+                        bridged.append(
+                            BridgeNode(
+                                timestamp: curr.timestamp.addingTimeInterval(easeSpan * u),
+                                y: curr.y + (endY - curr.y) * ease,
+                                isRunning: s == easeSteps ? endRunning : curr.isRunning,
+                                tps: s == easeSteps ? endTps : curr.tps
+                            )
+                        )
+                    }
+                }
+                i = furthestIdx
+            } else {
+                bridged.append(
+                    BridgeNode(
+                        timestamp: next.timestamp,
+                        y: Double(next.contextTokens),
+                        isRunning: next.isRunning,
+                        tps: next.tps
+                    )
+                )
+                i = nextIdx
+            }
+        }
+
+        let tStart = bridged[0].timestamp
+        let tEnd = bridged[bridged.count - 1].timestamp
+        let totalSpan = tEnd.timeIntervalSince(tStart)
+        guard totalSpan > 0.05 else { return clean }
+
+        let sampleCount = min(110, max(36, Int((totalSpan / 1.5).rounded()) + 1))
+        var times = Array(repeating: 0.0, count: sampleCount)
+        var uniformY = Array(repeating: 0.0, count: sampleCount)
+        var uniformRunning = Array(repeating: true, count: sampleCount)
+        var uniformTps = Array(repeating: 0.0, count: sampleCount)
+
+        var bCursor = 0
+        for idx in 0..<sampleCount {
+            let frac = Double(idx) / Double(sampleCount - 1)
+            let relT = totalSpan * frac
+            times[idx] = relT
+            let absTime = tStart.addingTimeInterval(relT)
+
+            while bCursor + 1 < bridged.count - 1 && bridged[bCursor + 1].timestamp <= absTime {
+                bCursor += 1
+            }
+            let left = bridged[bCursor]
+            let right = bridged[min(bCursor + 1, bridged.count - 1)]
+            let segDt = right.timestamp.timeIntervalSince(left.timestamp)
+            if segDt > 0 {
+                let u = min(1.0, max(0.0, absTime.timeIntervalSince(left.timestamp) / segDt))
+                uniformY[idx] = left.y + (right.y - left.y) * u
+                uniformRunning[idx] = u >= 0.5 ? right.isRunning : left.isRunning
+                uniformTps[idx] = u >= 0.5 ? right.tps : left.tps
+            } else {
+                uniformY[idx] = left.y
+                uniformRunning[idx] = left.isRunning
+                uniformTps[idx] = left.tps
+            }
+        }
+
+        let baseSigma = min(max(2.5, windowSeconds * 0.036), totalSpan * 0.18)
+        let taperBand = max(1.0, baseSigma * 1.15)
+        var smoothedY = Array(repeating: 0.0, count: sampleCount)
+        smoothedY[0] = Double(clean[0].contextTokens)
+        smoothedY[sampleCount - 1] = Double(clean[clean.count - 1].contextTokens)
+
+        for idx in 1..<(sampleCount - 1) {
+            let t = times[idx]
+            let distEdge = min(t, totalSpan - t)
+            let taper = min(1.0, distEdge / taperBand)
+            let sigma = max(0.05, baseSigma * taper)
+            let cutoff = sigma * 3.0
+            let invTwoSigmaSq = 1.0 / (2.0 * sigma * sigma)
+
+            var weightedSum = 0.0
+            var weightTotal = 0.0
+            for j in 0..<sampleCount {
+                let dt = times[j] - t
+                if abs(dt) > cutoff { continue }
+                let w = exp(-(dt * dt) * invTwoSigmaSq)
+                weightedSum += uniformY[j] * w
+                weightTotal += w
+            }
+            let avg = weightTotal > 0 ? (weightedSum / weightTotal) : uniformY[idx]
+            smoothedY[idx] = min(maxY, max(minY, avg))
+        }
+
+        var result: [AgentSeriesSamplePoint] = []
+        result.reserveCapacity(sampleCount)
+        for idx in 0..<sampleCount {
+            let isFirst = (idx == 0)
+            let isLast = (idx == sampleCount - 1)
+            let ts = isFirst ? clean[0].timestamp : (isLast ? clean[clean.count - 1].timestamp : tStart.addingTimeInterval(times[idx]))
+            let tokens = isFirst ? clean[0].contextTokens : (isLast ? clean[clean.count - 1].contextTokens : Int(smoothedY[idx].rounded()))
+            result.append(
+                AgentSeriesSamplePoint(
+                    timestamp: ts,
+                    contextTokens: tokens,
+                    isRunning: isFirst ? clean[0].isRunning : (isLast ? clean[clean.count - 1].isRunning : uniformRunning[idx]),
+                    tps: isFirst ? clean[0].tps : (isLast ? clean[clean.count - 1].tps : uniformTps[idx]),
+                    isForkAnchor: isFirst ? clean[0].isForkAnchor : false,
+                    customId: "s-\(idx)"
+                )
+            )
+        }
+
+        return result
+    }
+
+    static func interpolatedContext(in points: [AgentSeriesSamplePoint], at timestamp: Date) -> Double {
+        guard let first = points.first else { return 0.0 }
+        if timestamp <= first.timestamp {
+            return Double(first.contextTokens)
+        }
+        guard let last = points.last else { return Double(first.contextTokens) }
+        if timestamp >= last.timestamp {
+            return Double(last.contextTokens)
+        }
+        for idx in 1..<points.count {
+            let p0 = points[idx - 1]
+            let p1 = points[idx]
+            if timestamp <= p1.timestamp {
+                let dt = p1.timestamp.timeIntervalSince(p0.timestamp)
+                guard dt > 0 else { return Double(p1.contextTokens) }
+                let u = min(1.0, max(0.0, timestamp.timeIntervalSince(p0.timestamp) / dt))
+                return Double(p0.contextTokens) + (Double(p1.contextTokens) - Double(p0.contextTokens)) * u
+            }
+        }
+        return Double(last.contextTokens)
+    }
+
+    private static func buildStrokeRuns(
+        segmentId: String,
+        rawPoints: [AgentSeriesSamplePoint],
+        smoothedPoints: [AgentSeriesSamplePoint],
+        windowSeconds: TimeInterval
+    ) -> [AgentCurveStrokeRun] {
+        guard smoothedPoints.count >= 2 else {
+            return smoothedPoints.isEmpty ? [] : [
+                AgentCurveStrokeRun(
+                    id: "\(segmentId)#run0",
+                    isIdle: !(smoothedPoints.first?.isRunning ?? true),
+                    points: smoothedPoints
+                )
+            ]
+        }
+
+        let microPauseTolerance = min(20.0, max(8.0, windowSeconds * 0.045))
+        var idleIntervals: [(start: Date, end: Date)] = []
+        if rawPoints.count >= 2 {
+            for idx in 0..<(rawPoints.count - 1) {
+                let p0 = rawPoints[idx]
+                let p1 = rawPoints[idx + 1]
+                let dt = p1.timestamp.timeIntervalSince(p0.timestamp)
+                let explicitIdleSpan = (!p0.isRunning && !p1.isRunning && !p0.isForkAnchor) || p1.customId == "idle-tail"
+                if dt > microPauseTolerance || explicitIdleSpan {
+                    idleIntervals.append((start: p0.timestamp, end: p1.timestamp))
+                }
+            }
+        }
+
+        if idleIntervals.isEmpty {
+            return [
+                AgentCurveStrokeRun(
+                    id: "\(segmentId)#run0",
+                    isIdle: false,
+                    points: smoothedPoints
+                )
+            ]
+        }
+
+        var runs: [AgentCurveStrokeRun] = []
+        var currentPoints: [AgentSeriesSamplePoint] = [smoothedPoints[0]]
+        var currentIsIdle: Bool? = nil
+
+        for idx in 0..<(smoothedPoints.count - 1) {
+            let a = smoothedPoints[idx]
+            let b = smoothedPoints[idx + 1]
+            let dt = b.timestamp.timeIntervalSince(a.timestamp)
+            let mid = a.timestamp.addingTimeInterval(max(0.0, dt * 0.5))
+            let edgeIsIdle = idleIntervals.contains { mid >= $0.start && mid <= $0.end }
+
+            if let activeFlag = currentIsIdle {
+                if activeFlag == edgeIsIdle {
+                    currentPoints.append(b)
+                } else {
+                    if currentPoints.count >= 2 {
+                        runs.append(
+                            AgentCurveStrokeRun(
+                                id: "\(segmentId)#run\(runs.count)",
+                                isIdle: activeFlag,
+                                points: currentPoints
+                            )
+                        )
+                    }
+                    currentPoints = [a, b]
+                    currentIsIdle = edgeIsIdle
+                }
+            } else {
+                currentIsIdle = edgeIsIdle
+                currentPoints.append(b)
+            }
+        }
+
+        if currentPoints.count >= 2, let activeFlag = currentIsIdle {
+            runs.append(
+                AgentCurveStrokeRun(
+                    id: "\(segmentId)#run\(runs.count)",
+                    isIdle: activeFlag,
+                    points: currentPoints
+                )
+            )
+        }
+
+        return runs.isEmpty
+            ? [AgentCurveStrokeRun(id: "\(segmentId)#run0", isIdle: false, points: smoothedPoints)]
+            : runs
+    }
+
+    static func resolvedCurveSegments(
+        for seriesList: [AgentContextSeries],
+        windowSeconds: TimeInterval
+    ) -> [ResolvedAgentCurveSeries] {
+        guard !seriesList.isEmpty else { return [] }
+        let seriesById = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0) })
+        var resolvedById: [String: ResolvedAgentCurveSeries] = [:]
+        var resolving = Set<String>()
+
+        func resolveSeries(_ series: AgentContextSeries) -> ResolvedAgentCurveSeries {
+            if let cached = resolvedById[series.agentId] {
+                return cached
+            }
+            if resolving.contains(series.agentId) {
+                let fallback = series.segments.map { seg -> ResolvedAgentCurveSegment in
+                    let smoothed = smoothedCurvePoints(seg.points, windowSeconds: windowSeconds)
+                    return ResolvedAgentCurveSegment(
+                        id: seg.id,
+                        points: smoothed,
+                        forkJunction: nil,
+                        strokeRuns: buildStrokeRuns(
+                            segmentId: seg.id,
+                            rawPoints: seg.points,
+                            smoothedPoints: smoothed,
+                            windowSeconds: windowSeconds
+                        )
+                    )
+                }
+                return ResolvedAgentCurveSeries(agentId: series.agentId, parentAgentId: series.parentAgentId, segments: fallback)
+            }
+
+            resolving.insert(series.agentId)
+            let parentResolved: ResolvedAgentCurveSeries? = {
+                guard let pid = series.parentAgentId, let pSeries = seriesById[pid] else { return nil }
+                return resolveSeries(pSeries)
+            }()
+
+            let resolvedSegments: [ResolvedAgentCurveSegment] = series.segments.map { seg in
+                guard seg.isForkSegment,
+                      let rawAnchor = seg.points.first,
+                      rawAnchor.isForkAnchor,
+                      let pSegs = parentResolved?.segments.filter({ !$0.points.isEmpty }),
+                      !pSegs.isEmpty else {
+                    let smoothed = smoothedCurvePoints(seg.points, windowSeconds: windowSeconds)
+                    return ResolvedAgentCurveSegment(
+                        id: seg.id,
+                        points: smoothed,
+                        forkJunction: nil,
+                        strokeRuns: buildStrokeRuns(
+                            segmentId: seg.id,
+                            rawPoints: seg.points,
+                            smoothedPoints: smoothed,
+                            windowSeconds: windowSeconds
+                        )
+                    )
+                }
+
+                let childRaw = Array(seg.points.dropFirst())
+                let childSmoothed = smoothedCurvePoints(childRaw, windowSeconds: windowSeconds)
+                let parentSeg: ResolvedAgentCurveSegment = {
+                    if let containing = pSegs.first(where: {
+                        rawAnchor.timestamp >= $0.points.first!.timestamp && rawAnchor.timestamp <= $0.points.last!.timestamp
+                    }) {
+                        return containing
+                    }
+                    if let prior = pSegs.filter({ $0.points.last!.timestamp <= rawAnchor.timestamp })
+                        .max(by: { $0.points.last!.timestamp < $1.points.last!.timestamp }) {
+                        return prior
+                    }
+                    return pSegs.min(by: { a, b in
+                        let da = abs(a.points.last!.timestamp.timeIntervalSince(rawAnchor.timestamp))
+                        let db = abs(b.points.last!.timestamp.timeIntervalSince(rawAnchor.timestamp))
+                        return da < db
+                    })!
+                }()
+
+                let pPts = parentSeg.points
+                let pStart = pPts.first!.timestamp
+                let pEnd = pPts.last!.timestamp
+                var forkTime = min(max(rawAnchor.timestamp, pStart), pEnd)
+
+                if let childFirstTime = childSmoothed.first?.timestamp, childFirstTime <= forkTime {
+                    let availableBack = max(0.0, childFirstTime.timeIntervalSince(pStart))
+                    let lead = min(max(2.0, windowSeconds * 0.02), availableBack)
+                    let stepped = childFirstTime.addingTimeInterval(-lead)
+                    if stepped >= pStart && stepped <= pEnd {
+                        forkTime = stepped
+                    }
+                }
+
+                let exactY = Int(interpolatedContext(in: pPts, at: forkTime).rounded())
+                let junction = AgentSeriesSamplePoint(
+                    timestamp: forkTime,
+                    contextTokens: exactY,
+                    isRunning: false,
+                    tps: 0.0,
+                    isForkAnchor: true,
+                    customId: "fork-\(seg.id)"
+                )
+
+                var finalPoints: [AgentSeriesSamplePoint] = [junction]
+                if let childStart = childSmoothed.first {
+                    let dt = childStart.timestamp.timeIntervalSince(forkTime)
+                    if dt > 0.05 {
+                        let y0 = Double(exactY)
+                        let y1 = Double(childStart.contextTokens)
+                        let steps = 12
+                        for s in 1..<steps {
+                            let u = Double(s) / Double(steps)
+                            let ease = (3.0 * u * u) - (2.0 * u * u * u)
+                            finalPoints.append(
+                                AgentSeriesSamplePoint(
+                                    timestamp: forkTime.addingTimeInterval(dt * u),
+                                    contextTokens: Int((y0 + (y1 - y0) * ease).rounded()),
+                                    isRunning: false,
+                                    tps: 0.0,
+                                    isForkAnchor: false,
+                                    customId: "bridge-\(seg.id)-\(s)"
+                                )
+                            )
+                        }
+                    }
+                    for (cIdx, pt) in childSmoothed.enumerated() {
+                        finalPoints.append(
+                            AgentSeriesSamplePoint(
+                                timestamp: pt.timestamp,
+                                contextTokens: pt.contextTokens,
+                                isRunning: pt.isRunning,
+                                tps: pt.tps,
+                                isForkAnchor: false,
+                                customId: "child-\(seg.id)-\(cIdx)"
+                            )
+                        )
+                    }
+                }
+
+                return ResolvedAgentCurveSegment(
+                    id: seg.id,
+                    points: finalPoints,
+                    forkJunction: junction,
+                    strokeRuns: buildStrokeRuns(
+                        segmentId: seg.id,
+                        rawPoints: childRaw,
+                        smoothedPoints: finalPoints,
+                        windowSeconds: windowSeconds
+                    )
+                )
+            }
+
+            resolving.remove(series.agentId)
+            let built = ResolvedAgentCurveSeries(
+                agentId: series.agentId,
+                parentAgentId: series.parentAgentId,
+                segments: resolvedSegments
+            )
+            resolvedById[series.agentId] = built
+            return built
+        }
+
+        return seriesList.map { resolveSeries($0) }
+    }
+
+    static func nearestAgentId(
+        in resolvedSeries: [ResolvedAgentCurveSeries],
+        seriesList: [AgentContextSeries],
+        timeDomain: ClosedRange<Date>,
+        maxContext: Int,
+        plotSize: CGSize,
+        hoverLocation: CGPoint,
+        hitRadiusPixels: CGFloat = 28.0
+    ) -> String? {
+        let totalTime = timeDomain.upperBound.timeIntervalSince(timeDomain.lowerBound)
+        guard totalTime > 0,
+              maxContext > 0,
+              plotSize.width > 0,
+              plotSize.height > 0 else {
+            return nil
+        }
+
+        let maxCtxD = Double(maxContext)
+        let runningById = Dictionary(uniqueKeysWithValues: seriesList.map { ($0.agentId, $0.isRunning) })
+
+        func pixelPoint(for pt: AgentSeriesSamplePoint) -> CGPoint {
+            let nx = pt.timestamp.timeIntervalSince(timeDomain.lowerBound) / totalTime
+            let ny = Double(pt.contextTokens) / maxCtxD
+            let px = CGFloat(nx) * plotSize.width
+            let py = (1.0 - CGFloat(ny)) * plotSize.height
+            return CGPoint(x: px, y: py)
+        }
+
+        func distanceSqToSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let lenSq = dx * dx + dy * dy
+            if lenSq <= 0.0001 {
+                let ux = p.x - a.x
+                let uy = p.y - a.y
+                return ux * ux + uy * uy
+            }
+            let t = min(1.0, max(0.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
+            let projX = a.x + t * dx
+            let projY = a.y + t * dy
+            let rx = p.x - projX
+            let ry = p.y - projY
+            return rx * rx + ry * ry
+        }
+
+        var bestCandidate: (agentId: String, dist: CGFloat, isRunning: Bool)? = nil
+
+        for series in resolvedSeries {
+            var minDistSq = CGFloat.greatestFiniteMagnitude
+            for seg in series.segments where !seg.points.isEmpty {
+                if seg.points.count == 1 {
+                    let a = pixelPoint(for: seg.points[0])
+                    let dSq = distanceSqToSegment(hoverLocation, a, a)
+                    if dSq < minDistSq { minDistSq = dSq }
+                } else {
+                    for idx in 1..<seg.points.count {
+                        let a = pixelPoint(for: seg.points[idx - 1])
+                        let b = pixelPoint(for: seg.points[idx])
+                        let dSq = distanceSqToSegment(hoverLocation, a, b)
+                        if dSq < minDistSq { minDistSq = dSq }
+                    }
+                }
+            }
+            guard minDistSq.isFinite else { continue }
+            let dist = sqrt(minDistSq)
+            guard dist <= hitRadiusPixels else { continue }
+            let running = runningById[series.agentId] ?? false
+
+            if let cur = bestCandidate {
+                let nearTie = abs(dist - cur.dist) <= 2.0
+                if (nearTie && running && !cur.isRunning) || (!nearTie && dist < cur.dist) {
+                    bestCandidate = (series.agentId, dist, running)
+                }
+            } else {
+                bestCandidate = (series.agentId, dist, running)
+            }
+        }
+
+        return bestCandidate?.agentId
+    }
+
+    static func matchingSessionId(
+        forAgentId agentId: String?,
+        links: [String: SessionTelemetryColorLink]
+    ) -> String? {
+        guard let agentId, !agentId.isEmpty else { return nil }
+        return links.first(where: { $0.value.seriesIds.contains(agentId) })?.key
+    }
+
+    static func maxContextDomain(for series: [AgentContextSeries]) -> Int {
+        let peak = series.flatMap(\.points).map(\.contextTokens).max() ?? 0
+        if peak <= 0 {
+            return 180_000
+        }
+        let padded = Double(peak) * 1.18
+        let step = 60_000.0
+        return max(120_000, Int(ceil(padded / step) * step))
+    }
+
+    static func xAxisTicks(
+        for range: TelemetryTimeRange,
+        referenceDate: Date = Date(),
+        anchorDate: Date? = nil,
+        count: Int = 4
+    ) -> [Date] {
+        let safeCount = max(2, count)
+        let domain = xAxisDomain(for: range, referenceDate: referenceDate, anchorDate: anchorDate)
+        let start = domain.lowerBound
+        let step = range.seconds / Double(safeCount - 1)
+        return (0..<safeCount).map { idx in
+            start.addingTimeInterval(Double(idx) * step)
+        }
+    }
+
+    static func yAxisTicks(maxContext: Int) -> [Double] {
+        let safeMax = max(60_000, maxContext)
+        let third = Double(safeMax) / 3.0
+        return [0.0, third.rounded(), (third * 2.0).rounded(), Double(safeMax)]
+    }
+
+    static func appendSample(
+        to history: [LiveTelemetrySample],
+        payload: MonitorPayload,
+        previousStats: TodayStats?,
+        nextId: inout Int,
+        now: Date = Date()
+    ) -> ([LiveTelemetrySample], TodayStats?, Bool) {
+        let metrics = extractLiveMetrics(from: payload)
+        let stats = payload.todayStats
+
+        if let last = history.last,
+           now.timeIntervalSince(last.timestamp) < minimumSampleSpacingSeconds,
+           last.activeAgentCount == metrics.activeAgentCount,
+           Int(last.totalTps.rounded()) == Int(metrics.totalTps.rounded()),
+           last.totalTokensCumulative == stats.totalTokens {
+            return (history, previousStats ?? (stats.hasData ? stats : nil), false)
+        }
+
+        let prevActiveIds = Set((history.last?.agentContexts ?? []).filter(\.isRunning).map(\.agentId))
+        let agentContexts = extractAgentSnapshots(from: payload, previouslyActiveIds: prevActiveIds)
+
+        let resolvedCachePct: Double
+        let deltaTokens: Int
+        let deltaCacheTokens: Int
+        let deltaNewTokens: Int
+        let isIdleHold: Bool
+
+        if let prev = previousStats, stats.hasData {
+            deltaCacheTokens = max(0, stats.cacheTokens - prev.cacheTokens)
+            deltaNewTokens = max(0, (stats.inputTokens + stats.outputTokens) - (prev.inputTokens + prev.outputTokens))
+            deltaTokens = max(0, stats.totalTokens - prev.totalTokens)
+            let denom = deltaCacheTokens + deltaNewTokens
+            if denom > 0 {
+                resolvedCachePct = min(100.0, max(0.0, Double(deltaCacheTokens) / Double(denom) * 100.0))
+                isIdleHold = false
+            } else {
+                resolvedCachePct = history.last?.cachePct ?? (stats.hasData ? min(100.0, max(0.0, stats.cachePct)) : 0.0)
+                isIdleHold = true
+            }
+        } else {
+            deltaTokens = 0
+            deltaCacheTokens = 0
+            deltaNewTokens = 0
+            isIdleHold = false
+            let runningWithCache = payload.sessions.filter { $0.isRunning && $0.cachePct > 0 }
+            if !runningWithCache.isEmpty {
+                let avg = runningWithCache.reduce(0.0) { $0 + $1.cachePct } / Double(runningWithCache.count)
+                resolvedCachePct = min(100.0, max(0.0, avg))
+            } else if stats.hasData {
+                resolvedCachePct = min(100.0, max(0.0, stats.cachePct))
+            } else {
+                resolvedCachePct = 0.0
+            }
+        }
+
+        let sample = LiveTelemetrySample(
+            id: nextId,
+            timestamp: now,
+            activeAgentCount: metrics.activeAgentCount,
+            totalTps: metrics.totalTps,
+            totalTokensCumulative: stats.totalTokens,
+            deltaTokens: deltaTokens,
+            cachePct: resolvedCachePct,
+            isIdleCacheHold: isIdleHold,
+            deltaCacheTokens: deltaCacheTokens,
+            deltaNewTokens: deltaNewTokens,
+            agentContexts: agentContexts
+        )
+        nextId += 1
+
+        var updated = history
+        updated.append(sample)
+        let cutoff = now.addingTimeInterval(-TelemetryTimeRange.oneHour.seconds)
+        if let firstValidIdx = updated.firstIndex(where: { $0.timestamp >= cutoff }), firstValidIdx > 0 {
+            updated.removeFirst(firstValidIdx)
+        }
+        if updated.count > maxSamples {
+            updated.removeFirst(updated.count - maxSamples)
+        }
+        let nextPrevStats: TodayStats? = stats.hasData ? stats : previousStats
+        return (updated, nextPrevStats, true)
+    }
+
+    static func samples(
+        in range: TelemetryTimeRange,
+        from history: [LiveTelemetrySample],
+        now: Date = Date()
+    ) -> [LiveTelemetrySample] {
+        let cutoff = now.addingTimeInterval(-range.seconds)
+        return history.filter { $0.timestamp >= cutoff }
+    }
+
+    static func visibleChartSamples(
+        in range: TelemetryTimeRange,
+        from history: [LiveTelemetrySample],
+        anchorDate: Date? = nil,
+        now: Date = Date()
+    ) -> [LiveTelemetrySample] {
+        let domain = xAxisDomain(for: range, referenceDate: now, anchorDate: anchorDate)
+        return history.filter { $0.timestamp >= domain.lowerBound }
+    }
+
+    static func xAxisDomain(
+        for range: TelemetryTimeRange,
+        referenceDate: Date = Date(),
+        anchorDate: Date? = nil
+    ) -> ClosedRange<Date> {
+        let leadIn = range.seconds * 0.25
+        let stride = range.seconds * 0.75
+        let anchor = anchorDate ?? referenceDate
+        let elapsed = max(0.0, referenceDate.timeIntervalSince(anchor))
+        let cycleIndex = floor((elapsed + 1e-6) / stride)
+        let cycleNow = anchor.addingTimeInterval(cycleIndex * stride)
+        let lower = cycleNow.addingTimeInterval(-leadIn)
+        return lower...lower.addingTimeInterval(range.seconds)
+    }
+
+    static func chartDomains(for samples: [LiveTelemetrySample]) -> ChartDomains {
+        let peakTps = samples.map(\.totalTps).max() ?? 0.0
+        let maxTps = max(50.0, ceil((peakTps * 1.15) / 10.0) * 10.0)
+        let maxAgents = max(1, samples.map(\.activeAgentCount).max() ?? 1)
+
+        if samples.isEmpty || samples.allSatisfy({ $0.cachePct <= 0.0 }) {
+            return ChartDomains(maxTps: maxTps, maxAgents: maxAgents, cacheMinY: 0.0)
+        }
+        let minCache = samples.map(\.cachePct).min() ?? 90.0
+        let buffered = max(0.0, floor(minCache - 3.0))
+        let cacheMinY = min(buffered, 92.0)
+        return ChartDomains(maxTps: maxTps, maxAgents: maxAgents, cacheMinY: cacheMinY)
+    }
+
+    static func windowDeltaTokens(for samples: [LiveTelemetrySample]) -> Int {
+        let deltaSum = samples.reduce(0) { $0 + $1.deltaTokens }
+        if deltaSum > 0 {
+            return deltaSum
+        }
+        guard samples.count >= 2, let first = samples.first, let last = samples.last else {
+            return 0
+        }
+        return max(0, last.totalTokensCumulative - first.totalTokensCumulative)
+    }
+
+    static func windowSummary(
+        in range: TelemetryTimeRange,
+        from history: [LiveTelemetrySample],
+        todayStats: TodayStats,
+        now: Date = Date()
+    ) -> TelemetryWindowSummary {
+        let inWindow = samples(in: range, from: history, now: now)
+        let total = windowDeltaTokens(for: inWindow)
+        let sumCache = inWindow.reduce(0) { $0 + $1.deltaCacheTokens }
+        let sumNew = inWindow.reduce(0) { $0 + $1.deltaNewTokens }
+        let denom = sumCache + sumNew
+        if denom > 0 {
+            let pct = min(100.0, max(0.0, Double(sumCache) / Double(denom) * 100.0))
+            return TelemetryWindowSummary(totalTokens: total, cachePct: pct, hasWindowTraffic: true)
+        }
+        let fallbackCache = inWindow.last?.cachePct ?? (todayStats.hasData ? todayStats.cachePct : 0.0)
+        return TelemetryWindowSummary(totalTokens: total, cachePct: fallbackCache, hasWindowTraffic: false)
+    }
+}
+
+enum SessionListLayoutPolicy {
+    static let maxVisibleRowsWhenExpanded = 3
+    static let defaultVisibleRowsWhenExpanded = 3
+    static let minVisibleRowsWhenExpanded = 1
+    static let maxConfigurableVisibleRowsWhenExpanded = 12
+    static let visibleRowsDefaultsKey = "agyhub.sessions.visibleRowsWhenExpanded"
+    static let headerHeight: CGFloat = 22.0
+    static let headerToListSpacing: CGFloat = 6.0
+    static let rowEstimatedHeight: CGFloat = 30.0
+    static let rowSpacing: CGFloat = 2.5
+
+    static func clampedVisibleRows(_ raw: Int) -> Int {
+        min(max(raw, minVisibleRowsWhenExpanded), maxConfigurableVisibleRowsWhenExpanded)
+    }
+
+    static func loadVisibleRows(from userDefaults: UserDefaults = .standard) -> Int {
+        guard userDefaults.object(forKey: visibleRowsDefaultsKey) != nil else {
+            return defaultVisibleRowsWhenExpanded
+        }
+        return clampedVisibleRows(userDefaults.integer(forKey: visibleRowsDefaultsKey))
+    }
+
+    static func scrollHeight(
+        forCount count: Int,
+        visibleLimit: Int = maxVisibleRowsWhenExpanded,
+        chartExpanded: Bool
+    ) -> CGFloat? {
+        guard chartExpanded else { return nil }
+        guard count > 0 else { return nil }
+        let visible = min(count, clampedVisibleRows(visibleLimit))
+        return CGFloat(visible) * rowEstimatedHeight + CGFloat(max(0, visible - 1)) * rowSpacing
+    }
+}
+
+struct DashboardSplitAllocation: Equatable {
+    let telemetryHeight: CGFloat
+    let dividerHeight: CGFloat
+    let sessionsHeight: CGFloat
+    let telemetryFraction: CGFloat
+}
+
+enum DashboardSplitLayoutPolicy {
+    static let embedsDragHandleInSessionsHeader = true
+    static let splitFractionDefaultsKey = "agyhub.layout.telemetrySplitFraction"
+    static let dividerHeight: CGFloat = 6.0
+    static let minTelemetryHeight: CGFloat = 180.0
+    static let minSessionsHeight: CGFloat = 62.0
+    static let defaultMinPlotHeight: CGFloat = 118.0
+    static let splitMinPlotHeight: CGFloat = 72.0
+    static let sessionsHeaderAndGapHeight: CGFloat = SessionListLayoutPolicy.headerHeight + SessionListLayoutPolicy.headerToListSpacing
+
+    static func clampedTelemetryHeight(
+        proposed: CGFloat,
+        totalAvailableHeight: CGFloat
+    ) -> CGFloat {
+        let usable = max(0, totalAvailableHeight - dividerHeight)
+        guard usable > 0 else { return 0 }
+        let minTop = min(minTelemetryHeight, usable * 0.55)
+        let minBottom = min(minSessionsHeight, max(0, usable - minTop))
+        let maxTop = max(minTop, usable - minBottom)
+        return min(max(proposed, minTop), maxTop)
+    }
+
+    static func resolveAllocation(
+        totalAvailableHeight: CGFloat,
+        storedFraction: CGFloat,
+        displaySessionsCount: Int,
+        expandedSessionRowLimit: Int
+    ) -> DashboardSplitAllocation {
+        let usable = max(0, totalAvailableHeight - dividerHeight)
+        guard usable > 0 else {
+            return DashboardSplitAllocation(
+                telemetryHeight: 0,
+                dividerHeight: dividerHeight,
+                sessionsHeight: 0,
+                telemetryFraction: 0.5
+            )
+        }
+        let proposedTop: CGFloat
+        if storedFraction > 0 && storedFraction < 1 {
+            proposedTop = usable * storedFraction
+        } else {
+            let desiredRowsHeight = SessionListLayoutPolicy.scrollHeight(
+                forCount: max(1, displaySessionsCount),
+                visibleLimit: expandedSessionRowLimit,
+                chartExpanded: true
+            ) ?? 42.0
+            let desiredSessions = sessionsHeaderAndGapHeight + desiredRowsHeight
+            proposedTop = usable - desiredSessions
+        }
+        let telemetryH = clampedTelemetryHeight(proposed: proposedTop, totalAvailableHeight: totalAvailableHeight)
+        let sessionsH = max(0, usable - telemetryH)
+        return DashboardSplitAllocation(
+            telemetryHeight: telemetryH,
+            dividerHeight: dividerHeight,
+            sessionsHeight: sessionsH,
+            telemetryFraction: telemetryH / usable
+        )
+    }
+
+    static func updatedFractionAfterDrag(
+        startTelemetryHeight: CGFloat,
+        dragDeltaY: CGFloat,
+        totalAvailableHeight: CGFloat
+    ) -> CGFloat {
+        let usable = max(1, totalAvailableHeight - dividerHeight)
+        let newTop = clampedTelemetryHeight(
+            proposed: startTelemetryHeight + dragDeltaY,
+            totalAvailableHeight: totalAvailableHeight
+        )
+        return newTop / usable
+    }
+}
+
+struct DashboardAdaptiveLayoutMetrics: Equatable {
+    let isCompact: Bool
+    let outerHorizontalPadding: CGFloat
+    let footerHorizontalPadding: CGFloat
+    let telemetryCardHorizontalPadding: CGFloat
+    let telemetryPlotHorizontalPadding: CGFloat
+    let accountCardHorizontalPadding: CGFloat
+    let sessionRowHorizontalPadding: CGFloat
+    let sectionHeaderHorizontalPadding: CGFloat
+
+    var totalChartEdgeInset: CGFloat {
+        outerHorizontalPadding + telemetryCardHorizontalPadding + telemetryPlotHorizontalPadding
+    }
+
+    static let compactThresholdWidth: CGFloat = 455
+
+    static func metrics(forWidth width: CGFloat) -> DashboardAdaptiveLayoutMetrics {
+        let effectiveWidth = width > 0 ? width : 464
+        let compact = effectiveWidth < compactThresholdWidth
+        if compact {
+            return DashboardAdaptiveLayoutMetrics(
+                isCompact: true,
+                outerHorizontalPadding: 8,
+                footerHorizontalPadding: 8,
+                telemetryCardHorizontalPadding: 6,
+                telemetryPlotHorizontalPadding: 4,
+                accountCardHorizontalPadding: 5,
+                sessionRowHorizontalPadding: 4,
+                sectionHeaderHorizontalPadding: 0
+            )
+        }
+        return DashboardAdaptiveLayoutMetrics(
+            isCompact: false,
+            outerHorizontalPadding: 12,
+            footerHorizontalPadding: 12,
+            telemetryCardHorizontalPadding: 9,
+            telemetryPlotHorizontalPadding: 6,
+            accountCardHorizontalPadding: 6,
+            sessionRowHorizontalPadding: 7,
+            sectionHeaderHorizontalPadding: 2
+        )
     }
 }

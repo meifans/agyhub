@@ -108,6 +108,9 @@ enum L10nKey: String, CaseIterable {
     case cliUnauthorizedHelp
     case cliCachedSlotHelp
     case cliFirstLoginHelp
+    case closePickerTooltip
+    case toggleToCLIModeTooltip
+    case toggleToAppModeTooltip
 
     case quotaExpiredBadge
     case quotaExpiredHint
@@ -130,6 +133,13 @@ enum L10nKey: String, CaseIterable {
     case statTotalTokens
     case statContext
     case statCacheHit
+    case telemetryAgentsLabel
+    case telemetryRateLabel
+    case telemetryTotalLabel
+    case telemetryCacheLabel
+    case telemetryWaitingWaveHint
+    case telemetrySectionTitle
+    case telemetryTrackContextTitle
 
     case diagTabPhases
     case diagTabSources
@@ -177,6 +187,8 @@ enum L10nKey: String, CaseIterable {
     case launchAtLoginToggle
     case unifyMonitoringToggle
     case showSessionModelToggle
+    case visibleSessionsCountLabel
+    case splitResizeTooltip
     case cliIndependentToggle
     case cliIndependentDesc
     case refreshIntervalLabel
@@ -269,6 +281,9 @@ enum L10nKey: String, CaseIterable {
         case .cliUnauthorizedHelp: return ("尚未授权自动切换；将在终端打开 agy 由您登录", "Auto-switch not authorized; opens agy in Terminal for manual login")
         case .cliCachedSlotHelp: return ("从本地已授权槽位自动切换此 CLI 账号", "Switch CLI to this cached account from local vault")
         case .cliFirstLoginHelp: return ("首次切换：退出旧槽位并在终端启动 agy 完成一次登录后即可自动互切", "First switch: opens agy in Terminal to sign in once, then enables auto-switching")
+        case .closePickerTooltip: return ("关闭账号列表", "Close account list")
+        case .toggleToCLIModeTooltip: return ("当前展示 App 账号 · 点击切换显示 CLI", "Showing App · click to view CLI")
+        case .toggleToAppModeTooltip: return ("当前展示 CLI 账号 · 点击切换显示 App", "Showing CLI · click to view App")
 
         case .quotaExpiredBadge: return ("已过期", "Expired")
         case .quotaExpiredHint: return ("凭证已过期，切换后自动更新", "Token expired — switch to refresh")
@@ -291,6 +306,13 @@ enum L10nKey: String, CaseIterable {
         case .statTotalTokens: return ("总 Token", "Total Tokens")
         case .statContext: return ("上下文", "Context")
         case .statCacheHit: return ("缓存率", "Cache Hit")
+        case .telemetryAgentsLabel: return ("Agent", "Agents")
+        case .telemetryRateLabel: return ("速率", "Rate")
+        case .telemetryTotalLabel: return ("累计", "Total")
+        case .telemetryCacheLabel: return ("缓存", "Cache")
+        case .telemetryWaitingWaveHint: return ("正在采集实时指标...", "Sampling live telemetry...")
+        case .telemetrySectionTitle: return ("实时监控", "LIVE")
+        case .telemetryTrackContextTitle: return ("上下文", "Context")
 
         case .diagTabPhases: return ("按工作阶段", "By Phase")
         case .diagTabSources: return ("按上下文来源", "By Source")
@@ -338,6 +360,8 @@ enum L10nKey: String, CaseIterable {
         case .launchAtLoginToggle: return ("开机自动启动", "Launch at Login")
         case .unifyMonitoringToggle: return ("统一监控活跃会话", "Monitor All Active Sessions")
         case .showSessionModelToggle: return ("列表展示会话模型", "Show Model in Session List")
+        case .visibleSessionsCountLabel: return ("图表展开时显示会话", "Visible Sessions (Expanded)")
+        case .splitResizeTooltip: return ("上下拖动调整实时监控与会话列表空间占比；双击恢复默认", "Drag up or down to resize Chart & Sessions; double-click to reset")
         case .cliIndependentToggle: return ("CLI 与桌面 App 账号独立", "Isolate CLI & Desktop App Accounts")
         case .cliIndependentDesc: return ("开启后 CLI 读写独立 token 文件，两端互不干扰；关闭后共用钥匙串，切号同步生效", "When enabled, CLI uses a separate token file without overwriting App keychain")
         case .refreshIntervalLabel: return ("刷新间隔:", "Refresh Interval:")
@@ -442,6 +466,31 @@ enum L10n {
         return lang == .zhHans
             ? "点击查看今日/近 7 天/近 30 天用量大图与按模型统计；今日预估 \(costStr) · \(tokStr) Tokens（缓存 \(pct)%）"
             : "Click for Today / 7D / 30D usage charts & breakdown; Today est. \(costStr) · \(tokStr) Tokens (Cache \(pct)%)"
+    }
+
+    static func telemetryAgentCount(_ count: Int, _ lang: AppLanguage.Resolved) -> String {
+        if count <= 0 {
+            return lang == .zhHans ? "0 待命" : "0 Idle"
+        }
+        return lang == .zhHans ? "\(count) 运行" : "\(count) Running"
+    }
+
+    static func telemetryHoverSummary(
+        time: String,
+        agents: Int,
+        tps: Double,
+        cachePct: Double,
+        deltaTokens: Int,
+        _ lang: AppLanguage.Resolved
+    ) -> String {
+        let rateStr = "\(Int(tps.rounded()))t/s"
+        let cacheStr = String(format: "%.1f%%", cachePct)
+        let deltaPart = deltaTokens > 0 ? " · +\(Formatters.formatTokens(deltaTokens))" : ""
+        if lang == .zhHans {
+            return "\(time) · \(agents) Agent · \(rateStr) · 缓存 \(cacheStr)\(deltaPart)"
+        }
+        let agentUnit = agents == 1 ? "Agent" : "Agents"
+        return "\(time) · \(agents) \(agentUnit) · \(rateStr) · Cache \(cacheStr)\(deltaPart)"
     }
 
     static func todayOverviewCacheLine(cachePct: Double, newTokens: Int, _ lang: AppLanguage.Resolved) -> String {
@@ -692,6 +741,11 @@ enum L10n {
         lang == .zhHans ? "🔄 正在安全关闭当前 Antigravity 并切换至「\(name)」..." : "🔄 Safely closing Antigravity and switching to \"\(name)\"..."
     }
 
+    static func visibleSessionsCountValue(_ count: Int, _ lang: AppLanguage.Resolved) -> String {
+        if lang == .zhHans { return "\(count) 条" }
+        return count == 1 ? "1 row" : "\(count) rows"
+    }
+
     static func bannerSwitchedApp(_ name: String, _ lang: AppLanguage.Resolved) -> String {
         lang == .zhHans ? "🚀 已切换并启动「\(name)」" : "🚀 Switched and launched \"\(name)\""
     }
@@ -754,6 +808,7 @@ enum L10n {
     static func localizeAgentLabel(_ raw: String, language: AppLanguage.Resolved) -> String {
         guard language == .en else { return raw }
         if raw == "主会话" { return "Main" }
+        if raw == "未知会话" { return "Unknown Session" }
         return raw
     }
 

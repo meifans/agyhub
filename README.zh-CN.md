@@ -29,9 +29,9 @@
 ## 界面预览
 
 <p align="center">
-  <img src="./assets/screenshot-dashboard-zh.png" alt="实时主面板 —— App/CLI 账号隔离、活跃子 Agent 与实时生成速率" width="540" />
+  <img src="./assets/screenshot-dashboard-zh.png" alt="实时主面板 —— 单行 App/CLI 账号切换、实时多 Agent 上下文遥测与会话分栏" width="520" />
   <br />
-  <em>实时主面板：App / CLI 独立账号与周度配额、活跃子 Agent 徽标、以及实时 <code>t/s</code> 生成速率一览。</em>
+  <em>实时主面板：顶部 <code>Today</code> 账单胶囊、单行 App / CLI 账号与 5 小时/周度配额、多 Agent 实时上下文与分叉轨迹曲线（OKLCH 分族配色），以及支持拖拽调节的会话列表。</em>
 </p>
 
 <table>
@@ -55,10 +55,12 @@
   不要求输入账号密码，不向任何第三方服务器上传日志或凭证，全部计算与存储均在本地完成。
 - **官方原生切号，无封号风险**  
   完全基于 Antigravity 官方原生的凭证机制工作，不反代、不中转、不魔改客户端、不注入 Hook。将桌面端（`Antigravity.app`）与 CLI（`agy`）账号凭证物理隔离，支持一键切换，杜绝后台续期导致的串号覆盖。
+- **实时多 Agent 上下文遥测**  
+  支持 `1m / 3m / 15m / 1h` 时间窗实时绘制主/子 Agent 上下文增长与分叉连线（OKLCH 跨时间窗固定色系），支持图表曲线与会话行双向悬停高亮及分栏高度拖拽调节。
 - **纯代码驱动的缓存失效与 Token 分析（不依赖大模型）**  
   纯本地只读解析会话日志，零额外 Token 消耗、离线秒出、结果可复现。精准定位 Prompt Cache 失效原因与额外开销，并按会话、子 Agent 和模型维度统计真实的 Token 与费用账单。
-- **周度配额一览**  
-  直接在 macOS 菜单栏查看各账号剩余周度配额与重置倒计时，实时掌握活跃会话状态。
+- **周度与 5 小时配额一览**  
+  直接在单行账号栏中同时查看 5 小时滑动余量、周度配额百分比及重置倒计时，点击浮层即可直切账号。
 - **中英文双语界面（English / 简体中文）**  
   默认跟随 macOS 系统语言，并支持在设置中一键即时切换简体中文与英文。
 - **原生轻量，低后台开销**  
@@ -111,6 +113,9 @@ swiftc -DAGYHUB_TESTING Sources/*.swift tests/AGYHubTests.swift \
 
 # 运行 Python 单元测试
 python3 tests/test_agy_monitor.py
+
+# 一键基于当前 SwiftUI 视图重绘中英双语 Retina 主页宣传图
+./scripts/generate_screenshots.sh
 ```
 
 如需查看仓库目录与源码模块导航，请参阅 [INDEX.md](INDEX.md)；如需了解底层架构设计细节，请参阅 [ADR-001（App 与 CLI 双轨隔离）](docs/adr/ADR-001-cli-app-account-isolation.md) 与 [ADR-002（低开销增量监控架构）](docs/adr/ADR-002-low-overhead-incremental-monitoring.md)。
