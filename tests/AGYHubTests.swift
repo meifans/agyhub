@@ -77,8 +77,8 @@ struct AGYHubTestsRunner {
         testEffectiveActiveCLIProfileFallsBackToSharedKeychainWhenTokenFileMissing()
         testSameAccountTokenRefreshAfterAgyhubSwitchIsNotDrift()
         testSwitchStartupRaceDoesNotPoisonCLIActiveJson()
-        testCredentialTokenUpdatePreservesGoKeyringBase64FormatAndRawJSON()
-        testQuotaRefreshPersistsNewTokenBackToVaultAndTokenFile()
+        testCLITokenValidationExtractsAccessTokenWithoutDirectHTTP()
+        testOfficialAGYUsageCommandProbeAndCooldowns()
         testSyncOnboardingUsernameUpdatesAppStorageWithoutDroppingOtherKeys()
         testDisplayAppEmailPrefersExpectedRunningAppOverDriftedKeychain()
         testDetectLatestDesktopAppAuthDateScansBeyond128KB()
@@ -90,7 +90,7 @@ struct AGYHubTestsRunner {
         testWriteCLITokenFileRejectsMissingAccessTokenAndPersists0600()
         testEnsureCLITokenFileIfNeededRecoversMissingOrCorruptedFileFromVault()
         testCliFileModeCommandUsesAcpLoginFlag()
-        testQuotaRequestUsesHubUserAgentForArgonSupport()
+        testOfficialCLIUsageProbeEnvironmentAndVersionGate()
         testNativeMacOSLaunchConfigFiltersHelpersSanitizesEnvAndAllowsFullShutdownWindow()
         testSubagentAggregationBadgeAndDetailDrilldown()
         testAccountListSortsByMostRecentlyUsedOrder()
@@ -99,7 +99,7 @@ struct AGYHubTestsRunner {
         testWindowResizeEdgePolicyHitZonesAndAnchoredFrameMath()
         testCloseButtonHidesOnlyTargetWindowWithoutTerminating()
         testSharedKeychainCaptureAndRestoreVerifyEmbeddedCredentialEmail()
-        testQuotaResolveCredentialRejectsMismatchedVaultEmail()
+        testSwitchedAwayBackupAccountKeepsCachedQuotaAndIsNotProbed()
         testEffectiveExpectedAppEmailHoldsWithin30sSwitchLaunchWindow()
         testCLIRefreshPolicySkipsWhileAppSwitchInProgress()
         testUsageHistoryPayloadDecodingAndRangeSummarization()
@@ -109,7 +109,7 @@ struct AGYHubTestsRunner {
         testRecent503PolicyRefreshThrottleAndBadgeFormatting()
         testNativeWindowActivationPolicyAndMainMenuContract()
         testSessionDiagnosticsDecodingAndCopySummaryFormatting()
-        testOAuthClientConfigLoadingAndMissingCredentialsFallback()
+        testActiveQuotaTargetsDeduplicateSharedAppAndCLIAccount()
         testPollingSchedulePolicyThreeStateIntervals()
         testMonitorPayloadDedupSkipsRedundantPublishedUpdates()
         testDebouncedTriggerCoalescesBurstsAndSupportsCancel()
@@ -988,124 +988,131 @@ struct AGYHubTestsRunner {
         )
     }
 
-    static func testCredentialTokenUpdatePreservesGoKeyringBase64FormatAndRawJSON() {
-        let raw = credentialJSON(email: "alice@example.com", accessToken: "old-tok")
-        let expiry = Date(timeIntervalSince1970: 1800000000)
-
-        guard let updatedRaw = AccountQuotaManager.updatingCredentialData(raw, newAccessToken: "new-tok-raw", newExpiry: expiry) else {
-            expect(false, "纯 JSON 凭证应能成功更新 access_token")
-            return
-        }
-        let parsedRaw = AccountQuotaManager.extractTokensFromCredentialData(updatedRaw)
-        expectEqual(parsedRaw?.accessToken, "new-tok-raw", "更新后应读出新 access_token")
-        expectEqual(parsedRaw?.refreshToken, "r-alice@example.com", "更新后应完整保留原 refresh_token")
-        expectEqual(CLIAccountManager.credentialEmail(updatedRaw), "alice@example.com", "更新后应完整保留 id_token_email")
+    static func testCLITokenValidationExtractsAccessTokenWithoutDirectHTTP() {
+        let raw = credentialJSON(email: "alice@example.com", accessToken: "tok-raw")
+        expect(CLIAccountManager.hasAccessToken(raw), "纯 JSON 凭证包含 access_token 时应校验通过")
 
         let prefixed = ("go-keyring-base64:" + raw.base64EncodedString()).data(using: .utf8)!
-        guard let updatedPrefixed = AccountQuotaManager.updatingCredentialData(prefixed, newAccessToken: "new-tok-kc", newExpiry: expiry),
-              let text = String(data: updatedPrefixed, encoding: .utf8) else {
-            expect(false, "go-keyring-base64 凭证应能成功更新并保留编码前缀")
-            return
-        }
-        expect(text.hasPrefix("go-keyring-base64:"), "更新后必须保留 go-keyring-base64: 前缀供 agy CLI 正常解码")
-        let parsedPrefixed = AccountQuotaManager.extractTokensFromCredentialData(updatedPrefixed)
-        expectEqual(parsedPrefixed?.accessToken, "new-tok-kc", "go-keyring-base64 更新后应能解出新 access_token")
-        expectEqual(parsedPrefixed?.refreshToken, "r-alice@example.com", "go-keyring-base64 更新后应保留 refresh_token")
+        expect(CLIAccountManager.hasAccessToken(prefixed), "go-keyring-base64 凭证解包后应校验通过")
+
+        let emptyTok = "{\"id_token_email\":\"alice@example.com\",\"token\":{\"access_token\":\"\"}}".data(using: .utf8)!
+        expect(!CLIAccountManager.hasAccessToken(emptyTok), "空 access_token 凭证必须被拦截")
     }
 
-    static func testQuotaRefreshPersistsNewTokenBackToVaultAndTokenFile() {
+    static func testOfficialAGYUsageCommandProbeAndCooldowns() {
         let home = makeTempHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
 
-        let mv = MemoryVault()
-        let oldVaultRaw = credentialJSON(email: "alice@example.com", accessToken: "expired-vault-tok")
-        let oldVaultEncoded = ("go-keyring-base64:" + oldVaultRaw.base64EncodedString()).data(using: .utf8)!
-        mv.slots["alice@example.com"] = oldVaultEncoded
-
-        let cliRaw = credentialJSON(email: "bob@example.com", accessToken: "expired-cli-tok")
-        _ = CLIAccountManager.writeCLITokenFile(cliRaw, homeDir: home)
-
-        let sampleQuota = """
-        {"groups":[{"displayName":"Gemini","buckets":[{"window":"weekly","remainingFraction":0.75}]}]}
+        let usageJSON = """
+        {
+          "conversation_id": "",
+          "status": "SUCCESS",
+          "duration_seconds": 0,
+          "num_turns": 0,
+          "usage": { "total_tokens": 0 },
+          "command": {
+            "name": "usage",
+            "data": {
+              "groups": [
+                {
+                  "name": "Gemini Models",
+                  "description": "Models within this group: Gemini 4 Neon, Gemini 4 Argon",
+                  "buckets": [
+                    { "id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.96, "reset_time": "2026-12-03T14:44:25Z" },
+                    { "id": "gemini-5h", "window": "5h", "remaining_fraction": 0.89, "reset_time": "2026-11-26T19:44:25Z" }
+                  ]
+                },
+                {
+                  "name": "Claude and GPT models",
+                  "buckets": [
+                    { "id": "3p-weekly", "window": "weekly", "remaining_fraction": 1.0, "reset_time": "1970-01-01T00:00:00Z" }
+                  ]
+                }
+              ]
+            }
+          }
+        }
         """.data(using: .utf8)!
 
+        var observedSlots: [AccountQuotaManager.QuotaSlotTarget] = []
         let sem = DispatchSemaphore(value: 0)
-        var vaultRefreshCalls = 0
-        var seenVaultTokens: [String] = []
-        var cliRefreshCalls = 0
-        var seenCLITokens: [String] = []
+        var appRes: AccountQuotaManager.QuotaFetchResult = .failed
+        var cliRes: AccountQuotaManager.QuotaFetchResult = .failed
+        var authRes: AccountQuotaManager.QuotaFetchResult = .failed
 
         Task {
-
-            let s1 = await AccountQuotaManager.fetchAccountQuota(
+            appRes = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeApp,
                 email: "alice@example.com",
-                tier: nil,
+                tier: "Google AI Pro",
                 homeDir: home,
-                vault: mv.vault,
-                requestQuota: { token in
-                    seenVaultTokens.append(token)
-                    return token == "expired-vault-tok" ? (nil, 401) : (sampleQuota, 200)
-                },
-                refreshToken: { _ in
-                    vaultRefreshCalls += 1
-                    return ("fresh-vault-tok", 3599)
+                runCLI: { slot, _ in
+                    observedSlots.append(slot)
+                    return (0, usageJSON, Data())
                 }
             )
-            expect(s1 != nil, "保险箱 401 刷新后应成功返回配额")
-
-            let s2 = await AccountQuotaManager.fetchAccountQuota(
-                email: "alice@example.com",
-                tier: nil,
-                homeDir: home,
-                vault: mv.vault,
-                requestQuota: { token in
-                    seenVaultTokens.append(token)
-                    return token == "fresh-vault-tok" ? (sampleQuota, 200) : (nil, 401)
-                },
-                refreshToken: { _ in
-                    vaultRefreshCalls += 1
-                    return ("should-not-happen", 3599)
-                }
-            )
-            expect(s2 != nil, "第 2 次拉取应直接复用落盘的新 access_token")
-
-            let c1 = await AccountQuotaManager.fetchAccountQuota(
+            cliRes = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeCLI,
                 email: "bob@example.com",
-                tier: nil,
+                tier: "Google AI Ultra",
                 homeDir: home,
-                vault: mv.vault,
-                requestQuota: { token in
-                    seenCLITokens.append(token)
-                    return token == "expired-cli-tok" ? (nil, 401) : (sampleQuota, 200)
-                },
-                refreshToken: { _ in
-                    cliRefreshCalls += 1
-                    return ("fresh-cli-tok", 3599)
+                runCLI: { slot, _ in
+                    observedSlots.append(slot)
+                    return (0, usageJSON, Data())
                 }
             )
-            expect(c1 != nil, "CLI token 文件 401 刷新后应成功返回配额")
-            let fileData = FileManager.default.contents(atPath: CLIAccountManager.cliTokenFilePath(homeDir: home))
-            expectEqual(
-                fileData.flatMap { AccountQuotaManager.extractTokensFromCredentialData($0)?.accessToken },
-                "fresh-cli-tok",
-                "CLI token 文件落盘后应包含最新 access_token"
+            authRes = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeApp,
+                email: "expired@example.com",
+                tier: nil,
+                homeDir: home,
+                runCLI: { _, _ in
+                    return (1, Data(), "Authentication required: not logged in".data(using: .utf8)!)
+                }
             )
             sem.signal()
         }
         sem.wait()
 
-        expectEqual(vaultRefreshCalls, 1, "保险箱刷新后持久化成功，两轮配额请求只允许调 1 次 OAuth /token")
-        expectEqual(seenVaultTokens, ["expired-vault-tok", "fresh-vault-tok", "fresh-vault-tok"], "第二轮应直接用 fresh-vault-tok 请求配额")
-        expectEqual(cliRefreshCalls, 1, "CLI token 文件刷新后持久化成功，只允许调 1 次 OAuth /token")
+        expectEqual(observedSlots, [.activeApp, .activeCLI], "应通过官方 CLI 按指定活跃槽位执行探针")
+        if case .success(let summary) = appRes {
+            expectEqual(summary.geminiQuota?.percentage, 96, "应解析出 command.data.groups 中的 Gemini 周额度")
+            expectEqual(summary.geminiFiveHourQuota?.percentage, 89, "应解析出 command.data.groups 中的 Gemini 5h 额度")
+            expect(summary.argonQuota == nil, "Gemini Models 的 description 中提及 Argon 时不得误拆分出独立 Argon 桶")
+        } else {
+            expect(false, "有效 JSON 输出应解析成功，实际: \(appRes)")
+        }
+        if case .success(let cliSummary) = cliRes {
+            expect(cliSummary.isUltra, "Ultra 账号标记应正确透传")
+        } else {
+            expect(false, "activeCLI 有效 JSON 输出应解析成功")
+        }
+        expectEqual(authRes, .authRequired, "未登录/认证失效错误应准确归类为 .authRequired")
 
         let now = Date(timeIntervalSince1970: 1700000000)
+        expect(
+            !AccountQuotaManager.shouldAttemptQuotaFetch(
+                lastSuccess: now.addingTimeInterval(-120),
+                lastFailure: nil,
+                now: now
+            ),
+            "自动刷新成功后 180 秒内必须冷却，避免频繁拉起 CLI 进程"
+        )
+        expect(
+            AccountQuotaManager.shouldAttemptQuotaFetch(
+                lastSuccess: now.addingTimeInterval(-190),
+                lastFailure: nil,
+                now: now
+            ),
+            "超过 180 秒冷却窗口后应允许下次自动刷新"
+        )
         expect(
             !AccountQuotaManager.shouldAttemptQuotaFetch(
                 lastSuccess: nil,
                 lastFailure: now.addingTimeInterval(-60),
                 now: now
             ),
-            "配额拉取失败后 60 秒内必须退避，严禁每 5 秒轮询猛打 OAuth"
+            "探针失败后 300 秒内必须退避"
         )
         expect(
             AccountQuotaManager.shouldAttemptQuotaFetch(
@@ -1470,42 +1477,8 @@ struct AGYHubTestsRunner {
 
         let path = CLIAccountManager.cliTokenFilePath(homeDir: home)
         expectEqual(FileManager.default.contents(atPath: path), valid, "被拒绝写入后，原有效文件必须毫发无损")
-
-        let sem = DispatchSemaphore(value: 0)
-        let mv = MemoryVault()
-        let sampleQuota = """
-        {"groups":[{"displayName":"Gemini","buckets":[{"window":"weekly","remainingFraction":0.8}]}]}
-        """.data(using: .utf8)!
-        Task {
-            _ = await AccountQuotaManager.fetchAccountQuota(
-                email: "alice@example.com",
-                tier: nil,
-                homeDir: home,
-                vault: mv.vault,
-                requestQuota: { token in
-                    return token == "ya29.GOOD" ? (nil, 401) : (sampleQuota, 200)
-                },
-                refreshToken: { _ in
-                    return ("ya29.NEW_TOK", 3599)
-                }
-            )
-            let perm = (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue
-            expectEqual(perm, 0o600, "配额刷新写回 CLI token 文件后权限仍必须为 0600")
-
-            let switched = credentialJSON(email: "dave@example.com", accessToken: "ya29.DAVE")
-            _ = CLIAccountManager.writeCLITokenFile(switched, homeDir: home)
-            _ = await AccountQuotaManager.fetchAccountQuota(
-                email: "alice@example.com",
-                tier: nil,
-                homeDir: home,
-                vault: mv.vault,
-                requestQuota: { _ in (nil, 401) },
-                refreshToken: { _ in ("ya29.STALE", 3599) }
-            )
-            expectEqual(CLIAccountManager.readCLITokenFileEmail(homeDir: home), "dave@example.com", "已有其它账号文件时，不应被旧请求回写覆盖")
-            sem.signal()
-        }
-        sem.wait()
+        let perm = (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue
+        expectEqual(perm, 0o600, "CLI token 文件写入后权限必须为 0600")
     }
 
     static func testEnsureCLITokenFileIfNeededRecoversMissingOrCorruptedFileFromVault() {
@@ -1564,11 +1537,36 @@ struct AGYHubTestsRunner {
         expect(cmd.contains(" acp --login"), "登录命令必须使用 acp --login 原地授权覆写，不依赖提前删文件 (cmd=\(cmd))")
     }
 
-    static func testQuotaRequestUsesHubUserAgentForArgonSupport() {
-        let req = AccountQuotaManager.buildQuotaRequest(token: "ya29.TEST")
-        let ua = req?.value(forHTTPHeaderField: "User-Agent") ?? ""
-        expect(ua.hasPrefix("antigravity/hub/2.31."), "User-Agent 必须包含 antigravity/hub/2.31.x 前缀以获取 Gemini 4 Argon 配额 (ua=\(ua))")
-        expect(ua.contains("os_type=darwin"), "User-Agent 必须携带平台信息 (ua=\(ua))")
+    static func testOfficialCLIUsageProbeEnvironmentAndVersionGate() {
+        expect(!AccountQuotaManager.isSupportedCLIVersion("1.1.10"), "低于 1.1.11 的 agy 必须被拦截，防止把 /usage 当普通 prompt 消耗额度")
+        expect(!AccountQuotaManager.isSupportedCLIVersion("0.9.99"), "旧版本必须被拦截")
+        expect(AccountQuotaManager.isSupportedCLIVersion("1.1.11"), "1.1.11 起应允许无消耗执行 /usage")
+        expect(AccountQuotaManager.isSupportedCLIVersion("agy version 1.5.18\n"), "应能从带前缀的版本输出解析出 1.5.18")
+
+        let dirtyBase: [String: String] = [
+            "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
+            "SSH_CLIENT": "10.0.0.1 5555 22",
+            "SSH_TTY": "/dev/ttys001",
+            "SSH_CONNECTION": "10.0.0.1 5555 10.0.0.2 22",
+            "GEMINI_API_KEY": "AIza-stray-key"
+        ]
+        let appEnv = AccountQuotaManager.buildUsageProbeEnvironment(
+            baseEnvironment: dirtyBase,
+            target: .activeApp,
+            homeDir: "/tmp/testhome"
+        )
+        expectEqual(appEnv["HOME"], "/tmp/testhome", "应锁定 HOME")
+        expectEqual(appEnv["AGY_CLI_DISABLE_AUTO_UPDATE"], "true", "必须禁用后台自动更新")
+        expect(appEnv["SSH_CLIENT"] == nil && appEnv["SSH_TTY"] == nil && appEnv["SSH_CONNECTION"] == nil, "App 槽位探针必须剥离 SSH 变量以使用系统钥匙串")
+        expect(appEnv["GEMINI_API_KEY"] == nil, "必须剥离 GEMINI_API_KEY 避免退出码 2 无配额报错")
+
+        let cliEnv = AccountQuotaManager.buildUsageProbeEnvironment(
+            baseEnvironment: [:],
+            target: .activeCLI,
+            homeDir: "/tmp/testhome"
+        )
+        expectEqual(cliEnv["SSH_CLIENT"], "1", "独立 CLI 槽位探针必须注入 SSH_CLIENT=1 读取 CLI 文件凭证")
+        expectEqual(cliEnv["AGY_CLI_DISABLE_AUTO_UPDATE"], "true", "CLI 槽位探针同样必须禁用自动更新")
 
         let reversedJSON = """
         {
@@ -2276,40 +2274,59 @@ struct AGYHubTestsRunner {
         expect(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false, "全部窗口关闭后常驻菜单栏应用绝不得自动退出")
     }
 
-    static func testQuotaResolveCredentialRejectsMismatchedVaultEmail() {
+    static func testSwitchedAwayBackupAccountKeepsCachedQuotaAndIsNotProbed() {
         let home = makeTempHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
 
-        let mv = MemoryVault()
-        let poisoned = credentialJSON(email: "dave@example.com", accessToken: "ya29.DAVE_POISON")
-        mv.slots["eve@example.com"] = ("go-keyring-base64:" + poisoned.base64EncodedString()).data(using: .utf8)!
-
-        let resolved = AccountQuotaManager.resolveCredential(
-            email: "eve@example.com",
-            homeDir: home,
-            vault: mv.vault
+        let now = Date()
+        let aliceCached = AccountQuotaSummary(
+            email: "alice@example.com",
+            isUltra: false,
+            geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.71, resetTime: now.addingTimeInterval(3 * 86400), resetTimeStr: nil),
+            argonQuota: nil,
+            geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.55, resetTime: now.addingTimeInterval(3600), resetTimeStr: nil),
+            lastFetched: now
         )
-        expect(resolved == nil, "eve 槽位里若误存了 dave 的凭证，配额读取必须拒绝并返回 nil")
+        AccountQuotaManager.saveQuotaCache(["alice@example.com": aliceCached], homeDir: home)
 
-        let sem = DispatchSemaphore(value: 0)
-        var requested = false
-        var summary: AccountQuotaSummary? = nil
-        Task {
-            summary = await AccountQuotaManager.fetchAccountQuota(
-                email: "eve@example.com",
-                tier: nil,
-                homeDir: home,
-                vault: mv.vault,
-                requestQuota: { _ in
-                    requested = true
-                    return ("{\"groups\":[]}".data(using: .utf8), 200)
-                }
-            )
-            sem.signal()
+        let bobJSON = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.92,"reset_time":"2099-01-08T00:00:00Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.84,"reset_time":"2099-01-01T05:00:00Z"}]}]}}}
+        """.data(using: .utf8)!
+
+        let suiteName = "com.antigravity.agyhub.tests.switchpreserve.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var probedTargets: [(email: String, slot: AccountQuotaManager.QuotaSlotTarget)] = []
+        MainActor.assumeIsolated {
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults, homeDir: home)
+            store.profiles = [
+                AGYProfile(name: "alice@example.com", email: "alice@example.com", userDataDir: ""),
+                AGYProfile(name: "bob@example.com", email: "bob@example.com", userDataDir: "")
+            ]
+            store.expectedAppEmail = "bob@example.com"
+            store.appStorageEmail = "bob@example.com"
+            store.isCLIIndependentMode = false
+            store.quotaProbeRunner = { target, email, _, _ in
+                probedTargets.append((email: email, slot: target))
+                return (0, bobJSON, Data())
+            }
+
+            store.refreshQuotasIfNeeded(force: true)
+            let deadline = Date().addingTimeInterval(2.0)
+            while !store.fetchingQuotaEmails.isEmpty && Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+
+            expectEqual(probedTargets.count, 1, "切到 bob 后只能探测当前活跃账号 bob，绝不能后台轮询已切走的 alice")
+            expectEqual(probedTargets.first?.email, "bob@example.com", "应只探测新活跃账号 bob")
+            expectEqual(probedTargets.first?.slot, .activeApp, "单轨模式应走 activeApp 槽位")
+            expectEqual(store.accountQuotas["bob@example.com"]?.geminiQuota?.percentage, 92, "bob 应更新为新拉取配额")
+            expectEqual(store.accountQuotas["alice@example.com"]?.geminiQuota?.percentage, 71, "被切走的 alice 必须保持切换前的周配额")
+            expectEqual(store.accountQuotas["alice@example.com"]?.geminiFiveHourQuota?.percentage, 55, "被切走的 alice 必须保持切换前的 5h 配额")
+            expect(!store.expiredQuotaEmails.contains("alice@example.com"), "被切走的 alice 不得因后台未续期而被误标为过期")
+            store.shutdownBackgroundWorkers()
         }
-        sem.wait()
-        expect(!requested, "槽位凭证邮箱不匹配时绝不能拿错号 Token 发起配额请求")
-        expect(summary == nil, "串槽时不得返回其它账号的配额数据")
     }
 
     static func testEffectiveExpectedAppEmailHoldsWithin30sSwitchLaunchWindow() {
@@ -2697,141 +2714,51 @@ struct AGYHubTestsRunner {
         }
     }
 
-    static func testOAuthClientConfigLoadingAndMissingCredentialsFallback() {
-        let home = makeTempHome()
-        defer { try? FileManager.default.removeItem(atPath: home) }
+    static func testActiveQuotaTargetsDeduplicateSharedAppAndCLIAccount() {
+        let profiles = [
+            AGYProfile(name: "app@example.com", email: "app@example.com", tier: "Google AI Ultra", userDataDir: ""),
+            AGYProfile(name: "cli@example.com", email: "cli@example.com", tier: "Google AI Pro", userDataDir: ""),
+            AGYProfile(name: "backup@example.com", email: "backup@example.com", tier: "Google AI Pro", userDataDir: "")
+        ]
 
-        let configPath = AccountQuotaManager.oauthClientConfigPath(homeDir: home)
-        expectEqual(configPath, "\(home)/.agy-profiles/oauth_client.json", "OAuth 配置文件路径应位于 ~/.agy-profiles/oauth_client.json")
-
-        expect(
-            AccountQuotaManager.resolveOAuthClientConfig(environment: [:], homeDir: home) == nil,
-            "均未配置时应返回 nil"
+        let splitTargets = AccountQuotaManager.resolveActiveQuotaTargets(
+            profiles: profiles,
+            activeAppEmail: "APP@example.com",
+            activeCLIEmail: "cli@example.com",
+            isCLIIndependentMode: true
         )
-        do {
-            let sem = DispatchSemaphore(value: 0)
-            var requestAttempted = false
-            var refreshRes: Result<(accessToken: String, expiresIn: TimeInterval?), AccountQuotaManager.OAuthConfigError>? = nil
-            var legacyRes: (accessToken: String, expiresIn: TimeInterval?)? = ("dummy", 1)
-            Task {
-                refreshRes = await AccountQuotaManager.refreshAccessTokenResult(
-                    refreshToken: "r-token-1",
-                    environment: [:],
-                    homeDir: home,
-                    performRequest: { _ in
-                        requestAttempted = true
-                        throw URLError(.badURL)
-                    }
-                )
-                legacyRes = await AccountQuotaManager.refreshAccessTokenWithExpiry(
-                    refreshToken: "r-token-1",
-                    environment: [:],
-                    homeDir: home,
-                    performRequest: { _ in
-                        requestAttempted = true
-                        throw URLError(.badURL)
-                    }
-                )
-                sem.signal()
-            }
-            sem.wait()
-            expect(!requestAttempted, "未配置 OAuth 凭证时绝不能发送无效 HTTP 请求")
-            expect(legacyRes == nil, "未配置 OAuth 凭证时兼容接口应安全返回 nil")
-            if case .failure(let err) = refreshRes {
-                expectEqual(err, .missingCredentials, "应返回 missingCredentials 错误")
-                let desc = err.localizedDescription
-                expect(!desc.isEmpty && !desc.contains("请创建") && !desc.contains("oauth_client.json"), "错误提示应为中性状态日志，不得诱导普通用户手建配置文件")
-            } else {
-                expect(false, "未配置凭证时刷新必须返回 .failure(.missingCredentials)")
-            }
-        }
-
-        try? "{bad json".write(toFile: configPath, atomically: true, encoding: .utf8)
-        expect(
-            AccountQuotaManager.resolveOAuthClientConfig(environment: [:], homeDir: home) == nil,
-            "畸形 JSON 应安全忽略并返回 nil"
-        )
-        try? "{\"client_id\":\"file-only-id\",\"client_secret\":\"\"}".write(toFile: configPath, atomically: true, encoding: .utf8)
-        expect(
-            AccountQuotaManager.resolveOAuthClientConfig(environment: [:], homeDir: home) == nil,
-            "缺少 client_secret 时应视为未完整配置并返回 nil"
-        )
-
-        let validJSON = """
-        {
-          "client_id": "file-client-id",
-          "client_secret": "file-client-secret"
-        }
-        """
-        try? validJSON.write(toFile: configPath, atomically: true, encoding: .utf8)
-        let fromFile = AccountQuotaManager.resolveOAuthClientConfig(environment: [:], homeDir: home)
         expectEqual(
-            fromFile,
-            AccountQuotaManager.OAuthClientConfig(clientId: "file-client-id", clientSecret: "file-client-secret"),
-            "未设置环境变量时应回退读取 oauth_client.json"
-        )
-
-        let fromEnv = AccountQuotaManager.resolveOAuthClientConfig(
-            environment: [
-                "AGYHUB_OAUTH_CLIENT_ID": "env-client-id",
-                "AGYHUB_OAUTH_CLIENT_SECRET": "env-client-secret"
+            splitTargets,
+            [
+                AccountQuotaManager.QuotaProbeTarget(email: "app@example.com", tier: "Google AI Ultra", slot: .activeApp),
+                AccountQuotaManager.QuotaProbeTarget(email: "cli@example.com", tier: "Google AI Pro", slot: .activeCLI)
             ],
-            homeDir: home
-        )
-        expectEqual(
-            fromEnv,
-            AccountQuotaManager.OAuthClientConfig(clientId: "env-client-id", clientSecret: "env-client-secret"),
-            "环境变量必须优先于 oauth_client.json"
+            "独立模式下 App 与 CLI 登录不同账号时，应分别探测 App 与 CLI 两个活跃槽位，忽略 backup"
         )
 
-        let partialOverride = AccountQuotaManager.resolveOAuthClientConfig(
-            environment: ["AGYHUB_OAUTH_CLIENT_ID": "  env-override-id  "],
-            homeDir: home
+        let sharedTargets = AccountQuotaManager.resolveActiveQuotaTargets(
+            profiles: profiles,
+            activeAppEmail: "app@example.com",
+            activeCLIEmail: "app@example.com",
+            isCLIIndependentMode: true
         )
         expectEqual(
-            partialOverride,
-            AccountQuotaManager.OAuthClientConfig(clientId: "env-override-id", clientSecret: "file-client-secret"),
-            "单字段环境变量应覆盖配置文件对应字段并保留另一字段回退"
+            sharedTargets,
+            [AccountQuotaManager.QuotaProbeTarget(email: "app@example.com", tier: "Google AI Ultra", slot: .activeApp)],
+            "App 与 CLI 登录同一账号时，只能探测 1 次并复用结果"
         )
 
-        do {
-            let sem = DispatchSemaphore(value: 0)
-            var capturedBody = ""
-            var capturedMethod = ""
-            var capturedURL = ""
-            var refreshRes: Result<(accessToken: String, expiresIn: TimeInterval?), AccountQuotaManager.OAuthConfigError>? = nil
-            Task {
-                refreshRes = await AccountQuotaManager.refreshAccessTokenResult(
-                    refreshToken: "r-test-token",
-                    environment: [
-                        "AGYHUB_OAUTH_CLIENT_ID": "env-client-id",
-                        "AGYHUB_OAUTH_CLIENT_SECRET": "env-client-secret"
-                    ],
-                    homeDir: home,
-                    performRequest: { req in
-                        capturedMethod = req.httpMethod ?? ""
-                        capturedURL = req.url?.absoluteString ?? ""
-                        capturedBody = req.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                        let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                        let body = "{\"access_token\":\"ya29.REFRESHED_OK\",\"expires_in\":3600}".data(using: .utf8)!
-                        return (body, resp)
-                    }
-                )
-                sem.signal()
-            }
-            sem.wait()
-            expectEqual(capturedMethod, "POST", "刷新请求应使用 POST")
-            expectEqual(capturedURL, AccountQuotaManager.tokenEndpoint, "刷新请求应发往官方 tokenEndpoint")
-            expect(capturedBody.contains("client_id=env-client-id"), "请求体应包含外部化 client_id")
-            expect(capturedBody.contains("client_secret=env-client-secret"), "请求体应包含外部化 client_secret")
-            expect(capturedBody.contains("refresh_token=r-test-token"), "请求体应包含 refresh_token")
-            if case .success(let val) = refreshRes {
-                expectEqual(val.accessToken, "ya29.REFRESHED_OK", "应解析返回的新 access_token")
-                expectEqual(val.expiresIn, 3600.0, "应解析返回的 expires_in")
-            } else {
-                expect(false, "有效配置与 200 响应下刷新应成功")
-            }
-        }
+        let singleModeTargets = AccountQuotaManager.resolveActiveQuotaTargets(
+            profiles: profiles,
+            activeAppEmail: "app@example.com",
+            activeCLIEmail: "cli@example.com",
+            isCLIIndependentMode: false
+        )
+        expectEqual(
+            singleModeTargets,
+            [AccountQuotaManager.QuotaProbeTarget(email: "app@example.com", tier: "Google AI Ultra", slot: .activeApp)],
+            "关闭独立 CLI 模式时只应探测 .activeApp"
+        )
     }
 
     @MainActor
@@ -3505,43 +3432,23 @@ struct AGYHubTestsRunner {
         let home = makeTempHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
 
-        let email = "backup-expired@example.com"
-        let tokenPath = CLIAccountManager.cliTokenFilePath(homeDir: home)
-        let credJSON: [String: Any] = [
-            "id_token_email": email,
-            "token": [
-                "access_token": "expired-access-token",
-                "refresh_token": "valid-refresh-token"
-            ]
-        ]
-        let credData = try! JSONSerialization.data(withJSONObject: credJSON)
-        try? FileManager.default.createDirectory(
-            atPath: URL(fileURLWithPath: tokenPath).deletingLastPathComponent().path,
-            withIntermediateDirectories: true
-        )
-        try? credData.write(to: URL(fileURLWithPath: tokenPath))
-
         let sem = DispatchSemaphore(value: 0)
         var result: AccountQuotaManager.QuotaFetchResult? = nil
         Task {
-            result = await AccountQuotaManager.fetchAccountQuotaResult(
-                email: email,
+            result = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeApp,
+                email: "active-expired@example.com",
                 tier: nil,
                 homeDir: home,
-                vault: CLIAccountManager.CredentialVault(
-                    read: { _ in nil },
-                    write: { _, _ in true },
-                    list: { [] },
-                    delete: { _ in }
-                ),
-                environment: [:],
-                requestQuota: { _ in (nil, 401) }
+                runCLI: { _, _ in
+                    (1, Data(), "Authentication failed: please sign in".data(using: .utf8)!)
+                }
             )
             sem.signal()
         }
         sem.wait()
 
-        expectEqual(result, .tokenExpiredMissingOAuth, "401 且未配置 OAuth 凭证时应返回 .tokenExpiredMissingOAuth")
+        expectEqual(result, .authRequired, "官方 CLI 返回登录失效时应返回 .authRequired")
 
         let zhHint = L10n.quotaExpiredHint(for: .zhHans)
         let enHint = L10n.quotaExpiredHint(for: .en)
@@ -3590,21 +3497,14 @@ struct AGYHubTestsRunner {
             let collected = await withTaskGroup(of: AccountQuotaManager.QuotaFetchResult.self) { tg in
                 for email in accounts {
                     tg.addTask {
-                        let vault = CLIAccountManager.CredentialVault(
-                            read: { key in
-                                key == email ? "{\"id_token_email\":\"\(email)\",\"token\":{\"access_token\":\"tok\",\"refresh_token\":\"ref\"}}".data(using: .utf8) : nil
-                            },
-                            write: { _, _ in true },
-                            list: { Set(accounts) },
-                            delete: { _ in }
-                        )
-                        return await AccountQuotaManager.fetchAccountQuotaResult(
+                        return await AccountQuotaManager.fetchActiveSlotQuota(
+                            target: .activeApp,
                             email: email,
                             tier: nil,
                             homeDir: home,
-                            vault: vault,
-                            environment: [:],
-                            requestQuota: { _ in (nil, 401) }
+                            runCLI: { _, _ in
+                                (1, Data(), "unauthenticated".data(using: .utf8)!)
+                            }
                         )
                     }
                 }
@@ -3618,8 +3518,8 @@ struct AGYHubTestsRunner {
             sem.signal()
         }
         sem.wait()
-        expectEqual(results.count, accounts.count, "并发多账号配额请求应全部安全返回")
-        expectEqual(results.allSatisfy { $0 == .tokenExpiredMissingOAuth }, true, "并发 401 且无 OAuth 凭证时应全部安全降级为 .tokenExpiredMissingOAuth")
+        expectEqual(results.count, accounts.count, "并发配额探针请求应全部安全返回")
+        expectEqual(results.allSatisfy { $0 == .authRequired }, true, "并发认证失效返回时应全部归类为 .authRequired")
 
         let suiteName = "com.antigravity.agyhub.tests.quota.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -3633,86 +3533,55 @@ struct AGYHubTestsRunner {
                     userDataDir: "\(home)/.agy-profiles/\(email)"
                 )
             }
+            store.expectedAppEmail = accounts[0]
+            store.appStorageEmail = accounts[0]
+            store.activeCLIProfileName = accounts[1]
+            store.isCLIIndependentMode = true
+            store.quotaProbeRunner = { _, _, _, _ in
+                (1, Data(), "network timeout".data(using: .utf8)!)
+            }
             store.refreshQuotasIfNeeded(force: true)
-            expectEqual(store.fetchingQuotaEmails.count, accounts.count, "隔离 homeDir 下多账号 refreshQuotasIfNeeded 应安全启动后台任务")
+            expectEqual(store.fetchingQuotaEmails.count, 2, "只应并发刷新活跃的 App 与 CLI 共 2 个账号，不得轮询其余 6 个备用号")
             let deadline = Date().addingTimeInterval(2.0)
             while !store.fetchingQuotaEmails.isEmpty && Date() < deadline {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.02))
             }
-            expect(store.fetchingQuotaEmails.isEmpty, "多账号并发 refreshQuotasIfNeeded 应在安全退避/结束后清空进行中集合")
+            expect(store.fetchingQuotaEmails.isEmpty, "活跃槽位并发 refreshQuotasIfNeeded 结束后应清空进行中集合")
             store.shutdownBackgroundWorkers()
         }
         LocalAccountDetector.clearDiscoveryLogs()
     }
 
     static func testQuotaCredentialFreshnessPriorityAnd401Fallback() {
-        let home = makeTempHome()
-        defer { try? FileManager.default.removeItem(atPath: home) }
-
-        let email = "fresh-priority@example.com"
-        let staleVaultJSON = """
-        {"id_token_email":"\(email)","token":{"access_token":"ya29.STALE_VAULT","refresh_token":"1//ref_stale","expiry":"2025-01-01T00:00:00Z"}}
+        let nonZeroTurnsJSON = """
+        {"status":"SUCCESS","num_turns":1,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.85,"reset_time":"2099-01-08T00:00:00Z"}]}]}}}
         """.data(using: .utf8)!
-        let freshSharedJSON = """
-        {"id_token_email":"\(email)","token":{"access_token":"ya29.FRESH_SHARED","refresh_token":"1//ref_fresh","expiry":"2099-01-01T00:00:00Z"}}
-        """.data(using: .utf8)!
-
-        let vault = CLIAccountManager.CredentialVault(
-            read: { key in key == email ? staleVaultJSON : nil },
-            write: { _, _ in true },
-            list: { [email] },
-            delete: { _ in }
+        let turnRejected = AccountQuotaManager.parseUsageCommandResult(
+            data: nonZeroTurnsJSON,
+            email: "user@example.com",
+            tier: nil
         )
+        expectEqual(turnRejected, .failed, "num_turns > 0 说明误触了真实模型回合，必须拒绝消费该输出")
 
-        let resolved = AccountQuotaManager.resolveCredential(
-            email: email,
-            homeDir: home,
-            vault: vault,
-            readSharedKeychain: { freshSharedJSON }
+        let wrongCmdJSON = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"help","data":{"groups":[]}}}
+        """.data(using: .utf8)!
+        let wrongCmdRes = AccountQuotaManager.parseUsageCommandResult(
+            data: wrongCmdJSON,
+            email: "user@example.com",
+            tier: nil
         )
-        expectEqual(resolved?.accessToken, "ya29.FRESH_SHARED", "resolveCredential 必须按 expiry 优先选用更新的共享钥匙串 Token，不得被保险箱旧快照截胡")
+        expectEqual(wrongCmdRes, .failed, "command.name 非 usage 时必须拒绝解析")
 
-        let cliPath = CLIAccountManager.cliTokenFilePath(homeDir: home)
-        let cliDir = (cliPath as NSString).deletingLastPathComponent
-        try? FileManager.default.createDirectory(atPath: cliDir, withIntermediateDirectories: true)
-        let staleCliJSON = """
-        {"id_token_email":"\(email)","token":{"access_token":"ya29.STALE_CLI","refresh_token":"1//ref_cli","expiry":"2099-06-01T00:00:00Z"}}
+        let errorStatusJSON = """
+        {"status":"ERROR","num_turns":0,"response":"Please login with agy acp --login"}
         """.data(using: .utf8)!
-        try? staleCliJSON.write(to: URL(fileURLWithPath: cliPath))
-
-        let validQuotaResponse = """
-        {"groups":[{"displayName":"Gemini","buckets":[{"bucketId":"gemini-weekly","window":"WEEKLY","remainingFraction":0.85,"resetTime":"2099-01-08T00:00:00Z"}]}]}
-        """.data(using: .utf8)!
-
-        var attemptedTokens: [String] = []
-        let sem = DispatchSemaphore(value: 0)
-        var fetchedResult: AccountQuotaManager.QuotaFetchResult = .failed
-        Task {
-            fetchedResult = await AccountQuotaManager.fetchAccountQuotaResult(
-                email: email,
-                tier: "Google AI Ultra",
-                homeDir: home,
-                vault: vault,
-                environment: [:],
-                readSharedKeychain: { freshSharedJSON },
-                requestQuota: { token in
-                    attemptedTokens.append(token)
-                    if token == "ya29.FRESH_SHARED" {
-                        return (validQuotaResponse, 200)
-                    }
-                    return (nil, 401)
-                }
-            )
-            sem.signal()
-        }
-        sem.wait()
-
-        expectEqual(attemptedTokens, ["ya29.STALE_CLI", "ya29.FRESH_SHARED"], "首个来源返回 401 时必须自动回退尝试下一个候选来源的 Token")
-        if case .success(let summary) = fetchedResult {
-            expectEqual(summary.geminiQuota?.percentage, 85, "回退命中有效 Token 后应正确解析出周度配额")
-        } else {
-            expect(false, "存在有效备用来源时不得误报 Expired，实际返回: \(fetchedResult)")
-        }
+        let errorRes = AccountQuotaManager.parseUsageCommandResult(
+            data: errorStatusJSON,
+            email: "user@example.com",
+            tier: nil
+        )
+        expectEqual(errorRes, .authRequired, "status == ERROR 且包含登录提示时必须识别为 .authRequired")
     }
 
     static func testQuotaCachePersistenceRoundTrip() {
@@ -3748,47 +3617,24 @@ struct AGYHubTestsRunner {
     }
 
     static func testActiveAccountNativeRenewalPolicyAndNeutralOAuthErrorLog() {
-
-        expectEqual(
-            AccountQuotaManager.nativeRenewalTarget(
-                for: "app@example.com",
-                activeAppEmail: "app@example.com",
-                activeCLIEmail: "cli@example.com",
-                isCLIIndependentMode: true
-            ),
-            .activeApp,
-            "当前活跃桌面 App 账号应匹配 .activeApp 原生续期目标"
+        let targets = AccountQuotaManager.resolveActiveQuotaTargets(
+            profiles: [
+                AGYProfile(name: "app@example.com", email: "app@example.com", userDataDir: ""),
+                AGYProfile(name: "cli@example.com", email: "cli@example.com", userDataDir: ""),
+                AGYProfile(name: "backup@example.com", email: "backup@example.com", userDataDir: "")
+            ],
+            activeAppEmail: "app@example.com",
+            activeCLIEmail: "cli@example.com",
+            isCLIIndependentMode: true
         )
+        expect(targets.contains(where: { $0.email == "app@example.com" && $0.slot == .activeApp }), "当前活跃桌面 App 账号应匹配 .activeApp")
+        expect(targets.contains(where: { $0.email == "cli@example.com" && $0.slot == .activeCLI }), "独立 CLI 模式下活跃 CLI 账号应匹配 .activeCLI")
+        expect(!targets.contains(where: { $0.email == "backup@example.com" }), "闲置备用账号不得出现在任何活跃探针目标里")
 
-        expectEqual(
-            AccountQuotaManager.nativeRenewalTarget(
-                for: "cli@example.com",
-                activeAppEmail: "app@example.com",
-                activeCLIEmail: "cli@example.com",
-                isCLIIndependentMode: true
-            ),
-            .activeCLI,
-            "独立 CLI 模式下活跃 CLI 账号应匹配 .activeCLI 原生续期目标"
-        )
-
-        expectEqual(
-            AccountQuotaManager.nativeRenewalTarget(
-                for: "backup@example.com",
-                activeAppEmail: "app@example.com",
-                activeCLIEmail: "cli@example.com",
-                isCLIIndependentMode: true
-            ),
-            nil,
-            "闲置备用账号不得触发官方 agy 进程续期"
-        )
-
-        let now = Date()
-        expect(!AccountQuotaManager.shouldAttemptNativeRenewal(lastAttempt: now.addingTimeInterval(-600), force: false, now: now), "非强刷模式下 30 分钟内应节流")
-        expect(AccountQuotaManager.shouldAttemptNativeRenewal(lastAttempt: now.addingTimeInterval(-600), force: true, now: now), "用户主动强刷时应立即放行")
-        expect(AccountQuotaManager.shouldAttemptNativeRenewal(lastAttempt: now.addingTimeInterval(-1900), force: false, now: now), "超过 30 分钟冷却后应允许自动续期")
-
-        let desc = AccountQuotaManager.OAuthConfigError.missingCredentials.localizedDescription
-        expect(!desc.contains("请创建") && !desc.contains("oauth_client.json"), "OAuth 缺失错误日志不得诱导用户手建 oauth_client.json，实际: \(desc)")
+        let zhHint = L10n.quotaExpiredHint(for: .zhHans)
+        let enHint = L10n.quotaExpiredHint(for: .en)
+        expect(!zhHint.contains("请创建") && !zhHint.contains("oauth_client.json"), "中文过期提示不得诱导用户手建 oauth_client.json")
+        expect(!enHint.contains("oauth_client.json"), "英文过期提示不得诱导用户手建 oauth_client.json")
     }
 
     private static func currentTaskFootprintBytes() -> UInt64 {

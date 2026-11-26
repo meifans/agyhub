@@ -961,8 +961,8 @@ final class AGYHubStore: ObservableObject {
     private var lastLoggedMismatchKey: String = ""
     private var lastQuotaFetchTimes: [String: Date] = [:]
     private var lastQuotaFailureTimes: [String: Date] = [:]
-    private var lastNativeRenewalTimes: [String: Date] = [:]
     private(set) var fetchingQuotaEmails: Set<String> = []
+    var quotaProbeRunner: ((AccountQuotaManager.QuotaSlotTarget, String, String?, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = nil
     private var observedActiveAppEmail: String? = nil
     private var observedActiveCLIEmail: String? = nil
     private var isAppSwitchInProgress: Bool = false
@@ -1030,53 +1030,48 @@ final class AGYHubStore: ObservableObject {
         let activeApp = resolvedExpectedAppEmail
         let activeCLI = activeCLIProfileName
         let cliIndependent = isCLIIndependentMode
+        let customProbeRunner = quotaProbeRunner
 
-        for profile in profiles {
-            let email = (profile.email ?? profile.name).lowercased()
-            guard !email.isEmpty, email.contains("@") else { continue }
-            if !force {
-                guard AccountQuotaManager.shouldAttemptQuotaFetch(
-                    lastSuccess: lastQuotaFetchTimes[email],
-                    lastFailure: lastQuotaFailureTimes[email]
-                ) else {
-                    continue
-                }
+        let targets = AccountQuotaManager.resolveActiveQuotaTargets(
+            profiles: profiles,
+            activeAppEmail: activeApp,
+            activeCLIEmail: activeCLI,
+            isCLIIndependentMode: cliIndependent
+        )
+
+        for target in targets {
+            let email = target.email
+            guard AccountQuotaManager.shouldAttemptQuotaFetch(
+                lastSuccess: lastQuotaFetchTimes[email],
+                lastFailure: lastQuotaFailureTimes[email],
+                force: force
+            ) else {
+                continue
             }
             guard !fetchingQuotaEmails.contains(email) else { continue }
             fetchingQuotaEmails.insert(email)
 
-            let tier = profile.tier
-            let renewalTarget = AccountQuotaManager.nativeRenewalTarget(
-                for: email,
-                activeAppEmail: activeApp,
-                activeCLIEmail: activeCLI,
-                isCLIIndependentMode: cliIndependent
-            )
-            let allowNativeRenewal = renewalTarget != nil && AccountQuotaManager.shouldAttemptNativeRenewal(
-                lastAttempt: lastNativeRenewalTimes[email],
-                force: force
-            )
+            let tier = target.tier
+            let slot = target.slot
 
             Task.detached(priority: .utility) { [weak self] in
-                var result = await AccountQuotaManager.fetchAccountQuotaResult(email: email, tier: tier, homeDir: hDir)
-                var didAttemptNativeRenewal = false
-                if result == .tokenExpiredMissingOAuth, allowNativeRenewal, let target = renewalTarget {
-                    didAttemptNativeRenewal = true
-                    let renewed = await AccountQuotaManager.renewActiveSlotViaOfficialCLI(target: target, homeDir: hDir)
-                    if renewed {
-                        result = await AccountQuotaManager.fetchAccountQuotaResult(email: email, tier: tier, homeDir: hDir)
+                let cliRunner: ((AccountQuotaManager.QuotaSlotTarget, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = customProbeRunner.map { runner in
+                    { probeSlot, home in
+                        await runner(probeSlot, email, tier, home)
                     }
                 }
-                let finalResult = result
-                let attemptedRenewal = didAttemptNativeRenewal
+                let result = await AccountQuotaManager.fetchActiveSlotQuota(
+                    target: slot,
+                    email: email,
+                    tier: tier,
+                    homeDir: hDir,
+                    runCLI: cliRunner
+                )
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
                     self.fetchingQuotaEmails.remove(email)
-                    if attemptedRenewal {
-                        self.lastNativeRenewalTimes[email] = Date()
-                    }
                     let short = email.components(separatedBy: "@").first ?? email
-                    switch finalResult {
+                    switch result {
                     case .success(let summary):
                         self.accountQuotas[email] = summary
                         self.accountQuotas[short] = summary
@@ -1085,7 +1080,7 @@ final class AGYHubStore: ObservableObject {
                         self.lastQuotaFetchTimes[email] = Date()
                         self.lastQuotaFailureTimes.removeValue(forKey: email)
                         AccountQuotaManager.saveQuotaCache(self.accountQuotas, homeDir: hDir)
-                    case .tokenExpiredMissingOAuth:
+                    case .authRequired:
                         self.expiredQuotaEmails.insert(email)
                         self.lastQuotaFailureTimes[email] = Date()
                     case .failed:
@@ -2011,6 +2006,7 @@ final class AGYHubStore: ObservableObject {
                     }
 
                     self.showBanner(L10n.bannerCLISwitched(targetEmail, bgCount: bgCount, self.resolvedLanguage))
+                    self.refreshQuotasIfNeeded(force: true)
                 } else {
                     if let currentFileEmail = currentFileEmail {
                         self.activeCLIProfileName = currentFileEmail
@@ -2255,6 +2251,7 @@ final class AGYHubStore: ObservableObject {
                     self.expectedAppEmail = targetEmail
                     self.appStorageEmail = targetEmail
                     self.showBanner(L10n.bannerSwitchedApp(profile.name, self.resolvedLanguage))
+                    self.refreshQuotasIfNeeded(force: true)
                 } else {
                     self.showBanner(L10n.bannerSwitchedAppNeedsLogin(profile.name, self.resolvedLanguage))
                 }

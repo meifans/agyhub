@@ -214,46 +214,34 @@ sequenceDiagram
 
 ## 7. 账号周度额度与重置时间监控架构 (Account Weekly Quota Architecture)
 
-### 7.1 官方 Quota 接口说明
-Google 官方在 Antigravity 后台提供了两个核心配额接口：
-- `https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`（聚合型模型组配额，包含 5h 滑动窗口与周度 Weekly 窗口）；
-- `https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`（明细模型级配额）。
+### 7.1 官方 CLI `/usage` 探针机制（已废弃内部 API 直连）
+早期版本曾直接读取本地 OAuth Token 并携带自定义 `User-Agent` 请求内部接口 `retrieveUserQuotaSummary`。为彻底规避第三方客户端直连 Google 内部私有接口引发的账号风控/标记风险，现行架构**完全移除一切 Google 内部 API 直连、UA 伪装与直接 OAuth Token 刷新代码**，统一委托官方 `agy` CLI 执行零消耗只读斜杠命令：
+- **执行命令**：`agy -p "/usage" --output-format json --print-timeout 20s`（固定附带 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，剥离 `GEMINI_API_KEY`）；
+- **版本门禁**：调用前通过 `agy --version`（按二进制路径 + 修改时间内存缓存结果）强制校验 `agy >= 1.1.11`，确保 `/usage` 走只读斜杠命令通道（`num_turns == 0`、零 Token 消耗、不创建会话历史），拒绝老版本误触发真实对话请求；
+- **槽位隔离**：App 活跃槽位剥离 `SSH_*` 变量由 `agy` 读取系统钥匙串；独立 CLI 活跃槽位注入 `SSH_CLIENT=1` 由 `agy` 读取 `~/.gemini/antigravity-cli/antigravity-oauth-token`。当 App 与 CLI 登录同一账号或未开独立模式时自动去重，仅执行 1 次命令。
 
-### 7.2 关键门禁：User-Agent Gating 机制
-实测发现官方服务端根据请求头 `User-Agent` 进行分组过滤：
-- 若携带旧版或通用 UA（如 `antigravity/1.11.0` 或不带版本号），接口只返回 `Claude and GPT models`（3P 组）；
-- 必须携带当前语言服务标准 UA：`antigravity/2.29.0 darwin/arm64`，服务端才会完整返回 `Gemini Models`（`gemini-weekly`）与 `Claude and GPT models`（`3p-weekly`）全量组。
+### 7.2 分组解析、展示与切号缓存规则
+1. **普通 / Pro 账号**：解析 `command.data.groups`（及兼容分组）中的 5h 与周度配额，分别展示 `Gemini`（G）与独立 `Argon`（若存在）剩余百分比及重置倒计时；当 `"Gemini Models"` 描述文本里提及 `"Gemini 4 Argon"` 时保持共享归组不误拆，`Claude and GPT models`（`3p-weekly` / `3p-5h`）不混入 Gemini 配额。
+2. **Ultra 账号**：因 Google AI Ultra 订阅采用全局共享统一配额池，界面自动折叠，仅保留单一 `Gemini` 额度胶囊（例如 `Gemini 85% ·3d`）。
+3. **悬浮详情 (Tooltip)**：移入胶囊展示对应模型的精确说明、当前百分比与具体重置时间。
+4. **切号保留与按需刷新**：Agyhub **仅查询当前活跃 App / 当前活跃独立 CLI 账号**（自动成功冷却 180 秒、失败退避 300 秒，切号成功或手动点击刷新立即执行），并将最近一次成功结果持久落盘至 `~/.agy-profiles/quota_cache.json`（`0600`）。账号被切走变为备用状态后停止后台探测，**完整保留切换之前最后的额度数字与状态**，切回该账号时立即恢复最新探针。
 
-### 7.3 业务裁决与展示规则
-1. **普通 / Pro 账号**：分别展示 `Gemini`（G）与 `Argon`（A，包含 Claude 与 GPT 模型组）的周度剩余百分比与重置倒计时（例如 `G 62% ·3d` 与 `A 49% ·6d`）；
-2. **Ultra 账号**：因 Google AI Ultra 订阅采用全局共享统一配额池，界面自动折叠，仅保留单一 `Gemini` 额度胶囊（例如 `Gemini 85% ·3d`）；
-3. **悬浮详情 (Tooltip)**：移入胶囊展示对应模型的精确说明、当前百分比与具体重置时间；
-4. **Token 刷新与过期降级**：Antigravity 桌面端续期通常仅保存在进程内存，不会每小时回写系统钥匙串。因此对**当前活跃 App / 活跃独立 CLI 账号**，当查配额遇到 401 且无外部 OAuth 凭据时，Agyhub 会按冷却节流（30 分钟一次，或用户点击刷新/`Expired` 时立即执行）静默调用官方只读零 Token 命令 `agy models`（独立 CLI 槽位带 `SSH_CLIENT=1`）触发原生续期并立即重拉配额；同时将最近一次成功配额持久化到 `~/.agy-profiles/quota_cache.json`，确保重启 App 后仍保留历史真实配额。长期闲置超过 1 小时的备用账号在默认零密钥状态下被动降级并保留缓存配额，切回该账号时自动更新。
+### 7.3 开源零密钥与严禁后台代刷的边界红线
 
-### 7.4 开源零密钥边界与刻意不做的红线
+#### 取舍 1：彻底零内置密钥，也不读取 OAuth 发直连请求
+- **选 A（全量走官方 `agy` 二进制 + 零内置/零外挂 OAuth 密钥）**：公开仓库、安装包与运行时均不内置或读取任何 OAuth Client ID / Client Secret，也不再向 `daily-cloudcode-pa.googleapis.com` 或 `oauth2.googleapis.com` 发送任何 HTTP 请求；Token 过期续期由官方 `agy` 进程自身透明处理，仅当活跃槽位明确返回未登录/认证失效错误时提示重新登录。
 
-在开源发布与多账号配额刷新这件事上，我们刻意选择了“对当前活跃账号零配置开箱即用，对闲置备用账号守住安全与低开销边界”，明确否决了两种代价过高的方案：
-
-#### 取舍 1：源码零密钥，也不让普通用户手配 OAuth
-- **选 A（源码零内置密钥 + 普通用户零配置开箱即用）**：公开仓库与安装包中不内置任何官方或第三方 OAuth Client ID / Client Secret；同时严禁在文档、错误日志或界面引导里要求普通用户手动创建或填写 OAuth JSON。当前活跃账号通过官方只读 `agy models` 自动原生续期，无需任何手工配置。
-- **不选 B（源码内置提取出的官方 Client Secret，或在引导/日志中要求用户手动配 OAuth JSON）**：
-  1. 在仓库中硬编码官方 Client Secret 会直接触发 GitHub Push Protection 拦截，并带来把官方客户端密钥随开源代码分发的合规与风控风险；
-  2. 要求下载 `.dmg` 的普通用户自己去理解 OAuth 凭证并维护本地 JSON 文件，是完全不可接受的产品体验。
-- **留白边界**：代码层面仍静默兼容环境变量（`AGYHUB_OAUTH_CLIENT_ID` / `AGYHUB_OAUTH_CLIENT_SECRET`）与 `~/.agy-profiles/oauth_client.json`，仅作为极少数自备凭证开发者的隐式扩展通道，不作为产品前置条件，日志也不得输出引导创建该文件的指令。
-
-#### 取舍 2：活跃账号原生按需续期 vs 严禁为闲置备用账号建临时 `HOME` 代刷
-- **面临的盲区**：Google Access Token 只有 1 小时寿命。Antigravity 桌面 App 平时在内存续期，不会每小时回写系统钥匙串；闲置备用账号超过 1 小时也会过期。
-- **选 A（活跃槽位官方只读 `agy models` 续期 + 本地缓存持久化 + 闲置备用号被动降级）**：
-  1. 当前活跃 App 账号（真实钥匙串）与当前活跃独立 CLI 账号（真实 `cliTokenFile`）在 401 时，由 Agyhub 按 30 分钟冷却或用户主动点击刷新/`Expired` 静默执行官方只读 `agy models`（零 Token、不建临时 `HOME`、不落盘明文凭证），续期后立刻拿回真实配额并持久化到 `~/.agy-profiles/quota_cache.json`；
-  2. 长期闲置的备用账号不拉起任何 `agy` 进程，重启后直接展示 `~/.agy-profiles/quota_cache.json` 中保留的上次真实配额。
-- **不选 B（在临时 `HOME` 目录注入 `SSH_CLIENT=1` 拉起官方 `agy` 进程替闲置备用账号代刷 Token）**：
+#### 取舍 2：仅查活跃槽位 vs 严禁为闲置备用账号建临时 `HOME` 代查
+- **选 A（活跃槽位走官方 `agy -p "/usage"` + 备用账号保持切换前缓存）**：
+  1. 当前活跃 App 槽位与独立 CLI 槽位使用官方原路径运行 `agy`，不建临时 `HOME`、不落盘明文备用凭证；
+  2. 切换账号后，被切走的账号保留 `~/.agy-profiles/quota_cache.json` 中的上次真实配额与状态，不触发额外进程启动或风控特征。
+- **不选 B（在临时 `HOME` 目录注入 `SSH_CLIENT=1` 拉起 `agy` 替闲置备用账号代刷）**：
   1. 必须把备用账号的 `refresh_token` 明文落盘到临时目录，进程异常退出会留下凭证泄露风险；
-  2. 为多个闲置备用账号批量冷启动 200MB+ 的 `agy` 进程会拖垮低开销菜单栏常驻定位；
-  3. 临时覆盖 `HOME` 存在击穿未来版本 App/CLI 隔离边界的风险。
+  2. 为多个闲置备用账号批量冷启动 `agy` 进程既耗资源又会形成多账号并发探针特征。
 
 > **架构红线（后续维护者与 Agent 必须遵守）**：
-> 1. 严禁在源码、测试或打包脚本中硬编码任何官方或第三方 OAuth Client Secret，也严禁在日志或引导中要求普通用户手动创建 `oauth_client.json`；
-> 2. 严禁以临时 `HOME` 落盘明文凭证的方式在后台替闲置备用账号批量拉起 `agy` 进程（仅允许对当前活跃 App / 活跃独立 CLI 槽位使用真实路径按冷却或用户点击调用官方只读 `agy models`）。
+> 1. 严禁在源码、测试或打包脚本中直连 `cloudcode-pa` 等内部私有端点、伪造官方客户端 `User-Agent`，或内置/诱导配置 OAuth Client Secret；
+> 2. 严禁以临时 `HOME` 落盘明文凭证的方式在后台替闲置备用账号批量拉起 `agy` 进程探测配额（仅允许针对当前活跃 App / 活跃独立 CLI 槽位调用官方只读 `agy -p "/usage"`，被切走账号保持切换前缓存状态）。
 
 ---
 

@@ -1470,10 +1470,20 @@ enum CLIAccountManager {
         return credentialEmail(data)
     }
 
+    static func hasAccessToken(_ data: Data) -> Bool {
+        guard let json = decodeCredentialJSON(data),
+              let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+              let tokenObj = root["token"] as? [String: Any],
+              let accessToken = tokenObj["access_token"] as? String else {
+            return false
+        }
+        return !accessToken.isEmpty
+    }
+
     static func isCLITokenFileHealthy(homeDir: String) -> Bool {
         guard let data = FileManager.default.contents(atPath: cliTokenFilePath(homeDir: homeDir)),
               credentialEmail(data) != nil,
-              AccountQuotaManager.extractTokensFromCredentialData(data) != nil else {
+              hasAccessToken(data) else {
             return false
         }
         return true
@@ -1482,7 +1492,7 @@ enum CLIAccountManager {
     static func writeValidatedTokenFile(_ credential: Data, toPath path: String) -> Bool {
         guard let json = decodeCredentialJSON(credential),
               credentialEmail(json) != nil,
-              AccountQuotaManager.extractTokensFromCredentialData(json) != nil else {
+              hasAccessToken(json) else {
             return false
         }
         let fm = FileManager.default
@@ -1534,7 +1544,7 @@ enum CLIAccountManager {
         let path = cliTokenFilePath(homeDir: homeDir)
         if let existing = FileManager.default.contents(atPath: path),
            let email = credentialEmail(existing),
-           AccountQuotaManager.extractTokensFromCredentialData(existing) != nil {
+           hasAccessToken(existing) {
             return email
         }
 
@@ -1678,78 +1688,38 @@ struct AccountQuotaSummary: Codable, Equatable {
 }
 
 enum AccountQuotaManager {
-    static let endpoint = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
-    static let tokenEndpoint = "https://oauth2.googleapis.com/token"
-    static let oauthClientIdEnvKey = "AGYHUB_OAUTH_CLIENT_ID"
-    static let oauthClientSecretEnvKey = "AGYHUB_OAUTH_CLIENT_SECRET"
-
-    static let userAgent = "antigravity/hub/2.31.2 (os_type=darwin; arch=arm64)"
-
-    struct OAuthClientConfig: Equatable {
-        let clientId: String
-        let clientSecret: String
+    enum QuotaSlotTarget: Equatable {
+        case activeApp
+        case activeCLI
     }
 
-    enum OAuthConfigError: Error, LocalizedError, Equatable {
-        case missingCredentials
-        case invalidTokenResponse
-        case httpError(statusCode: Int)
+    struct QuotaProbeTarget: Equatable {
+        let email: String
+        let tier: String?
+        let slot: QuotaSlotTarget
+    }
 
-        var errorDescription: String? {
-            switch self {
-            case .missingCredentials:
-                return "当前未配置外部 OAuth 刷新凭据，跳过直连静默续期。"
-            case .invalidTokenResponse:
-                return "OAuth Token 刷新响应无效。"
-            case .httpError(let statusCode):
-                return "OAuth Token 刷新请求失败，HTTP 状态码：\(statusCode)。"
-            }
+    struct CLISemVer: Equatable, Comparable {
+        let major: Int
+        let minor: Int
+        let patch: Int
+
+        static func < (lhs: CLISemVer, rhs: CLISemVer) -> Bool {
+            if lhs.major != rhs.major { return lhs.major < rhs.major }
+            if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+            return lhs.patch < rhs.patch
         }
     }
 
-    static func oauthClientConfigPath(homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path) -> String {
-        "\(homeDir)/.agy-profiles/oauth_client.json"
+    enum QuotaFetchResult: Equatable {
+        case success(AccountQuotaSummary)
+        case authRequired
+        case failed
     }
 
-    static func resolveOAuthClientConfig(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path
-    ) -> OAuthClientConfig? {
-        func nonEmpty(_ value: String?) -> String? {
-            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-                return nil
-            }
-            return trimmed
-        }
-
-        var fileClientId: String? = nil
-        var fileClientSecret: String? = nil
-        let configPath = oauthClientConfigPath(homeDir: homeDir)
-        if let data = FileManager.default.contents(atPath: configPath),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            fileClientId = nonEmpty(json["client_id"] as? String)
-            fileClientSecret = nonEmpty(json["client_secret"] as? String)
-        }
-
-        let resolvedClientId = nonEmpty(environment[oauthClientIdEnvKey]) ?? fileClientId
-        let resolvedClientSecret = nonEmpty(environment[oauthClientSecretEnvKey]) ?? fileClientSecret
-
-        guard let clientId = resolvedClientId, let clientSecret = resolvedClientSecret else {
-            return nil
-        }
-        return OAuthClientConfig(clientId: clientId, clientSecret: clientSecret)
-    }
-
-    static func buildQuotaRequest(token: String) -> URLRequest? {
-        guard let url = URL(string: endpoint) else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.httpBody = "{}".data(using: .utf8)
-        return request
-    }
+    static let minimumSupportedCLIVersion = CLISemVer(major: 1, minor: 1, patch: 11)
+    static let autoQuotaCooldown: TimeInterval = 180.0
+    static let failureQuotaCooldown: TimeInterval = 300.0
 
     static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -1767,9 +1737,90 @@ enum AccountQuotaManager {
         isoFormatter.date(from: string) ?? fallbackIsoFormatter.date(from: string)
     }
 
+    /// 解析官方 `agy --version` 输出的首个 X.Y.Z 语义化版本号
+    static func parseCLIVersion(_ output: String) -> CLISemVer? {
+        let pattern = #"(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:[^0-9]|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: nsRange),
+              match.numberOfRanges >= 4,
+              let r1 = Range(match.range(at: 1), in: output),
+              let r2 = Range(match.range(at: 2), in: output),
+              let r3 = Range(match.range(at: 3), in: output),
+              let major = Int(output[r1]),
+              let minor = Int(output[r2]),
+              let patch = Int(output[r3]) else {
+            return nil
+        }
+        return CLISemVer(major: major, minor: minor, patch: patch)
+    }
+
+    /// 校验 agy CLI 是否达到无 Turn 消耗直接响应 `/usage` 的最低版本门禁
+    static func isSupportedCLIVersion(_ versionOutput: String) -> Bool {
+        guard let parsed = parseCLIVersion(versionOutput) else { return false }
+        return parsed >= minimumSupportedCLIVersion
+    }
+
+    /// 为官方 `agy -p "/usage"` 构造干净且槽位隔离的运行环境
+    static func buildUsageProbeEnvironment(
+        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        target: QuotaSlotTarget,
+        homeDir: String
+    ) -> [String: String] {
+        var env = baseEnvironment
+        env["HOME"] = homeDir
+        env["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+        env.removeValue(forKey: "GEMINI_API_KEY")
+        env.removeValue(forKey: "WSL_DISTRO_NAME")
+        env.removeValue(forKey: "WSL_INTEROP")
+        env.removeValue(forKey: "SSH_TTY")
+        env.removeValue(forKey: "SSH_CONNECTION")
+        switch target {
+        case .activeApp:
+            env.removeValue(forKey: "SSH_CLIENT")
+        case .activeCLI:
+            env["SSH_CLIENT"] = "1"
+        }
+        return env
+    }
+
+    /// 仅解析当前真正处于活跃状态的 App / 独立 CLI 账号目标，绝不后台轮询闲置备用号
+    static func resolveActiveQuotaTargets(
+        profiles: [AGYProfile],
+        activeAppEmail: String,
+        activeCLIEmail: String?,
+        isCLIIndependentMode: Bool
+    ) -> [QuotaProbeTarget] {
+        func normalized(_ raw: String?) -> String {
+            (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        func tierFor(_ email: String) -> String? {
+            profiles.first(where: {
+                normalized($0.email ?? $0.name) == email
+            })?.tier
+        }
+
+        var targets: [QuotaProbeTarget] = []
+        let appEmail = normalized(activeAppEmail)
+        if !appEmail.isEmpty && appEmail.contains("@") {
+            targets.append(QuotaProbeTarget(email: appEmail, tier: tierFor(appEmail), slot: .activeApp))
+        }
+
+        if isCLIIndependentMode {
+            let cliEmail = normalized(activeCLIEmail)
+            if !cliEmail.isEmpty && cliEmail.contains("@") && cliEmail != appEmail {
+                targets.append(QuotaProbeTarget(email: cliEmail, tier: tierFor(cliEmail), slot: .activeCLI))
+            }
+        }
+        return targets
+    }
+
     static func parseQuotaSummary(data: Data, email: String, tier: String? = nil, now: Date = Date()) -> AccountQuotaSummary? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let groups = json["groups"] as? [[String: Any]] else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let commandGroups = ((json["command"] as? [String: Any])?["data"] as? [String: Any])?["groups"] as? [[String: Any]]
+        guard let groups = commandGroups ?? (json["groups"] as? [[String: Any]]) else {
             return nil
         }
 
@@ -1781,22 +1832,26 @@ enum AccountQuotaManager {
         var argonFiveHourBucket: WeeklyQuotaBucket? = nil
 
         for group in groups {
-            let displayName = (group["displayName"] as? String) ?? ""
+            let displayName = (group["displayName"] as? String) ?? (group["name"] as? String) ?? ""
             let description = (group["description"] as? String) ?? ""
             let buckets = (group["buckets"] as? [[String: Any]]) ?? []
 
             let weeklyRaw = buckets.first(where: {
-                let bid = ($0["bucketId"] as? String) ?? ""
+                let bid = ($0["bucketId"] as? String) ?? ($0["id"] as? String) ?? ""
                 let win = ($0["window"] as? String) ?? ""
                 return win.lowercased() == "weekly" || bid.lowercased().contains("weekly")
             })
             let fiveHourRaw = buckets.first(where: {
-                let bid = (($0["bucketId"] as? String) ?? "").lowercased()
+                let bid = (($0["bucketId"] as? String) ?? ($0["id"] as? String) ?? "").lowercased()
                 let win = (($0["window"] as? String) ?? "").lowercased()
                 return win == "5h" || bid == "5h" || bid.hasSuffix("-5h")
             })
 
-            let primaryBucketId = ((weeklyRaw?["bucketId"] as? String) ?? (fiveHourRaw?["bucketId"] as? String) ?? "")
+            let primaryBucketId = ((weeklyRaw?["bucketId"] as? String)
+                ?? (weeklyRaw?["id"] as? String)
+                ?? (fiveHourRaw?["bucketId"] as? String)
+                ?? (fiveHourRaw?["id"] as? String)
+                ?? "")
             let isArgonGroup = primaryBucketId.localizedCaseInsensitiveContains("argon") ||
                                displayName.localizedCaseInsensitiveContains("argon")
             let isGeminiGroup = !isArgonGroup && (
@@ -1807,11 +1862,17 @@ enum AccountQuotaManager {
                  !displayName.localizedCaseInsensitiveContains("claude"))
             )
 
-            if let weeklyRaw = weeklyRaw {
-                let rem = (weeklyRaw["remainingFraction"] as? NSNumber)?.doubleValue ?? 1.0
-                let resetStr = weeklyRaw["resetTime"] as? String
+            func makeBucket(_ raw: [String: Any]) -> WeeklyQuotaBucket {
+                let rem = (raw["remainingFraction"] as? NSNumber)?.doubleValue
+                    ?? (raw["remaining_fraction"] as? NSNumber)?.doubleValue
+                    ?? 1.0
+                let resetStr = (raw["resetTime"] as? String) ?? (raw["reset_time"] as? String)
                 let resetDate = resetStr.flatMap { parseISO8601($0) }
-                let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
+                return WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
+            }
+
+            if let weeklyRaw = weeklyRaw {
+                let bucket = makeBucket(weeklyRaw)
                 if isArgonGroup {
                     argonBucket = bucket
                 } else if isGeminiGroup {
@@ -1820,10 +1881,7 @@ enum AccountQuotaManager {
             }
 
             if let fiveHourRaw = fiveHourRaw {
-                let rem = (fiveHourRaw["remainingFraction"] as? NSNumber)?.doubleValue ?? 1.0
-                let resetStr = fiveHourRaw["resetTime"] as? String
-                let resetDate = resetStr.flatMap { parseISO8601($0) }
-                let bucket = WeeklyQuotaBucket(remainingFraction: rem, resetTime: resetDate, resetTimeStr: resetStr)
+                let bucket = makeBucket(fiveHourRaw)
                 if isArgonGroup {
                     argonFiveHourBucket = bucket
                 } else if isGeminiGroup {
@@ -1901,398 +1959,23 @@ enum AccountQuotaManager {
         return items
     }
 
-    enum CredentialSource {
-        case cliTokenFile(path: String)
-        case vault(account: String)
-        case sharedKeychain
-    }
-
-    struct ResolvedCredentialCandidate {
-        let accessToken: String
-        let refreshToken: String?
-        let expiry: Date?
-        let source: CredentialSource
-        let rawData: Data
-        let sourcePriority: Int
-    }
-
-    static func resolveCredentialCandidates(
-        email: String,
-        homeDir: String,
-        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
-        readSharedKeychain: (() -> Data?)? = nil,
+    static func shouldAttemptQuotaFetch(
+        lastSuccess: Date?,
+        lastFailure: Date?,
+        force: Bool = false,
         now: Date = Date()
-    ) -> [ResolvedCredentialCandidate] {
-        let emailKey = email.lowercased()
-        let shortKey = emailKey.components(separatedBy: "@").first ?? emailKey
-        var candidates: [ResolvedCredentialCandidate] = []
-
-        let tokenPath = CLIAccountManager.cliTokenFilePath(homeDir: homeDir)
-        if let data = FileManager.default.contents(atPath: tokenPath),
-           CLIAccountManager.credentialMatchesEmail(data, expectedEmail: email),
-           let cred = extractTokensFromCredentialData(data) {
-            candidates.append(ResolvedCredentialCandidate(
-                accessToken: cred.accessToken,
-                refreshToken: cred.refreshToken,
-                expiry: extractTokenExpiryFromCredentialData(data),
-                source: .cliTokenFile(path: tokenPath),
-                rawData: data,
-                sourcePriority: 0
-            ))
+    ) -> Bool {
+        if force {
+            return true
         }
-
-        let sharedData = readSharedKeychain?() ?? CLIAccountManager.readKeychainData(
-            service: CLIAccountManager.activeService,
-            account: CLIAccountManager.activeAccount
-        )
-        if let sharedData = sharedData,
-           CLIAccountManager.credentialMatchesEmail(sharedData, expectedEmail: email),
-           let cred = extractTokensFromCredentialData(sharedData) {
-            candidates.append(ResolvedCredentialCandidate(
-                accessToken: cred.accessToken,
-                refreshToken: cred.refreshToken,
-                expiry: extractTokenExpiryFromCredentialData(sharedData),
-                source: .sharedKeychain,
-                rawData: sharedData,
-                sourcePriority: 1
-            ))
-        }
-
-        let vaultCandidates = (shortKey != emailKey) ? [emailKey, shortKey] : [emailKey]
-        for account in vaultCandidates {
-            if let vaultData = vault.read(account),
-               CLIAccountManager.credentialMatchesEmail(vaultData, expectedEmail: email),
-               let cred = extractTokensFromCredentialData(vaultData) {
-                candidates.append(ResolvedCredentialCandidate(
-                    accessToken: cred.accessToken,
-                    refreshToken: cred.refreshToken,
-                    expiry: extractTokenExpiryFromCredentialData(vaultData),
-                    source: .vault(account: account),
-                    rawData: vaultData,
-                    sourcePriority: 2
-                ))
-            }
-        }
-
-        let sorted = candidates.sorted { lhs, rhs in
-            switch (lhs.expiry, rhs.expiry) {
-            case let (lExp?, rExp?):
-                if lExp != rExp { return lExp > rExp }
-            case (let lExp?, nil):
-                let lFresh = lExp > now
-                return lFresh
-            case (nil, let rExp?):
-                let rFresh = rExp > now
-                return !rFresh
-            case (nil, nil):
-                break
-            }
-            return lhs.sourcePriority < rhs.sourcePriority
-        }
-
-        var seenTokens: Set<String> = []
-        return sorted.filter { seenTokens.insert($0.accessToken).inserted }
-    }
-
-    static func resolveCredential(
-        email: String,
-        homeDir: String,
-        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
-        readSharedKeychain: (() -> Data?)? = nil
-    ) -> (accessToken: String, refreshToken: String?, source: CredentialSource, rawData: Data)? {
-        guard let best = resolveCredentialCandidates(
-            email: email,
-            homeDir: homeDir,
-            vault: vault,
-            readSharedKeychain: readSharedKeychain
-        ).first else {
-            return nil
-        }
-        return (best.accessToken, best.refreshToken, best.source, best.rawData)
-    }
-
-    static func updatingCredentialData(_ originalData: Data, newAccessToken: String, newExpiry: Date? = nil) -> Data? {
-        guard !newAccessToken.isEmpty,
-              let jsonData = CLIAccountManager.decodeCredentialJSON(originalData),
-              var root = (try? JSONSerialization.jsonObject(with: jsonData)) as? [String: Any],
-              var tokenObj = root["token"] as? [String: Any] else {
-            return nil
-        }
-
-        tokenObj["access_token"] = newAccessToken
-        if let expiry = newExpiry {
-            let fmt = ISO8601DateFormatter()
-            fmt.formatOptions = [.withInternetDateTime]
-            tokenObj["expiry"] = fmt.string(from: expiry)
-        }
-        root["token"] = tokenObj
-
-        guard let updatedJSON = try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]) else {
-            return nil
-        }
-
-        if let text = String(data: originalData, encoding: .utf8),
-           text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("go-keyring-base64:") {
-            return ("go-keyring-base64:" + updatedJSON.base64EncodedString()).data(using: .utf8)
-        }
-        return updatedJSON
-    }
-
-    static func shouldAttemptQuotaFetch(lastSuccess: Date?, lastFailure: Date?, now: Date = Date()) -> Bool {
-        if let fail = lastFailure, now.timeIntervalSince(fail) < 300.0 {
+        if let fail = lastFailure, now.timeIntervalSince(fail) < failureQuotaCooldown {
             return false
         }
-        if let success = lastSuccess, now.timeIntervalSince(success) < 60.0 {
+        if let success = lastSuccess, now.timeIntervalSince(success) < autoQuotaCooldown {
             return false
         }
         return true
     }
-
-    static func extractTokensFromCredentialData(_ data: Data) -> (accessToken: String, refreshToken: String?)? {
-        guard let json = CLIAccountManager.decodeCredentialJSON(data),
-              let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-              let tokenObj = root["token"] as? [String: Any],
-              let accessToken = tokenObj["access_token"] as? String,
-              !accessToken.isEmpty else {
-            return nil
-        }
-        let refreshToken = tokenObj["refresh_token"] as? String
-        return (accessToken, refreshToken)
-    }
-
-    static func extractTokenExpiryFromCredentialData(_ data: Data) -> Date? {
-        guard let json = CLIAccountManager.decodeCredentialJSON(data),
-              let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-              let tokenObj = root["token"] as? [String: Any],
-              let expiryStr = tokenObj["expiry"] as? String,
-              !expiryStr.isEmpty else {
-            return nil
-        }
-        return parseISO8601(expiryStr)
-    }
-
-    private static let formValueAllowedCharacters: CharacterSet = {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: "&=+?")
-        return allowed
-    }()
-
-    private static let missingCredentialsLogLock = NSLock()
-    private static var hasLoggedMissingCredentials = false
-
-    private static func shouldLogMissingCredentialsOnce() -> Bool {
-        missingCredentialsLogLock.lock()
-        defer { missingCredentialsLogLock.unlock() }
-        if hasLoggedMissingCredentials { return false }
-        hasLoggedMissingCredentials = true
-        return true
-    }
-
-    static func refreshAccessTokenResult(
-        refreshToken: String,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path,
-        performRequest: ((URLRequest) async throws -> (Data, URLResponse))? = nil
-    ) async -> Result<(accessToken: String, expiresIn: TimeInterval?), OAuthConfigError> {
-        guard let config = resolveOAuthClientConfig(environment: environment, homeDir: homeDir) else {
-            if shouldLogMissingCredentialsOnce() {
-                LocalAccountDetector.appendLog("[OAuth] \(OAuthConfigError.missingCredentials.localizedDescription)")
-            }
-            return .failure(.missingCredentials)
-        }
-        guard let url = URL(string: tokenEndpoint) else {
-            return .failure(.invalidTokenResponse)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        let bodyParams = [
-            ("client_id", config.clientId),
-            ("client_secret", config.clientSecret),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refreshToken)
-        ]
-        let bodyString = bodyParams.map { key, value in
-            let encoded = value.addingPercentEncoding(withAllowedCharacters: formValueAllowedCharacters) ?? value
-            return "\(key)=\(encoded)"
-        }.joined(separator: "&")
-        request.httpBody = bodyString.data(using: .utf8)
-
-        let rawResponse: (Data, URLResponse)?
-        if let customPerform = performRequest {
-            rawResponse = try? await customPerform(request)
-        } else {
-            rawResponse = try? await URLSession.shared.data(for: request)
-        }
-
-        guard let (data, resp) = rawResponse,
-              let httpResp = resp as? HTTPURLResponse else {
-            return .failure(.invalidTokenResponse)
-        }
-        guard httpResp.statusCode == 200 else {
-            return .failure(.httpError(statusCode: httpResp.statusCode))
-        }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let newAccessToken = json["access_token"] as? String,
-              !newAccessToken.isEmpty else {
-            return .failure(.invalidTokenResponse)
-        }
-        let expiresIn = (json["expires_in"] as? NSNumber)?.doubleValue
-        return .success((newAccessToken, expiresIn))
-    }
-
-    static func refreshAccessTokenWithExpiry(
-        refreshToken: String,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDir: String = FileManager.default.homeDirectoryForCurrentUser.path,
-        performRequest: ((URLRequest) async throws -> (Data, URLResponse))? = nil
-    ) async -> (accessToken: String, expiresIn: TimeInterval?)? {
-        switch await refreshAccessTokenResult(
-            refreshToken: refreshToken,
-            environment: environment,
-            homeDir: homeDir,
-            performRequest: performRequest
-        ) {
-        case .success(let value):
-            return value
-        case .failure:
-            return nil
-        }
-    }
-
-    static func refreshAccessToken(refreshToken: String) async -> String? {
-        return await refreshAccessTokenWithExpiry(refreshToken: refreshToken)?.accessToken
-    }
-
-    private static func persistRefreshedCredential(
-        newToken: String,
-        expiresIn: TimeInterval?,
-        originalData: Data,
-        source: CredentialSource,
-        vault: CLIAccountManager.CredentialVault
-    ) {
-        let expiryDate = expiresIn.map { Date().addingTimeInterval($0) } ?? Date().addingTimeInterval(3500)
-        guard let updatedData = updatingCredentialData(originalData, newAccessToken: newToken, newExpiry: expiryDate) else {
-            return
-        }
-        switch source {
-        case .cliTokenFile(let path):
-
-            let expectedEmail = CLIAccountManager.credentialEmail(updatedData)?.lowercased()
-            if let diskData = FileManager.default.contents(atPath: path),
-               let diskEmail = CLIAccountManager.credentialEmail(diskData)?.lowercased(),
-               let expected = expectedEmail,
-               diskEmail != expected {
-                return
-            }
-            _ = CLIAccountManager.writeValidatedTokenFile(updatedData, toPath: path)
-        case .vault(let account):
-            _ = vault.write(updatedData, account)
-        case .sharedKeychain:
-            break
-        }
-    }
-
-    enum QuotaFetchResult: Equatable {
-        case success(AccountQuotaSummary)
-        case tokenExpiredMissingOAuth
-        case failed
-    }
-
-    static func fetchAccountQuotaResult(
-        email: String,
-        tier: String?,
-        homeDir: String,
-        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        readSharedKeychain: (() -> Data?)? = nil,
-        requestQuota: ((String) async -> (Data?, Int))? = nil,
-        refreshToken: ((String) async -> (String, TimeInterval?)?)? = nil
-    ) async -> QuotaFetchResult {
-        let candidates = resolveCredentialCandidates(
-            email: email,
-            homeDir: homeDir,
-            vault: vault,
-            readSharedKeychain: readSharedKeychain
-        )
-        guard !candidates.isEmpty else {
-            return .failed
-        }
-
-        func executeQuotaRequest(token: String) async -> (Data?, Int) {
-            if let customRequest = requestQuota {
-                return await customRequest(token)
-            }
-            guard let request = buildQuotaRequest(token: token) else { return (nil, 0) }
-
-            guard let (data, resp) = try? await URLSession.shared.data(for: request),
-                  let httpResp = resp as? HTTPURLResponse else {
-                return (nil, 0)
-            }
-            return (data, httpResp.statusCode)
-        }
-
-        var saw401 = false
-        for candidate in candidates {
-            let (data, status) = await executeQuotaRequest(token: candidate.accessToken)
-            if status == 200, let validData = data,
-               let summary = parseQuotaSummary(data: validData, email: email, tier: tier) {
-                return .success(summary)
-            }
-            if status == 401 {
-                saw401 = true
-                continue
-            }
-            return .failed
-        }
-
-        if saw401 {
-            guard let refreshCandidate = candidates.first(where: { $0.refreshToken != nil }),
-                  let rToken = refreshCandidate.refreshToken else {
-                return .tokenExpiredMissingOAuth
-            }
-
-            let refreshed: (accessToken: String, expiresIn: TimeInterval?)?
-            if let customRefresh = refreshToken {
-                refreshed = await customRefresh(rToken).map { ($0.0, $0.1) }
-            } else {
-                switch await refreshAccessTokenResult(refreshToken: rToken, environment: environment, homeDir: homeDir) {
-                case .success(let val):
-                    refreshed = val
-                case .failure(.missingCredentials):
-                    return .tokenExpiredMissingOAuth
-                case .failure:
-                    refreshed = nil
-                }
-            }
-            if let refreshed = refreshed {
-                persistRefreshedCredential(
-                    newToken: refreshed.accessToken,
-                    expiresIn: refreshed.expiresIn,
-                    originalData: refreshCandidate.rawData,
-                    source: refreshCandidate.source,
-                    vault: vault
-                )
-                let (retryData, retryStatus) = await executeQuotaRequest(token: refreshed.accessToken)
-                if retryStatus == 200, let validData = retryData,
-                   let summary = parseQuotaSummary(data: validData, email: email, tier: tier) {
-                    return .success(summary)
-                }
-            }
-        }
-
-        return .failed
-    }
-
-    enum NativeRenewalTarget: Equatable {
-        case activeApp
-        case activeCLI
-    }
-
-    private static let nativeRenewalLock = NSLock()
-    private static let nativeRenewalCooldown: TimeInterval = 1800.0
 
     static func quotaCachePath(homeDir: String) -> String {
         "\(homeDir)/.agy-profiles/quota_cache.json"
@@ -2328,35 +2011,6 @@ enum AccountQuotaManager {
         return (try? decoder.decode([String: AccountQuotaSummary].self, from: data)) ?? [:]
     }
 
-    static func nativeRenewalTarget(
-        for email: String,
-        activeAppEmail: String?,
-        activeCLIEmail: String?,
-        isCLIIndependentMode: Bool
-    ) -> NativeRenewalTarget? {
-        let targetEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !targetEmail.isEmpty else { return nil }
-
-        let cliEmail = activeCLIEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let appEmail = activeAppEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        if isCLIIndependentMode, let cliEmail = cliEmail, !cliEmail.isEmpty, cliEmail == targetEmail {
-            return .activeCLI
-        }
-        if let appEmail = appEmail, !appEmail.isEmpty, appEmail == targetEmail {
-            return .activeApp
-        }
-        return nil
-    }
-
-    static func shouldAttemptNativeRenewal(lastAttempt: Date?, force: Bool, now: Date = Date()) -> Bool {
-        if force { return true }
-        if let last = lastAttempt, now.timeIntervalSince(last) < nativeRenewalCooldown {
-            return false
-        }
-        return true
-    }
-
     static func resolveOfficialAGYBinary(homeDir: String) -> String? {
         let candidates = [
             "/usr/local/bin/agy",
@@ -2371,78 +2025,187 @@ enum AccountQuotaManager {
         return nil
     }
 
-    static func renewActiveSlotViaOfficialCLI(target: NativeRenewalTarget, homeDir: String) async -> Bool {
-        guard let agyPath = resolveOfficialAGYBinary(homeDir: homeDir) else {
-            return false
+    private struct CachedVersionCheck {
+        let path: String
+        let modDate: Date?
+        let supported: Bool
+    }
+
+    private static let versionCacheLock = NSLock()
+    private static var cachedVersionCheck: CachedVersionCheck? = nil
+
+    private static func isAuthErrorMessage(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let markers = [
+            "not logged in",
+            "please login",
+            "please sign in",
+            "sign in",
+            "unauthenticated",
+            "authentication failed",
+            "authentication required",
+            "invalid credentials",
+            "token expired",
+            "acp --login",
+            "401"
+        ]
+        return markers.contains(where: { lower.contains($0) })
+    }
+
+    /// 校验官方 `agy -p "/usage" --output-format json` 响应，拒绝 num_turns > 0 或非 usage 命令输出
+    static func parseUsageCommandResult(
+        data: Data,
+        email: String,
+        tier: String?,
+        now: Date = Date()
+    ) -> QuotaFetchResult {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .failed
         }
+        let status = (json["status"] as? String) ?? ""
+        if status != "SUCCESS" {
+            let errText = ((json["error"] as? String) ?? (json["response"] as? String) ?? (json["message"] as? String) ?? "")
+            return isAuthErrorMessage(errText) ? .authRequired : .failed
+        }
+        if let numTurns = json["num_turns"] as? Int, numTurns > 0 {
+            return .failed
+        }
+        guard let cmd = json["command"] as? [String: Any],
+              (cmd["name"] as? String) == "usage",
+              let summary = parseQuotaSummary(data: data, email: email, tier: tier, now: now) else {
+            return .failed
+        }
+        return .success(summary)
+    }
 
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                autoreleasepool {
-                    nativeRenewalLock.lock()
-                    defer { nativeRenewalLock.unlock() }
+    private static func runCapturedProcess(
+        executablePath: String,
+        arguments: [String],
+        environment: [String: String],
+        timeoutSeconds: TimeInterval
+    ) -> (exitCode: Int32, stdout: Data, stderr: Data) {
+        autoreleasepool {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: executablePath)
+            proc.arguments = arguments
+            proc.environment = environment
+            proc.standardInput = FileHandle.nullDevice
 
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: agyPath)
-                proc.arguments = ["models"]
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            proc.standardOutput = outPipe
+            proc.standardError = errPipe
 
-                var env = ProcessInfo.processInfo.environment
-                env["HOME"] = homeDir
-                switch target {
-                case .activeApp:
-                    env.removeValue(forKey: "SSH_CLIENT")
-                    env.removeValue(forKey: "SSH_TTY")
-                    env.removeValue(forKey: "SSH_CONNECTION")
-                case .activeCLI:
-                    env["SSH_CLIENT"] = "1"
-                }
-                proc.environment = env
-                proc.standardOutput = FileHandle.nullDevice
-                proc.standardError = FileHandle.nullDevice
+            do {
+                try proc.run()
+            } catch {
+                return (-1, Data(), Data())
+            }
 
-                do {
-                    try proc.run()
-                } catch {
-                    continuation.resume(returning: false)
-                    return
-                }
-
-                let deadline = Date().addingTimeInterval(15.0)
-                while proc.isRunning && Date() < deadline {
-                    Thread.sleep(forTimeInterval: 0.05)
-                }
+            var timedOut = false
+            let watchdog = DispatchWorkItem {
                 if proc.isRunning {
+                    timedOut = true
                     proc.terminate()
-                    continuation.resume(returning: false)
-                    return
-                }
-                    continuation.resume(returning: proc.terminationStatus == 0)
                 }
             }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds, execute: watchdog)
+
+            let drainGroup = DispatchGroup()
+            var errData = Data()
+            drainGroup.enter()
+            DispatchQueue.global(qos: .utility).async {
+                autoreleasepool {
+                    errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                }
+                drainGroup.leave()
+            }
+
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            drainGroup.wait()
+            proc.waitUntilExit()
+            watchdog.cancel()
+
+            if timedOut {
+                return (-1, Data(), Data())
+            }
+            return (proc.terminationStatus, outData, errData)
         }
     }
 
-    static func fetchAccountQuota(
+    private static func ensureSupportedCLIVersion(agyPath: String, homeDir: String) -> Bool {
+        let modDate = (try? FileManager.default.attributesOfItem(atPath: agyPath)[.modificationDate]) as? Date
+        versionCacheLock.lock()
+        if let cached = cachedVersionCheck, cached.path == agyPath, cached.modDate == modDate {
+            let supported = cached.supported
+            versionCacheLock.unlock()
+            return supported
+        }
+        versionCacheLock.unlock()
+
+        let env = buildUsageProbeEnvironment(target: .activeApp, homeDir: homeDir)
+        let res = runCapturedProcess(
+            executablePath: agyPath,
+            arguments: ["--version"],
+            environment: env,
+            timeoutSeconds: 5.0
+        )
+        let outText = String(data: res.stdout, encoding: .utf8) ?? ""
+        let supported = (res.exitCode == 0) && isSupportedCLIVersion(outText)
+
+        versionCacheLock.lock()
+        cachedVersionCheck = CachedVersionCheck(path: agyPath, modDate: modDate, supported: supported)
+        versionCacheLock.unlock()
+        return supported
+    }
+
+    private static let officialProbeQueue = DispatchQueue(label: "com.antigravity.agyhub.usageprobe", qos: .utility)
+
+    static func fetchActiveSlotQuota(
+        target: QuotaSlotTarget,
         email: String,
         tier: String?,
         homeDir: String,
-        vault: CLIAccountManager.CredentialVault = CLIAccountManager.keychainVault,
-        requestQuota: ((String) async -> (Data?, Int))? = nil,
-        refreshToken: ((String) async -> (String, TimeInterval?)?)? = nil
-    ) async -> AccountQuotaSummary? {
-        switch await fetchAccountQuotaResult(
-            email: email,
-            tier: tier,
-            homeDir: homeDir,
-            vault: vault,
-            requestQuota: requestQuota,
-            refreshToken: refreshToken
-        ) {
-        case .success(let summary):
-            return summary
-        case .tokenExpiredMissingOAuth, .failed:
-            return nil
+        runCLI: ((QuotaSlotTarget, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = nil
+    ) async -> QuotaFetchResult {
+        let cliResult: (exitCode: Int32, stdout: Data, stderr: Data)
+        if let customRunner = runCLI {
+            cliResult = await customRunner(target, homeDir)
+        } else {
+            guard let agyPath = resolveOfficialAGYBinary(homeDir: homeDir) else {
+                return .failed
+            }
+            cliResult = await withCheckedContinuation { continuation in
+                officialProbeQueue.async {
+                    guard ensureSupportedCLIVersion(agyPath: agyPath, homeDir: homeDir) else {
+                        continuation.resume(returning: (-1, Data(), Data()))
+                        return
+                    }
+                    let env = buildUsageProbeEnvironment(target: target, homeDir: homeDir)
+                    let res = runCapturedProcess(
+                        executablePath: agyPath,
+                        arguments: ["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"],
+                        environment: env,
+                        timeoutSeconds: 25.0
+                    )
+                    continuation.resume(returning: res)
+                }
+            }
         }
+
+        if !cliResult.stdout.isEmpty {
+            let parsed = parseUsageCommandResult(data: cliResult.stdout, email: email, tier: tier)
+            if parsed != .failed {
+                return parsed
+            }
+        }
+
+        let errText = String(data: cliResult.stderr, encoding: .utf8) ?? ""
+        let outText = String(data: cliResult.stdout, encoding: .utf8) ?? ""
+        if isAuthErrorMessage(errText) || isAuthErrorMessage(outText) {
+            return .authRequired
+        }
+        return .failed
     }
 
     static func quotaTooltip(

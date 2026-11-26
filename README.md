@@ -53,18 +53,32 @@
 
 - **No Extra Login, 100% Local Data**  
   Never asks for your password or sends session logs to any third-party server. Everything runs locally on your Mac.
-- **Native Account Switching, Zero Ban Risk**  
-  Built purely on Antigravity's official credential mechanisms. No proxies, no binary patching, no hook injection. Desktop (`Antigravity.app`) and CLI (`agy`) credentials stay cleanly isolated so background refreshes never overwrite your active desktop session.
+- **Native Account Switching & Quota Probe, Zero Ban Risk**  
+  Built purely on Antigravity's official credential mechanisms and official `agy` CLI (`-p "/usage"`). No internal private API calls, no proxies, no binary patching, no hook injection. Desktop (`Antigravity.app`) and CLI (`agy`) credentials stay cleanly isolated so background refreshes never overwrite your active desktop session.
 - **Live Multi-Agent Context Telemetry**  
   Real-time context curves (`1m / 3m / 15m / 1h`) with parent-to-child subagent fork markers, consistent OKLCH color families across ranges, bidirectional chart-to-session highlighting, and an adjustable split pane.
 - **Code-Driven Cache Miss & Token Analytics (No LLM Required)**  
   Deterministic local log parsing—zero extra token cost, instant results, and 100% reproducible. Pinpoints prompt cache invalidation causes, calculates wasted cost, and breaks down token usage and spend across sessions, sub-agents, and models.
 - **Weekly & 5-Hour Quota Overview**  
-  Monitor 5-hour sliding capacity, remaining weekly quotas, and reset countdowns across your accounts directly from a compact single-row bar.
+  Monitors active App and CLI slots via official `agy -p "/usage"` (zero turns, zero LLM tokens), displaying 5-hour sliding capacity, weekly quotas, and reset countdowns in a single-row bar while switched-away backup accounts cleanly preserve their last cached quota.
 - **Bilingual UI (English / 简体中文)**  
   Follows your macOS system language automatically, with instant in-app switching between English and Simplified Chinese.
 - **Lightweight Native Footprint, Low Background Overhead**  
   Incremental local log caching and event-driven menu bar updates keep background CPU and memory usage minimal.
+
+## Account Safety: How Agyhub Avoids Flagging
+
+Google recently warned external clients against calling Antigravity's undocumented internal APIs (such as `cloudcode-pa`), spoofing client identities (`User-Agent` / ACP `clientInfo`), or refreshing/polling extracted OAuth credentials directly—behaviors that overlap with unofficial proxy pools and can get accounts flagged.
+
+Agyhub is designed from the ground up to stay strictly on Antigravity's official, observable boundaries:
+
+| Capability | What Agyhub Does | What Agyhub Explicitly Never Does |
+| :--- | :--- | :--- |
+| **Quota Lookup** | Invokes the official `agy -p "/usage" --output-format json` command (`agy >= 1.1.11` gate, `num_turns == 0`, 0 LLM tokens, 180s cooldown) **only for the currently active App / CLI slot** (`SSH_CLIENT=1` isolates CLI). Switched-away backup accounts preserve their last locally cached quota (`~/.agy-profiles/quota_cache.json`). | **No** direct HTTP calls to internal `cloudcode-pa` endpoints; **no** spoofed `User-Agent` headers; **no** OAuth `refresh_token` / `oauth2.googleapis.com` scraping; **no** background polling of idle backup accounts or temporary `HOME` farms. |
+| **Account Switching** | Uses macOS Keychain for `Antigravity.app` and Antigravity's official Headless file mode (`SSH_CLIENT=1` → `~/.gemini/antigravity-cli/antigravity-oauth-token`, `0600`) for `agy`, launching official binaries cleanly. | **No** reverse-engineered login flows, **no** binary patching, **no** hook/DYLD injection, **no** MITM proxies. |
+| **Telemetry & Billing** | `agy-monitor.py` reads local SQLite databases and transcript JSONL files strictly offline. | **No** external network requests and **no** LLM/token spend. |
+
+> Switched-away accounts stay frozen at their last cached quota snapshot without expiring or triggering background traffic; switching back to an account immediately refreshes it via `agy`.
 
 ## Requirements
 

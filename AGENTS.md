@@ -31,7 +31,7 @@ Agyhub 是一个面向 macOS 13.0+ 的原生状态栏应用（Swift + SwiftUI，
 3. **钥匙串与 CLI 文件凭证引擎 (`CLIAccountManager` / `KeychainDriftPolicy`)**：
    - 判定共享钥匙串当前真正归属，拦截 `agy` 后台静默续期引发的串槽覆盖；
    - 管理独立模式下的 `~/.gemini/antigravity-cli/antigravity-oauth-token` 文件切换与自愈。
-4. **周配额管理 (`AccountQuotaManager`)**：按优先级（CLI token 文件 → 保险箱 → 共享钥匙串）解析凭证，携带 `antigravity/hub/2.31.2+` `User-Agent` 调用 `retrieveUserQuotaSummary` 拉取 `Gemini` 与 `Gemini 4 Argon` 周度配额；遇 `401` 自动用 `refresh_token` 续期并回写来源槽位（成功后 60 秒节流，失败后 300 秒退避）。
+4. **周配额管理 (`AccountQuotaManager`)**：不直连任何 Google 内部私有接口、不伪造 `User-Agent`、不直接提取或刷新 OAuth Token；仅针对当前活跃的 App 槽位与（开启独立模式且不同邮箱时的）独立 CLI 槽位，经版本门禁（`agy >= 1.1.11`）按 180 秒成功冷却 / 300 秒失败退避调用官方只读命令 `agy -p "/usage" --output-format json --print-timeout 20s`（禁用自动更新）获取 5 小时与周度配额并持久化至 `~/.agy-profiles/quota_cache.json`；被切走的备用账号保持切换前缓存的配额与状态，不在后台探测。
 5. **低开销监控管道 (`MonitorDaemonClient` / `SessionDirectoryWatcher` / `PollingSchedulePolicy` / `MonitorPayloadEquivalencePolicy`)**：
    - 维护常驻 `agy-monitor.py --daemon` NDJSON 长连接，异常时指数退避重启并无缝降级单次 `--json`；
    - 通过 `FSEvents` 防抖监听（400ms）感知本地会话写入；
@@ -66,9 +66,9 @@ Agyhub 是一个面向 macOS 13.0+ 的原生状态栏应用（Swift + SwiftUI，
 1. **唯一写盘口**：写 `~/.gemini/antigravity-cli/antigravity-oauth-token` 必须经由 `CLIAccountManager.writeValidatedTokenFile(_:toPath:)`（剥离 `go-keyring-base64:` 前缀、校验 `id_token_email` 与非空 `access_token`、`.atomic` 原子替换、固定 `0o600` 权限）。
 2. **禁止先删后等**：`switchCLITokenFile` 在目标账号未缓存或缓存损坏时，**必须保留当前有效 token 文件不动**；终端重登命令统一使用 `SSH_CLIENT=1 <agy> acp --login`（实测即使已有文件仍会触发新 OAuth 登录，完成后再原子覆写，中途取消不影响在用会话）。
 3. **缺失/损坏自愈**：`isCLIIndependentMode == true` 且已授权保险箱时，`detectActiveCLIProfile` 通过 `ensureCLITokenFileIfNeeded` 自动检查文件健康度；若缺失或为 0 字节/坏 JSON，按 `cli_active.json` → 优先候选邮箱 → `cli-vault` 已有槽位 顺序自动补写回盘；无法补出时在 UI 提示条展示橙色缺失警告。
-4. **防异步倒盖**：`AccountQuotaManager.persistRefreshedCredential` 回写 `.cliTokenFile` 前必须校验磁盘文件当前邮箱仍与本次刷新邮箱一致。
+4. **零内部 API 直连**：`AccountQuotaManager` 严禁直接请求 `daily-cloudcode-pa.googleapis.com`、`oauth2.googleapis.com` 或读取钥匙串中的 OAuth token 发起网络请求；一切活跃配额查询一律委托给经版本校验的官方 `agy -p "/usage"` 命令行进程，且不得替闲置备用账号探测或回写 Token 文件。
 5. **App 切号免视口破坏**：`switchToProfile` 通过“仅向 `.regular` 主应用发优雅退出请求并等 `Helper`/`language_server` 彻底退出（8s 窗口）→ 热写共享钥匙串并同步 `app_storage.json` → 净化为 macOS 原生 GUI 环境变量后 `open -a /Applications/Antigravity.app` 单实例拉起”，严禁传递 `--user-data-dir`、`-n` 或泄露父进程脏环境变量。
-6. **开源零密钥与严禁后台代刷 Token（关联 `ADR-001` 7.4 节）**：严禁在源码、测试或脚本中硬编码任何 OAuth 密钥（`AccountQuotaManager` 在无外部注入凭证时被动降级保留缓存配额，禁止向普通用户暴露繁琐的 OAuth 手配引导）；严禁以临时 `HOME` + `SSH_CLIENT=1` 等方式在后台拉起官方 `agy` 进程替备用账号刷新 Token。
+6. **开源零密钥与严禁后台代刷 Token（关联 `ADR-001` 7.4 节）**：严禁在源码、测试或脚本中硬编码任何 OAuth 密钥，也严禁以临时 `HOME` + `SSH_CLIENT=1` 等方式在后台拉起官方 `agy` 进程替备用账号探测或刷新 Token；被切走的闲置备用账号保持切换前缓存在 `~/.agy-profiles/quota_cache.json` 的配额与状态，切回激活后自动更新。
 
 ---
 
