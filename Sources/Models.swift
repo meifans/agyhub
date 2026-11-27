@@ -3136,9 +3136,13 @@ struct DashboardSplitAllocation: Equatable {
 }
 
 enum DashboardSplitLayoutPolicy {
-    static let embedsDragHandleInSessionsHeader = true
+    static let embedsDragHandleInSessionsHeader = false
     static let splitFractionDefaultsKey = "agyhub.layout.telemetrySplitFraction"
-    static let dividerHeight: CGFloat = 6.0
+    static let dividerHeight: CGFloat = 10.0
+    static let dividerPillWidth: CGFloat = 36.0
+    static let dividerPillHoverWidth: CGFloat = 48.0
+    static let dividerPillHeight: CGFloat = 3.0
+    static let dividerPillHoverHeight: CGFloat = 3.5
     static let minTelemetryHeight: CGFloat = 180.0
     static let minSessionsHeight: CGFloat = 62.0
     static let defaultMinPlotHeight: CGFloat = 118.0

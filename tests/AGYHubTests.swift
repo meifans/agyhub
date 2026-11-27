@@ -5311,8 +5311,9 @@ for line in sys.stdin:
     }
 
     static func testDashboardSplitLayoutDraggableResizeClampingAndPersistence() {
-        expect(DashboardSplitLayoutPolicy.embedsDragHandleInSessionsHeader, "拖拽手柄应内嵌到 SESSIONS 标题栏中，不再额外占用独立的中间横条高度")
-        expect(DashboardSplitLayoutPolicy.dividerHeight <= 6.0, "嵌入标题栏后两区外间距应收紧到 <= 6pt 以节约纵向空间 (actual=\(DashboardSplitLayoutPolicy.dividerHeight))")
+        expect(!DashboardSplitLayoutPolicy.embedsDragHandleInSessionsHeader, "拖拽分隔线应位于实时监控卡片与 SESSIONS 之间的缝隙，不再挤在 SESSIONS 标题栏内部")
+        expect(DashboardSplitLayoutPolicy.dividerHeight >= 8.0 && DashboardSplitLayoutPolicy.dividerHeight <= 12.0, "中间缝隙拖拽区高度应在 8~12pt 之间以居中容纳拖动手柄且不浪费纵向空间 (actual=\(DashboardSplitLayoutPolicy.dividerHeight))")
+        expect(DashboardSplitLayoutPolicy.dividerPillHeight >= 2.5 && DashboardSplitLayoutPolicy.dividerPillHeight <= 3.5, "中间拖拽线粗细应保持纤细紧凑 (actual=\(DashboardSplitLayoutPolicy.dividerPillHeight))")
 
         let totalHeight: CGFloat = 480.0
         let dividerH = DashboardSplitLayoutPolicy.dividerHeight

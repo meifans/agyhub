@@ -1117,42 +1117,44 @@ struct MainDashboardView: View {
                     .frame(height: alloc.telemetryHeight > 0 ? alloc.telemetryHeight : nil, alignment: .top)
                     .clipped()
 
-                    Color.clear
-                        .frame(height: alloc.dividerHeight)
-
-                    activeSessionsSection(
-                        allocatedHeight: alloc.sessionsHeight > 0 ? alloc.sessionsHeight : nil,
-                        splitDragCallbacks: SplitDragCallbacks(
-                            onDragBegan: {
-                                dragStartTelemetryHeight = alloc.telemetryHeight
-                            },
-                            onDragChanged: { deltaY in
-                                let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
-                                liveDragTelemetryFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
-                                    startTelemetryHeight: base,
-                                    dragDeltaY: deltaY,
-                                    totalAvailableHeight: totalH
-                                )
-                            },
-                            onDragEnded: { deltaY in
-                                let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
-                                let committed = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
-                                    startTelemetryHeight: base,
-                                    dragDeltaY: deltaY,
-                                    totalAvailableHeight: totalH
-                                )
-                                storedSplitFraction = Double(committed)
+                    SplitPaneDividerBar(
+                        showsSeparatorLine: true,
+                        tooltip: L10n.t(.splitResizeTooltip, lang),
+                        onDragBegan: {
+                            dragStartTelemetryHeight = alloc.telemetryHeight
+                        },
+                        onDragChanged: { deltaY in
+                            let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
+                            liveDragTelemetryFraction = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+                                startTelemetryHeight: base,
+                                dragDeltaY: deltaY,
+                                totalAvailableHeight: totalH
+                            )
+                        },
+                        onDragEnded: { deltaY in
+                            let base = dragStartTelemetryHeight ?? alloc.telemetryHeight
+                            let committed = DashboardSplitLayoutPolicy.updatedFractionAfterDrag(
+                                startTelemetryHeight: base,
+                                dragDeltaY: deltaY,
+                                totalAvailableHeight: totalH
+                            )
+                            storedSplitFraction = Double(committed)
+                            liveDragTelemetryFraction = nil
+                            dragStartTelemetryHeight = nil
+                        },
+                        onDoubleClick: {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                storedSplitFraction = -1
                                 liveDragTelemetryFraction = nil
                                 dragStartTelemetryHeight = nil
-                            },
-                            onDoubleClick: {
-                                withAnimation(.easeOut(duration: 0.18)) {
-                                    storedSplitFraction = -1
-                                    liveDragTelemetryFraction = nil
-                                    dragStartTelemetryHeight = nil
-                                }
                             }
-                        )
+                        }
+                    )
+                    .frame(height: alloc.dividerHeight)
+                    .padding(.horizontal, metrics.telemetryCardHorizontalPadding)
+
+                    activeSessionsSection(
+                        allocatedHeight: alloc.sessionsHeight > 0 ? alloc.sessionsHeight : nil
                     )
                 }
                 .frame(width: splitGeo.size.width, height: splitGeo.size.height, alignment: .top)
@@ -1176,7 +1178,7 @@ struct MainDashboardView: View {
                 )
                 .frame(maxHeight: !isTelemetryCollapsed ? .infinity : nil)
 
-                activeSessionsSection(allocatedHeight: nil, splitDragCallbacks: nil)
+                activeSessionsSection(allocatedHeight: nil)
 
                 if isSessionsCollapsed {
                     Spacer(minLength: 0)
@@ -1187,8 +1189,7 @@ struct MainDashboardView: View {
     }
 
     private func activeSessionsSection(
-        allocatedHeight: CGFloat?,
-        splitDragCallbacks: SplitDragCallbacks?
+        allocatedHeight: CGFloat?
     ) -> some View {
         VStack(alignment: .leading, spacing: SessionListLayoutPolicy.headerToListSpacing) {
             HStack(spacing: 6) {
@@ -1286,19 +1287,7 @@ struct MainDashboardView: View {
                     .help(L10n.recent503Tooltip(count503, lang))
                 }
 
-                if let splitDrag = splitDragCallbacks {
-                    SplitPaneDividerBar(
-                        showsSeparatorLine: false,
-                        tooltip: L10n.t(.splitResizeTooltip, lang),
-                        onDragBegan: splitDrag.onDragBegan,
-                        onDragChanged: splitDrag.onDragChanged,
-                        onDragEnded: splitDrag.onDragEnded,
-                        onDoubleClick: splitDrag.onDoubleClick
-                    )
-                    .frame(minWidth: 26, maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Spacer()
-                }
+                Spacer(minLength: 8)
 
                 if !store.payload.sessions.isEmpty {
                     let displayedCount = SessionListFilter.sessionsForDisplay(store.payload.sessions).count
@@ -5767,13 +5756,6 @@ extension AGYAppDelegate {
     }
 }
 
-struct SplitDragCallbacks {
-    let onDragBegan: () -> Void
-    let onDragChanged: (CGFloat) -> Void
-    let onDragEnded: (CGFloat) -> Void
-    let onDoubleClick: () -> Void
-}
-
 struct SplitPaneDividerBar: View {
     var showsSeparatorLine: Bool = true
     let tooltip: String
@@ -5789,13 +5771,20 @@ struct SplitPaneDividerBar: View {
         ZStack {
             if showsSeparatorLine {
                 Rectangle()
-                    .fill(Color(nsColor: .separatorColor).opacity(isHovering || isDragging ? 0.36 : 0.14))
-                    .frame(height: isHovering || isDragging ? 1.0 : 0.5)
+                    .fill(Color(nsColor: .separatorColor).opacity(isDragging ? 0.35 : (isHovering ? 0.22 : 0.0)))
+                    .frame(height: 0.5)
             }
 
             Capsule()
                 .fill(isDragging ? Color.accentColor : (isHovering ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.22)))
-                .frame(width: (isHovering || isDragging) ? 38 : 28, height: (isHovering || isDragging) ? 4 : 3.5)
+                .frame(
+                    width: (isHovering || isDragging)
+                        ? DashboardSplitLayoutPolicy.dividerPillHoverWidth
+                        : DashboardSplitLayoutPolicy.dividerPillWidth,
+                    height: (isHovering || isDragging)
+                        ? DashboardSplitLayoutPolicy.dividerPillHoverHeight
+                        : DashboardSplitLayoutPolicy.dividerPillHeight
+                )
                 .animation(.easeOut(duration: 0.12), value: isHovering || isDragging)
 
             SplitDividerAppKitView(
