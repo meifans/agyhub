@@ -133,6 +133,18 @@ enum L10nKey: String, CaseIterable {
     case statTotalTokens
     case statContext
     case statCacheHit
+    case statInputTokens
+    case statOutputTokens
+    case statCacheTokens
+    case detailCompositionTitle
+    case detailDimCost
+    case detailDimTokens
+    case detailShortInput
+    case detailShortOutput
+    case detailShortCache
+    case collapseAction
+    case expandAction
+    case subagentsAllIdleHint
     case telemetryAgentsLabel
     case telemetryRateLabel
     case telemetryTotalLabel
@@ -141,8 +153,6 @@ enum L10nKey: String, CaseIterable {
     case telemetrySectionTitle
     case telemetryTrackContextTitle
 
-    case diagTabPhases
-    case diagTabSources
     case diagLoading
     case diagEmpty
     case diagCacheMissTitle
@@ -151,9 +161,6 @@ enum L10nKey: String, CaseIterable {
     case diagTagNormal
     case diagTagOptimizable
     case diagCollapseEvents
-    case diagDistributionTitle
-    case diagCenterTurns
-    case diagCenterAttributed
     case diagRecommendationsTitle
 
     case usageRangeToday
@@ -169,6 +176,15 @@ enum L10nKey: String, CaseIterable {
     case usageEmptyRecord
     case usageLoadingHistory
     case usageNoModelData
+    case breadcrumbAllSessions
+    case usageNavTitle
+    case usageTrendTitle
+    case usageBreakdownSectionTitle
+    case usageCompactToday
+    case usageCompact7D
+    case usageCompact30D
+    case usageMetricCompactCost
+    case usageMetricCompactTokens
 
     case createProfileTitle
     case createProfileSubtitle
@@ -306,6 +322,18 @@ enum L10nKey: String, CaseIterable {
         case .statTotalTokens: return ("总 Token", "Total Tokens")
         case .statContext: return ("上下文", "Context")
         case .statCacheHit: return ("缓存率", "Cache Hit")
+        case .statInputTokens: return ("Input Token", "Input Tokens")
+        case .statOutputTokens: return ("Output Token", "Output Tokens")
+        case .statCacheTokens: return ("缓存 Token", "Cache Tokens")
+        case .detailCompositionTitle: return ("构成占比", "Breakdown")
+        case .detailDimCost: return ("账单", "Cost")
+        case .detailDimTokens: return ("Token", "Tokens")
+        case .detailShortInput: return ("输入", "In")
+        case .detailShortOutput: return ("输出", "Out")
+        case .detailShortCache: return ("缓存", "Cache")
+        case .collapseAction: return ("收起", "Hide")
+        case .expandAction: return ("展开", "Show")
+        case .subagentsAllIdleHint: return ("已全部完成", "All idle")
         case .telemetryAgentsLabel: return ("Agent", "Agents")
         case .telemetryRateLabel: return ("速率", "Rate")
         case .telemetryTotalLabel: return ("累计", "Total")
@@ -314,8 +342,6 @@ enum L10nKey: String, CaseIterable {
         case .telemetrySectionTitle: return ("实时监控", "LIVE")
         case .telemetryTrackContextTitle: return ("上下文", "Context")
 
-        case .diagTabPhases: return ("按工作阶段", "By Phase")
-        case .diagTabSources: return ("按上下文来源", "By Source")
         case .diagLoading: return ("正在本地解析上下文与缓存失效原因（零 Token 消耗）…", "Analyzing context & cache misses locally (0 tokens)…")
         case .diagEmpty: return ("暂无可用的本地 transcript 诊断数据（点击右上角刷新重试）", "No local transcript diagnostics available (click refresh to retry)")
         case .diagCacheMissTitle: return ("缓存失效诊断", "Cache Miss Diagnostics")
@@ -324,9 +350,6 @@ enum L10nKey: String, CaseIterable {
         case .diagTagNormal: return ("正常", "Normal")
         case .diagTagOptimizable: return ("可优化", "Optimizable")
         case .diagCollapseEvents: return ("收起部分明细", "Show Fewer")
-        case .diagDistributionTitle: return ("Token 与上下文分布", "Token & Context Breakdown")
-        case .diagCenterTurns: return ("总轮次", "Turns")
-        case .diagCenterAttributed: return ("已归因", "Attributed")
         case .diagRecommendationsTitle: return ("针对性优化建议", "Recommendations")
 
         case .usageRangeToday: return ("今天", "Today")
@@ -342,6 +365,15 @@ enum L10nKey: String, CaseIterable {
         case .usageEmptyRecord: return ("所选时间段内暂无本地消耗记录", "No local usage recorded in this period")
         case .usageLoadingHistory: return ("正在扫描本地历史消耗统计...", "Scanning local usage history...")
         case .usageNoModelData: return ("无记录", "No data")
+        case .breadcrumbAllSessions: return ("全部会话", "All Sessions")
+        case .usageNavTitle: return ("用量统计", "Usage")
+        case .usageTrendTitle: return ("趋势", "Trend")
+        case .usageBreakdownSectionTitle: return ("用量明细", "Breakdown")
+        case .usageCompactToday: return ("今天", "Today")
+        case .usageCompact7D: return ("7天", "7D")
+        case .usageCompact30D: return ("30天", "30D")
+        case .usageMetricCompactCost: return ("$", "$")
+        case .usageMetricCompactTokens: return ("Tok", "Tok")
 
         case .createProfileTitle: return ("新建环境", "New Profile")
         case .createProfileSubtitle: return ("自动创建隔离目录并共享插件以节省空间。", "Creates an isolated directory and shares extensions to save disk space.")
@@ -595,11 +627,6 @@ enum L10n {
         return count == 1 ? "1 Agent" : "\(count) Agents"
     }
 
-    static func diagSubagentCount(_ count: Int, _ lang: AppLanguage.Resolved) -> String {
-        if lang == .zhHans { return "含 \(count) 个子 Agent" }
-        return count == 1 ? "+1 Subagent" : "+\(count) Subagents"
-    }
-
     static func cacheMissSummary(_ totalMisses: Int, _ extraCost: Double, _ wastePct: Double, _ lang: AppLanguage.Resolved) -> String {
         lang == .zhHans
             ? String(format: "%d 次 · 多花 +$%.2f (占 %.1f%%)", totalMisses, extraCost, wastePct)
@@ -615,6 +642,49 @@ enum L10n {
     static func diagExpandTopEvents(_ count: Int, _ lang: AppLanguage.Resolved) -> String {
         let topN = min(5, count)
         return lang == .zhHans ? "展开全部 Top \(topN) 断点" : "Show Top \(topN) Events"
+    }
+
+    /// 详情页缓存诊断折叠区摘要文案（收敛为单行入口）
+    static func diagSummaryCompact(eventCount: Int, recCount: Int, _ lang: AppLanguage.Resolved) -> String {
+        let topN = min(5, eventCount)
+        if lang == .zhHans {
+            if topN > 0 && recCount > 0 {
+                return "Top \(topN) 断点详情与 \(recCount) 条优化建议"
+            }
+            if topN > 0 {
+                return "Top \(topN) 断点详情"
+            }
+            return "\(recCount) 条优化建议"
+        }
+        if topN > 0 && recCount > 0 {
+            return "Top \(topN) misses & \(recCount) tips"
+        }
+        if topN > 0 {
+            return "Top \(topN) misses"
+        }
+        return "\(recCount) tips"
+    }
+
+    static func subagentsShowAllCount(_ total: Int, _ lang: AppLanguage.Resolved) -> String {
+        lang == .zhHans ? "展开全部 \(total) 个子 Agent" : "Show all \(total) subagents"
+    }
+
+    static func subagentsShowFewerCount(_ limit: Int, _ lang: AppLanguage.Resolved) -> String {
+        lang == .zhHans ? "收起至前 \(limit) 个" : "Show top \(limit)"
+    }
+
+    /// 用量统计趋势图未悬停时的周期峰值提示文案
+    static func usagePeakSummary(
+        label: String,
+        cost: Double,
+        tokens: Int,
+        metric: UsageMetricMode,
+        _ lang: AppLanguage.Resolved
+    ) -> String {
+        let metricStr = metric == .cost ? Formatters.formatCost(cost) : "\(Formatters.formatTokens(tokens)) Tok"
+        return lang == .zhHans
+            ? "峰值 \(label) · \(metricStr)"
+            : "Peak \(label) · \(metricStr)"
     }
 
     static func usageSummaryCacheCalls(cachePct: Double, calls: Int, _ lang: AppLanguage.Resolved) -> String {
@@ -771,38 +841,6 @@ enum L10n {
             .replacingOccurrences(of: "排队", with: "Queue")
             .replacingOccurrences(of: "断流", with: "EOF")
             .replacingOccurrences(of: "活跃", with: "Active")
-    }
-
-    static func localizeDiagnosticPhase(_ raw: String, language: AppLanguage.Resolved) -> String {
-        guard language == .en else { return raw }
-        switch raw {
-        case "调研/检索": return "Research / Search"
-        case "编码修改": return "Code Editing"
-        case "测试/构建/排错": return "Test / Build / Debug"
-        case "调度/看板协作": return "Agent Coordination"
-        case "总结/文字输出": return "Summary / Response"
-        default: return raw
-        }
-    }
-
-    static func localizeDiagnosticSource(_ raw: String, language: AppLanguage.Resolved) -> String {
-        guard language == .en else { return raw }
-        switch raw {
-        case "read_file 读取": return "read_file output"
-        case "后台测试/E2E回传": return "Async Test / E2E output"
-        case "后台其他命令回传": return "Async Command output"
-        case "同步测试/构建输出": return "Sync Test / Build output"
-        case "同步搜索/Git输出": return "Sync Search / Git output"
-        case "同步其他命令输出": return "Sync Command output"
-        case "edit/write 回执": return "edit/write receipts"
-        case "看板/子Agent协作": return "Swarm / Subagent msgs"
-        case "其他系统提示": return "Other system prompts"
-        case "模型思考与输出": return "Model output"
-        case "模型思考/回复与参数": return "Model output & args"
-        case "用户输入": return "User prompts"
-        case "报错信息": return "Error logs"
-        default: return raw
-        }
     }
 
     static func localizeAgentLabel(_ raw: String, language: AppLanguage.Resolved) -> String {

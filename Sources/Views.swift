@@ -2,6 +2,35 @@ import AppKit
 import Charts
 import SwiftUI
 
+/// 全局统一设计常量：三档圆角、三层中性表面、极细分割线（Quiet Chrome + Single Focal Signal）
+enum AgyTheme {
+    enum Radius {
+        static let micro: CGFloat = 4
+        static let control: CGFloat = 6
+        static let container: CGFloat = 10
+    }
+
+    static func cardSurfaceColor(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(nsColor: .controlBackgroundColor).opacity(0.86)
+            : Color.white.opacity(0.92)
+    }
+
+    static func wellSurfaceColor(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.24)
+            : Color.primary.opacity(0.032)
+    }
+
+    static func hairlineColor(for colorScheme: ColorScheme) -> Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.11 : 0.08)
+    }
+
+    static func hoverRowColor(for colorScheme: ColorScheme) -> Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)
+    }
+}
+
 struct ModernPrimaryButtonStyle: ButtonStyle {
     var isAccent: Bool = true
     func makeBody(configuration: Configuration) -> some View {
@@ -269,6 +298,94 @@ struct ImpeccableIntervalPill: View {
     }
 }
 
+/// 右侧统一折叠图标按钮（用于监控卡片等已有独立操作组的标题栏）
+struct SectionIconCollapseButton: View {
+    let tooltipTitle: String
+    let isCollapsed: Bool
+    var size: CGFloat = 22
+    let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.agyLanguage) private var lang
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(isCollapsed ? 0 : 180))
+                .foregroundColor(isHovered ? .primary : .secondary)
+                .frame(width: size, height: size)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .fill(isHovered ? AgyTheme.hoverRowColor(for: colorScheme) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .strokeBorder(isHovered ? AgyTheme.hairlineColor(for: colorScheme) : .clear, lineWidth: 0.5)
+                )
+                .animation(.easeOut(duration: 0.16), value: isCollapsed)
+                .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+            if hovering {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+        .help(L10n.collapseToggleHelp(title: tooltipTitle, isCollapsed: isCollapsed, lang))
+    }
+}
+
+/// 右侧带文案的轻量化收起/展开胶囊控件（用于 SESSIONS、子 Agent、诊断详情等）
+struct SectionTrailingDisclosurePill: View {
+    let text: String
+    let isCollapsed: Bool
+    var usesPillSurface: Bool = true
+    var fontSize: CGFloat = 10
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 3.5) {
+            Text(text)
+                .font(.system(size: fontSize, weight: .medium))
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8.5, weight: .semibold))
+                .rotationEffect(.degrees(isCollapsed ? 0 : 180))
+                .animation(.easeOut(duration: 0.16), value: isCollapsed)
+        }
+        .foregroundColor(isHovered ? .primary : .secondary)
+        .padding(.horizontal, usesPillSurface ? 7 : 5)
+        .padding(.vertical, usesPillSurface ? 3 : 2)
+        .background(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                .fill(usesPillSurface
+                      ? (isHovered ? AgyTheme.hoverRowColor(for: colorScheme) : AgyTheme.wellSurfaceColor(for: colorScheme))
+                      : (isHovered ? AgyTheme.hoverRowColor(for: colorScheme) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                .strokeBorder(usesPillSurface || isHovered ? AgyTheme.hairlineColor(for: colorScheme) : .clear, lineWidth: 0.5)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+            if hovering {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+    }
+}
+
 struct SectionCollapseToggleButton: View {
     let title: String
     let isCollapsed: Bool
@@ -279,23 +396,23 @@ struct SectionCollapseToggleButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    .foregroundColor(isHovered ? .primary : Color.primary.opacity(0.75))
-                    .animation(.easeOut(duration: 0.18), value: isCollapsed)
-
                 Text(title)
-                    .font(.system(size: 11.5, weight: .bold))
-                    .foregroundColor(isHovered ? .primary : Color.primary.opacity(0.75))
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(isHovered ? .primary : Color.primary.opacity(0.82))
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(isCollapsed ? 0 : 180))
+                    .foregroundColor(isHovered ? .primary : .secondary)
+                    .animation(.easeOut(duration: 0.16), value: isCollapsed)
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(isHovered ? Color.primary.opacity(0.06) : Color.primary.opacity(0.001))
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(isHovered ? Color.primary.opacity(0.05) : Color.primary.opacity(0.001))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -390,7 +507,6 @@ struct DashboardHeaderBarView: View {
                 Circle()
                     .fill(hasAlert ? Color.red : Color.green)
                     .frame(width: 6, height: 6)
-                    .shadow(color: (hasAlert ? Color.red : Color.green).opacity(0.55), radius: 2.5)
             }
             .fixedSize(horizontal: true, vertical: true)
 
@@ -499,7 +615,7 @@ struct DashboardFooterBarView: View {
 struct TodayUsagePillButton: View {
     static let closedChevronSystemName = "chevron.down"
     static let openChevronSystemName = "chevron.up"
-    static let usesElevatedCrispSurface = true
+    static let usesElevatedCrispSurface = false
 
     let stats: TodayStats
     let isUsageOpen: Bool
@@ -518,19 +634,19 @@ struct TodayUsagePillButton: View {
                     showTitle: true,
                     showCost: true,
                     showTokens: true,
-                    horizontalPadding: 7
+                    horizontalPadding: 8
                 )
                 pillContent(
                     showTitle: false,
                     showCost: true,
                     showTokens: true,
-                    horizontalPadding: 9
+                    horizontalPadding: 8
                 )
                 pillContent(
                     showTitle: false,
                     showCost: true,
                     showTokens: false,
-                    horizontalPadding: 9
+                    horizontalPadding: 8
                 )
                 pillContent(
                     showTitle: true,
@@ -560,93 +676,67 @@ struct TodayUsagePillButton: View {
     ) -> some View {
         let fillColor: Color = {
             if isUsageOpen {
+                return Color.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.10)
+            }
+            if isHovered {
                 return colorScheme == .dark
-                    ? Color.accentColor.opacity(0.20)
-                    : Color.accentColor.opacity(0.11)
+                    ? Color(nsColor: .controlBackgroundColor).opacity(0.96)
+                    : Color.white
             }
-            if colorScheme == .dark {
-                return Color(nsColor: .controlBackgroundColor).opacity(isHovered ? 1.0 : 0.88)
-            }
-            return Color.white.opacity(isHovered ? 1.0 : 0.94)
+            return AgyTheme.cardSurfaceColor(for: colorScheme)
         }()
 
-        let borderColor: Color = {
-            if isUsageOpen {
-                return Color.accentColor.opacity(0.42)
-            }
-            if colorScheme == .dark {
-                return Color.white.opacity(isHovered ? 0.22 : 0.14)
-            }
-            return Color.black.opacity(isHovered ? 0.14 : 0.08)
-        }()
+        let borderColor: Color = isUsageOpen
+            ? Color.accentColor.opacity(0.32)
+            : Color.primary.opacity(isHovered ? 0.15 : (colorScheme == .dark ? 0.12 : 0.08))
 
-        let tokenInkColor: Color = colorScheme == .dark
-            ? Color.white.opacity(0.84)
-            : Color(red: 0.22, green: 0.29, blue: 0.39)
-
-        let badgeFill: Color = isUsageOpen
-            ? Color.accentColor.opacity(colorScheme == .dark ? 0.28 : 0.18)
-            : Color.accentColor.opacity(colorScheme == .dark ? 0.20 : 0.11)
-
-        return HStack(spacing: 5.5) {
+        return HStack(spacing: 5) {
             if showTitle {
                 Text(L10n.t(.headerTodayLabel, lang))
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundColor(Color.accentColor)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(isUsageOpen ? Color.accentColor : .secondary)
                     .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(badgeFill)
-                    )
             }
 
             if showCost {
                 Text(Formatters.formatCost(stats.costUsd))
-                    .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
                     .foregroundColor(.primary)
                     .lineLimit(1)
             }
 
             if showCost && showTokens {
                 Text("·")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Color.primary.opacity(0.28))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.45))
                     .lineLimit(1)
             }
 
             if showTokens {
                 Text(Formatters.formatTokens(stats.totalTokens))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundColor(tokenInkColor)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary)
                     .lineLimit(1)
             }
 
             Image(systemName: isUsageOpen ? Self.openChevronSystemName : Self.closedChevronSystemName)
-                .font(.system(size: 8.5, weight: .bold))
-                .foregroundColor(Color.accentColor.opacity(isUsageOpen || isHovered ? 1.0 : 0.72))
-                .padding(.trailing, 1)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundColor(isUsageOpen ? Color.accentColor : .secondary)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 3.5)
         .fixedSize(horizontal: true, vertical: true)
         .background(
-            Capsule()
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
                 .fill(fillColor)
                 .overlay(
-                    Capsule()
-                        .strokeBorder(borderColor, lineWidth: 0.65)
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .strokeBorder(borderColor, lineWidth: 0.5)
                 )
         )
-        .shadow(
-            color: Color.black.opacity(colorScheme == .dark ? 0.24 : (isHovered ? 0.08 : 0.045)),
-            radius: isHovered ? 4 : 2.5,
-            y: 1
-        )
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .animation(.easeOut(duration: 0.15), value: isUsageOpen)
-        .contentShape(Capsule())
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .animation(.easeOut(duration: 0.14), value: isUsageOpen)
+        .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
     }
 }
 
@@ -654,6 +744,7 @@ struct MainDashboardView: View {
     @ObservedObject var store: AGYHubStore
     var isStandaloneWindow: Bool = false
 
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("agyhub.collapse.sessions") private var isSessionsCollapsed = false
     @AppStorage("agyhub.collapse.telemetry") private var isTelemetryCollapsed = false
     @AppStorage("agyhub.telemetry.range") private var selectedTelemetryRangeRaw: String = TelemetryTimeRange.threeMinutes.rawValue
@@ -681,6 +772,14 @@ struct MainDashboardView: View {
 
     private var layoutMetrics: DashboardAdaptiveLayoutMetrics {
         DashboardAdaptiveLayoutMetrics.metrics(forWidth: containerWidth)
+    }
+
+    /// 仅在主界面根目录展示顶部账号摘要栏，详情页与每日统计页统一由二级导航条取代
+    static func shouldShowProfileManagerSection(
+        isUsageOpen: Bool,
+        selectedSessionUUID: String?
+    ) -> Bool {
+        !isUsageOpen && selectedSessionUUID == nil
     }
 
     var body: some View {
@@ -725,20 +824,36 @@ struct MainDashboardView: View {
                     .transition(.opacity)
                 } else {
                     VStack(spacing: 8) {
+                        if Self.shouldShowProfileManagerSection(
+                            isUsageOpen: store.isUsageDashboardPresented,
+                            selectedSessionUUID: store.activeSelectedSession?.uuid
+                        ) {
+                            profileManagerSection
 
-                        profileManagerSection
-
-                        Rectangle()
-                            .fill(Color(nsColor: .separatorColor).opacity(0.35))
-                            .frame(height: 0.5)
-                            .padding(.horizontal, metrics.sectionHeaderHorizontalPadding)
+                            Rectangle()
+                                .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, metrics.sectionHeaderHorizontalPadding)
+                        }
 
                         if let session = store.activeSelectedSession {
+                            let breadcrumbs = SessionNavigationPolicy.breadcrumbTrail(
+                                stackUUIDs: store.sessionNavigationStack,
+                                currentUUID: session.uuid,
+                                in: store.payload.sessions,
+                                language: lang
+                            )
                             SessionDetailCardView(
                                 session: session,
                                 diagnostics: store.sessionDiagnosticsByUUID[session.uuid],
                                 isLoadingDiagnostics: store.isLoadingDiagnosticsUUID == session.uuid,
+                                breadcrumbs: breadcrumbs,
                                 onBack: { store.popSessionDetail() },
+                                onSelectBreadcrumb: { targetUUID in
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        store.navigateToBreadcrumb(uuid: targetUUID)
+                                    }
+                                },
                                 onRefreshDiagnostics: {
                                     store.fetchSessionDiagnostics(uuid: session.uuid, force: true)
                                 },
@@ -770,7 +885,10 @@ struct MainDashboardView: View {
                 footerBar
             }
 
-            if isAccountPickerOpen && !store.isUsageDashboardPresented {
+            if isAccountPickerOpen && Self.shouldShowProfileManagerSection(
+                isUsageOpen: store.isUsageDashboardPresented,
+                selectedSessionUUID: store.activeSelectedSession?.uuid
+            ) {
                 accountPickerDismissScrimAndOverlay
             }
 
@@ -917,7 +1035,7 @@ struct MainDashboardView: View {
     @ViewBuilder
     private var settingsDismissScrimAndOverlay: some View {
         ZStack {
-            Color.black.opacity(0.22)
+            Color.black.opacity(colorScheme == .dark ? 0.36 : 0.20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -926,27 +1044,26 @@ struct MainDashboardView: View {
                     }
                 }
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            SettingsPopoverView(store: store, onClose: {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    showSettingsPopover = false
+                }
+            })
+            .background(
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                    .fill(colorScheme == .dark ? Color(red: 0.10, green: 0.10, blue: 0.115) : Color(nsColor: .windowBackgroundColor))
+                    .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous))
                     .onTapGesture {}
-
-                SettingsPopoverView(store: store, onClose: {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        showSettingsPopover = false
-                    }
-                })
-            }
+            )
             .fixedSize(horizontal: false, vertical: true)
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.75)
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                    .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.75)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: Color.black.opacity(0.22), radius: 18, y: 6)
+            .clipShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous))
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.42 : 0.18), radius: 16, y: 6)
             .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.vertical, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.opacity.combined(with: .scale(scale: 0.97)))
@@ -1192,112 +1309,108 @@ struct MainDashboardView: View {
         allocatedHeight: CGFloat?
     ) -> some View {
         VStack(alignment: .leading, spacing: SessionListLayoutPolicy.headerToListSpacing) {
-            HStack(spacing: 6) {
-                SectionCollapseToggleButton(title: L10n.t(.sessionsSectionTitle, lang), isCollapsed: isSessionsCollapsed) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isSessionsCollapsed.toggle()
-                    }
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    isSessionsCollapsed.toggle()
                 }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(L10n.t(.sessionsSectionTitle, lang))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.primary.opacity(0.85))
 
-                if store.payload.activeCount > 0 {
-                    HStack(spacing: 3.5) {
-                        Circle()
-                            .fill(Color(nsColor: .systemGreen))
-                            .frame(width: 5.5, height: 5.5)
-                        Text(L10n.activeCount(store.payload.activeCount, lang))
-                            .font(.system(size: 10.5, weight: .bold))
-                    }
-                    .foregroundColor(Color(red: 0.08, green: 0.52, blue: 0.22))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(Color.green.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                            .strokeBorder(Color.green.opacity(0.25), lineWidth: 0.5)
-                    )
-                    .cornerRadius(3.5)
-                    .fixedSize()
-                }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(isSessionsCollapsed ? 0 : 180))
+                        .foregroundColor(.secondary)
+                        .animation(.easeOut(duration: 0.16), value: isSessionsCollapsed)
 
-                let maxStall = store.maxSessionStallSeconds
-                if maxStall > 0 || store.payload.activeCount > 0 {
-                    let stallText = (maxStall < 1.0 && maxStall > 0) ? "<1s" : "\(Int(maxStall))s"
-                    let isWarning = maxStall >= 30.0
-                    let isCaution = maxStall >= 10.0 && maxStall < 30.0
-                    let textColor: Color = isWarning
-                        ? Color.red
-                        : (isCaution ? Color(red: 0.85, green: 0.35, blue: 0.0) : Color.primary.opacity(0.75))
-                    let bgColor: Color = isWarning
-                        ? Color.red.opacity(0.10)
-                        : (isCaution ? Color.orange.opacity(0.12) : Color.primary.opacity(0.05))
-                    let borderColor: Color = isWarning
-                        ? Color.red.opacity(0.35)
-                        : (isCaution ? Color.orange.opacity(0.35) : Color.primary.opacity(0.12))
-
-                    HStack(spacing: 3.5) {
-                        Image(systemName: isWarning ? "exclamationmark.triangle.fill" : "hourglass")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(L10n.maxWait(stallText, lang))
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundColor(textColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(bgColor)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                            .strokeBorder(borderColor, lineWidth: 0.5)
-                    )
-                    .cornerRadius(3.5)
-                    .fixedSize()
-                    .help(L10n.maxWaitTooltip(maxStall, lang))
-                }
-
-                let count503 = store.recent503Count
-                if Recent503Policy.shouldShowBadge(count: count503) {
-                    let sev503 = Recent503Policy.severityLevel(count: count503)
-                    let color503: Color = sev503 == .warning
-                        ? Color.red
-                        : (sev503 == .caution ? Color(red: 0.85, green: 0.35, blue: 0.0) : Color.primary.opacity(0.65))
-                    let bg503: Color = sev503 == .warning
-                        ? Color.red.opacity(0.10)
-                        : (sev503 == .caution ? Color.orange.opacity(0.12) : Color.primary.opacity(0.05))
-                    let border503: Color = sev503 == .warning
-                        ? Color.red.opacity(0.35)
-                        : (sev503 == .caution ? Color.orange.opacity(0.35) : Color.primary.opacity(0.10))
-
-                    HStack(spacing: 3) {
-                        if sev503 != .normal {
-                            Image(systemName: "bolt.slash.fill")
-                                .font(.system(size: 8.5, weight: .semibold))
+                    if store.payload.activeCount > 0 {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color(nsColor: .systemGreen))
+                                .frame(width: 5.5, height: 5.5)
+                            Text(L10n.activeCount(store.payload.activeCount, lang))
+                                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                                .foregroundColor(colorScheme == .dark ? Color(red: 0.45, green: 0.90, blue: 0.62) : Color(red: 0.08, green: 0.52, blue: 0.22))
                         }
-                        Text(Recent503Policy.badgeText(count: count503))
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .fixedSize()
+                        .padding(.leading, 2)
                     }
-                    .foregroundColor(color503)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(bg503)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                            .strokeBorder(border503, lineWidth: 0.5)
-                    )
-                    .cornerRadius(3.5)
-                    .fixedSize()
-                    .help(L10n.recent503Tooltip(count503, lang))
+
+                    let maxStall = store.maxSessionStallSeconds
+                    if maxStall > 0 || store.payload.activeCount > 0 {
+                        let stallText = (maxStall < 1.0 && maxStall > 0) ? "<1s" : "\(Int(maxStall))s"
+                        let isWarning = maxStall >= 30.0
+                        let isCaution = maxStall >= 10.0 && maxStall < 30.0
+                        let textColor: Color = isWarning
+                            ? Color.red
+                            : (isCaution ? Color(red: 0.85, green: 0.38, blue: 0.0) : .secondary)
+
+                        if store.payload.activeCount > 0 {
+                            Text("·")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.secondary.opacity(0.45))
+                        }
+
+                        HStack(spacing: 3) {
+                            if isWarning {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 9.5, weight: .medium))
+                            }
+                            Text(L10n.maxWait(stallText, lang))
+                                .font(.system(size: 10.5, weight: isWarning || isCaution ? .semibold : .medium, design: .monospaced).monospacedDigit())
+                        }
+                        .foregroundColor(textColor)
+                        .fixedSize()
+                        .help(L10n.maxWaitTooltip(maxStall, lang))
+                    }
+
+                    let count503 = store.recent503Count
+                    if Recent503Policy.shouldShowBadge(count: count503) {
+                        let sev503 = Recent503Policy.severityLevel(count: count503)
+                        let color503: Color = sev503 == .warning
+                            ? Color.red
+                            : (sev503 == .caution ? Color(red: 0.85, green: 0.38, blue: 0.0) : .secondary)
+
+                        Text("·")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary.opacity(0.45))
+
+                        HStack(spacing: 3) {
+                            if sev503 != .normal {
+                                Image(systemName: "bolt.slash.fill")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            Text(Recent503Policy.badgeText(count: count503))
+                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced).monospacedDigit())
+                        }
+                        .foregroundColor(color503)
+                        .fixedSize()
+                        .help(L10n.recent503Tooltip(count503, lang))
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if !store.payload.sessions.isEmpty {
+                        let displayedCount = SessionListFilter.sessionsForDisplay(store.payload.sessions).count
+                        Text(L10n.sessionsCount(displayedCount, lang))
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
                 }
-
-                Spacer(minLength: 8)
-
-                if !store.payload.sessions.isEmpty {
-                    let displayedCount = SessionListFilter.sessionsForDisplay(store.payload.sessions).count
-                    Text(L10n.sessionsCount(displayedCount, lang))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Color.primary.opacity(0.65))
-                        .padding(.trailing, 2)
+                .frame(height: SessionListLayoutPolicy.headerHeight)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
                 }
             }
-            .frame(height: SessionListLayoutPolicy.headerHeight)
+            .help(L10n.collapseToggleHelp(title: L10n.t(.sessionsSectionTitle, lang), isCollapsed: isSessionsCollapsed, lang))
             .padding(.horizontal, layoutMetrics.sectionHeaderHorizontalPadding)
 
             if !isSessionsCollapsed {
@@ -1501,10 +1614,12 @@ struct MainDashboardView: View {
 struct SettingsPopoverView: View {
     static let showsFooterQuitAndHintBar = false
     static let dismissesOnOutsideScrimTap = true
+    static let fillsAvailableOverlayWidth = true
 
     @ObservedObject var store: AGYHubStore
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var intervalText: String = ""
 
     private func closeSettings() {
@@ -1519,11 +1634,19 @@ struct SettingsPopoverView: View {
         store.resolvedLanguage
     }
 
+    private var groupDivider: some View {
+        Rectangle()
+            .fill(AgyTheme.hairlineColor(for: colorScheme))
+            .frame(height: 0.5)
+            .padding(.leading, 12)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
                 Text(L10n.t(.settingsTitle, lang))
-                    .font(.system(size: 13.5, weight: .bold))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
 
                 Spacer()
 
@@ -1538,245 +1661,386 @@ struct SettingsPopoverView: View {
                     closeSettings()
                 }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
 
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 13) {
+            Rectangle()
+                .fill(AgyTheme.hairlineColor(for: colorScheme))
+                .frame(height: 0.5)
 
-            HStack(spacing: 8) {
-                Text(L10n.t(.languageSettingLabel, lang))
-                    .font(.system(size: 11.5))
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    // 第一组：常规与界面展示设置
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Text(L10n.t(.languageSettingLabel, lang))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundColor(.primary)
 
-                Spacer()
+                            Spacer(minLength: 8)
 
-                Picker("", selection: Binding(
-                    get: { store.appLanguage },
-                    set: { store.updateAppLanguage($0) }
-                )) {
-                    ForEach(AppLanguage.allCases) { option in
-                        Text(option.pickerLabel(for: lang)).tag(option)
+                            HStack(spacing: 2) {
+                                ForEach(AppLanguage.allCases) { option in
+                                    let isSelected = store.appLanguage == option
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.14)) {
+                                            store.updateAppLanguage(option)
+                                        }
+                                    } label: {
+                                        Text(option.pickerLabel(for: lang))
+                                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                                            .foregroundColor(isSelected ? .primary : .secondary)
+                                            .padding(.horizontal, 9)
+                                            .padding(.vertical, 3.5)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                                    .fill(isSelected ? AgyTheme.cardSurfaceColor(for: colorScheme) : Color.clear)
+                                            )
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(2)
+                            .background(
+                                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                    .fill(AgyTheme.wellSurfaceColor(for: colorScheme))
+                            )
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+
+                        groupDivider
+
+                        settingsSwitchRow(
+                            title: L10n.t(.launchAtLoginToggle, lang),
+                            isOn: Binding(
+                                get: { store.launchAtLogin },
+                                set: { store.toggleLaunchAtLogin($0) }
+                            )
+                        )
+
+                        groupDivider
+
+                        settingsSwitchRow(
+                            title: L10n.t(.unifyMonitoringToggle, lang),
+                            isOn: $store.unifyLogMonitoring
+                        )
+
+                        groupDivider
+
+                        settingsSwitchRow(
+                            title: L10n.t(.showSessionModelToggle, lang),
+                            isOn: Binding(
+                                get: { store.showSessionModelColumn },
+                                set: { store.toggleSessionModelColumn($0) }
+                            )
+                        )
+
+                        groupDivider
+
+                        HStack(spacing: 8) {
+                            Text(L10n.t(.visibleSessionsCountLabel, lang))
+                                .font(.system(size: 11.5))
+                                .foregroundColor(.primary)
+
+                            Spacer(minLength: 8)
+
+                            HStack(spacing: 0) {
+                                Button {
+                                    let next = max(SessionListLayoutPolicy.minVisibleRowsWhenExpanded, store.expandedSessionRowLimit - 1)
+                                    store.updateExpandedSessionRowLimit(next)
+                                } label: {
+                                    Image(systemName: "minus")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(store.expandedSessionRowLimit <= SessionListLayoutPolicy.minVisibleRowsWhenExpanded)
+                                .foregroundColor(store.expandedSessionRowLimit <= SessionListLayoutPolicy.minVisibleRowsWhenExpanded ? .secondary.opacity(0.35) : .primary)
+
+                                Text(L10n.visibleSessionsCountValue(store.expandedSessionRowLimit, lang))
+                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced).monospacedDigit())
+                                    .foregroundColor(.primary)
+                                    .frame(minWidth: 36)
+                                    .multilineTextAlignment(.center)
+
+                                Button {
+                                    let next = min(SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded, store.expandedSessionRowLimit + 1)
+                                    store.updateExpandedSessionRowLimit(next)
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(store.expandedSessionRowLimit >= SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded)
+                                .foregroundColor(store.expandedSessionRowLimit >= SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded ? .secondary.opacity(0.35) : .primary)
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                    .fill(AgyTheme.wellSurfaceColor(for: colorScheme))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                    .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                            )
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+
+                        groupDivider
+
+                        HStack(spacing: 8) {
+                            Text(L10n.t(.refreshIntervalLabel, lang))
+                                .font(.system(size: 11.5))
+                                .foregroundColor(.primary)
+
+                            Spacer(minLength: 8)
+
+                            HStack(spacing: 4) {
+                                TextField(L10n.t(.secondsPlaceholder, lang), text: $intervalText)
+                                    .textFieldStyle(.plain)
+                                    .frame(width: 36)
+                                    .multilineTextAlignment(.center)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced).monospacedDigit())
+                                    .padding(.vertical, 3.5)
+                                    .padding(.horizontal, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                            .fill(AgyTheme.wellSurfaceColor(for: colorScheme))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                            .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                                    )
+                                    .onSubmit {
+                                        commitInterval()
+                                    }
+                                    .onChange(of: intervalText) { newText in
+                                        if let val = Double(newText.trimmingCharacters(in: .whitespacesAndNewlines)), val >= 0.2 {
+                                            store.updateRefreshInterval(val)
+                                        }
+                                    }
+
+                                Text(L10n.t(.secondsUnit, lang))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .onAppear {
+                            intervalText = formatInterval(store.refreshInterval)
+                        }
                     }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .frame(width: 170)
-            }
-
-            Toggle(L10n.t(.launchAtLoginToggle, lang), isOn: Binding(
-                get: { store.launchAtLogin },
-                set: { store.toggleLaunchAtLogin($0) }
-            ))
-            .font(.system(size: 11.5))
-
-            Toggle(L10n.t(.unifyMonitoringToggle, lang), isOn: $store.unifyLogMonitoring)
-                .font(.system(size: 11.5))
-
-            Toggle(L10n.t(.showSessionModelToggle, lang), isOn: Binding(
-                get: { store.showSessionModelColumn },
-                set: { store.toggleSessionModelColumn($0) }
-            ))
-            .font(.system(size: 11.5))
-
-            HStack(spacing: 8) {
-                Text(L10n.t(.visibleSessionsCountLabel, lang))
-                    .font(.system(size: 11.5))
-
-                Spacer()
-
-                Text(L10n.visibleSessionsCountValue(store.expandedSessionRowLimit, lang))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
                     .background(
-                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                            .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                            .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
                     )
 
-                Stepper(
-                    "",
-                    value: Binding(
-                        get: { store.expandedSessionRowLimit },
-                        set: { store.updateExpandedSessionRowLimit($0) }
-                    ),
-                    in: SessionListLayoutPolicy.minVisibleRowsWhenExpanded...SessionListLayoutPolicy.maxConfigurableVisibleRowsWhenExpanded
-                )
-                .labelsHidden()
-                .controlSize(.small)
-            }
+                    // 第二组：CLI 账号隔离与已授权槽位
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(L10n.t(.permissionsSectionTitle, lang))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 2)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle(L10n.t(.cliIndependentToggle, lang), isOn: Binding(
-                    get: { store.isCLIIndependentMode },
-                    set: { store.toggleCLIIndependentMode($0) }
-                ))
-                .font(.system(size: 11.5, weight: .medium))
-
-                Text(L10n.t(.cliIndependentDesc, lang))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-                    .padding(.leading, 20)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(L10n.t(.refreshIntervalLabel, lang))
-                        .font(.system(size: 11.5))
-
-                    Spacer()
-
-                    TextField(L10n.t(.secondsPlaceholder, lang), text: $intervalText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 55, height: 24)
-                        .multilineTextAlignment(.center)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .onSubmit {
-                            commitInterval()
-                        }
-                        .onChange(of: intervalText) { newText in
-                            if let val = Double(newText.trimmingCharacters(in: .whitespacesAndNewlines)), val >= 0.2 {
-                                store.updateRefreshInterval(val)
-                            }
-                        }
-
-                    Text(L10n.t(.secondsUnit, lang))
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .onAppear {
-                intervalText = formatInterval(store.refreshInterval)
-            }
-
-            Divider().opacity(0.3)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.t(.permissionsSectionTitle, lang))
-                    .font(.system(size: 11.5, weight: .bold))
-                    .foregroundColor(.secondary)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(store.isCLIIndependentMode
-                                  ? (store.isCLIVaultAuthorized ? Color.green : Color.secondary.opacity(0.4))
-                                  : Color.secondary.opacity(0.3))
-                            .frame(width: 6, height: 6)
-                        VStack(alignment: .leading, spacing: 1.5) {
-                            Text(L10n.t(.cliIsolatedSwitchingTitle, lang))
-                                .font(.system(size: 11, weight: .medium))
-                            if !store.isCLIIndependentMode {
-                                Text(L10n.t(.cliNativeSharedHint, lang))
-                                    .font(.system(size: 9.5))
-                                    .foregroundColor(.secondary)
-                            } else {
-                                Text(store.isCLIVaultAuthorized ? L10n.t(.cliAuthorizedVaultHint, lang) : L10n.t(.cliUnauthorizedManualHint, lang))
-                                    .font(.system(size: 9.5))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if store.isCLIIndependentMode {
-                            if store.isCLIVaultAuthorized {
-                                ImpeccableActionButton(
-                                    title: L10n.t(.revokeAuthButton, lang),
-                                    icon: "shield.slash",
-                                    baseFill: Color.red.opacity(0.10),
-                                    hoverFill: Color.red.opacity(0.20),
-                                    tint: .red,
-                                    hoverTint: .red,
-                                    cornerRadius: 4.5,
-                                    horizontalPadding: 8,
-                                    verticalPadding: 3.5,
-                                    fontSize: 10,
-                                    fontWeight: .semibold,
-                                    tooltip: L10n.t(.revokeAuthTooltip, lang)
-                                ) {
-                                    store.revokeCLIVaultAuthorization()
+                        VStack(alignment: .leading, spacing: 0) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle(isOn: Binding(
+                                    get: { store.isCLIIndependentMode },
+                                    set: { store.toggleCLIIndependentMode($0) }
+                                )) {
+                                    Text(L10n.t(.cliIndependentToggle, lang))
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundColor(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                            } else {
-                                ImpeccableActionButton(
-                                    title: L10n.t(.enableAuthButton, lang),
-                                    icon: "lock.shield",
-                                    baseFill: Color.purple.opacity(0.12),
-                                    hoverFill: Color.purple.opacity(0.24),
-                                    tint: .purple,
-                                    hoverTint: .purple,
-                                    cornerRadius: 4.5,
-                                    horizontalPadding: 8,
-                                    verticalPadding: 3.5,
-                                    fontSize: 10,
-                                    fontWeight: .semibold,
-                                    tooltip: L10n.t(.enableAuthTooltip, lang)
-                                ) {
-                                    store.authorizeCLIVault()
-                                }
-                            }
-                        }
-                    }
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
 
-                    if store.isCLIIndependentMode && store.isCLIVaultAuthorized && !store.savedCLISlots.isEmpty {
-                        VStack(alignment: .leading, spacing: 3.5) {
-                            Text(L10n.cachedCLIAccountsTitle(store.savedCLISlots.count, lang))
-                                .font(.system(size: 9.5))
-                                .foregroundColor(.secondary)
-                            ForEach(Array(store.savedCLISlots).sorted(), id: \.self) { email in
-                                HStack(spacing: 5) {
-                                    Text(String(email.split(separator: "@").first ?? Substring(email)))
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.primary.opacity(0.85))
-                                        .lineLimit(1)
-                                        .help(email)
-                                    if store.activeCLIProfileName?.lowercased() == email {
-                                        Text(L10n.t(.currentTag, lang))
-                                            .font(.system(size: 8.5, weight: .semibold))
-                                            .padding(.horizontal, 4.5)
-                                            .padding(.vertical, 1)
-                                            .background(Color.purple.opacity(0.14))
-                                            .foregroundColor(.purple)
-                                            .cornerRadius(3)
-                                    }
-                                    Spacer()
-                                    ImpeccableIconButton(
-                                        icon: "xmark",
-                                        tooltip: L10n.t(.clearSlotTooltip, lang),
-                                        tint: .secondary.opacity(0.7),
-                                        hoverTint: .red,
-                                        hoverFill: Color.red.opacity(0.14),
-                                        size: 18,
-                                        iconSize: 8.5
-                                    ) {
-                                        store.removeCLISlot(email)
+                                Text(L10n.t(.cliIndependentDesc, lang))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+
+                            groupDivider
+
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(store.isCLIIndependentMode
+                                          ? (store.isCLIVaultAuthorized ? Color.green : Color.secondary.opacity(0.4))
+                                          : Color.secondary.opacity(0.3))
+                                    .frame(width: 6, height: 6)
+
+                                VStack(alignment: .leading, spacing: 1.5) {
+                                    Text(L10n.t(.cliIsolatedSwitchingTitle, lang))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.primary)
+
+                                    Text(!store.isCLIIndependentMode
+                                         ? L10n.t(.cliNativeSharedHint, lang)
+                                         : (store.isCLIVaultAuthorized ? L10n.t(.cliAuthorizedVaultHint, lang) : L10n.t(.cliUnauthorizedManualHint, lang)))
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 6)
+
+                                if store.isCLIIndependentMode {
+                                    if store.isCLIVaultAuthorized {
+                                        ImpeccableActionButton(
+                                            title: L10n.t(.revokeAuthButton, lang),
+                                            icon: "shield.slash",
+                                            baseFill: Color.red.opacity(0.08),
+                                            hoverFill: Color.red.opacity(0.16),
+                                            tint: .red,
+                                            hoverTint: .red,
+                                            cornerRadius: AgyTheme.Radius.control,
+                                            horizontalPadding: 8,
+                                            verticalPadding: 4,
+                                            fontSize: 10,
+                                            fontWeight: .semibold,
+                                            tooltip: L10n.t(.revokeAuthTooltip, lang)
+                                        ) {
+                                            store.revokeCLIVaultAuthorization()
+                                        }
+                                    } else {
+                                        ImpeccableActionButton(
+                                            title: L10n.t(.enableAuthButton, lang),
+                                            icon: "lock.shield",
+                                            baseFill: Color.accentColor.opacity(0.10),
+                                            hoverFill: Color.accentColor.opacity(0.18),
+                                            tint: Color.accentColor,
+                                            hoverTint: Color.accentColor,
+                                            cornerRadius: AgyTheme.Radius.control,
+                                            horizontalPadding: 8,
+                                            verticalPadding: 4,
+                                            fontSize: 10,
+                                            fontWeight: .semibold,
+                                            tooltip: L10n.t(.enableAuthTooltip, lang)
+                                        ) {
+                                            store.authorizeCLIVault()
+                                        }
                                     }
                                 }
                             }
-                        }
-                        .padding(.leading, 13)
-                    }
-                }
-                .padding(9)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035)))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.isolatedProfilesLine(store.profiles.filter { !$0.isDefaultProfile }.count, lang))
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Text(L10n.t(.readOnlyScopeLine, lang))
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundColor(.secondary)
+                            if store.isCLIIndependentMode && store.isCLIVaultAuthorized && !store.savedCLISlots.isEmpty {
+                                groupDivider
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(L10n.cachedCLIAccountsTitle(store.savedCLISlots.count, lang))
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(.secondary)
+
+                                    let gridCols = [
+                                        GridItem(.flexible(), spacing: 6),
+                                        GridItem(.flexible(), spacing: 6)
+                                    ]
+                                    LazyVGrid(columns: gridCols, spacing: 5) {
+                                        ForEach(Array(store.savedCLISlots).sorted(), id: \.self) { email in
+                                            let isCurrent = store.activeCLIProfileName?.lowercased() == email
+                                            HStack(spacing: 4) {
+                                                Circle()
+                                                    .fill(isCurrent ? Color.purple : Color.secondary.opacity(0.3))
+                                                    .frame(width: 5, height: 5)
+
+                                                Text(String(email.split(separator: "@").first ?? Substring(email)))
+                                                    .font(.system(size: 10, weight: isCurrent ? .semibold : .regular, design: .monospaced))
+                                                    .foregroundColor(.primary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.tail)
+                                                    .help(email)
+
+                                                Spacer(minLength: 2)
+
+                                                ImpeccableIconButton(
+                                                    icon: "xmark",
+                                                    tooltip: L10n.t(.clearSlotTooltip, lang),
+                                                    tint: .secondary.opacity(0.65),
+                                                    hoverTint: .red,
+                                                    hoverFill: Color.red.opacity(0.12),
+                                                    size: 16,
+                                                    iconSize: 8
+                                                ) {
+                                                    store.removeCLISlot(email)
+                                                }
+                                            }
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                                    .fill(isCurrent ? Color.purple.opacity(colorScheme == .dark ? 0.14 : 0.08) : AgyTheme.wellSurfaceColor(for: colorScheme))
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                                                    .strokeBorder(isCurrent ? Color.purple.opacity(0.25) : AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                                            )
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                                .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.isolatedProfilesLine(store.profiles.filter { !$0.isDefaultProfile }.count, lang))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Text(L10n.t(.readOnlyScopeLine, lang))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 2)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
-                }
-            }
-            .frame(maxHeight: 400)
+            .frame(maxHeight: 416)
         }
-        .padding(16)
-        .frame(minWidth: 280, maxWidth: 360)
+        .frame(minWidth: 280, maxWidth: .infinity)
         .environment(\.agyLanguage, lang)
         .onExitCommand {
             closeSettings()
         }
+    }
+
+    private func settingsSwitchRow(title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(title)
+                .font(.system(size: 11.5))
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private func commitInterval() {
@@ -1797,46 +2061,127 @@ struct SettingsPopoverView: View {
     }
 }
 
-struct QuotaPillView: View {
-    let item: QuotaDisplayItem
+/// 5 小时与周度配额胶囊的统一进度比例、严重度分档与同步着色策略
+enum QuotaVisualPolicy {
+    enum QuotaSeverity: Equatable {
+        case healthy
+        case caution
+        case critical
+    }
 
-    private var statusColor: Color {
-        if item.remainingFraction > 0.2 {
-            return Color.primary.opacity(0.70)
-        } else if item.remainingFraction > 0.05 {
-            return Color(red: 0.85, green: 0.35, blue: 0.0)
-        } else {
+    static func clampedFraction(_ raw: Double) -> Double {
+        min(1.0, max(0.0, raw))
+    }
+
+    static func severity(for fraction: Double) -> QuotaSeverity {
+        let clamped = clampedFraction(fraction)
+        if clamped > 0.20 { return .healthy }
+        if clamped > 0.05 { return .caution }
+        return .critical
+    }
+
+    static func statusColor(
+        for fraction: Double,
+        mode: AccountTargetMode,
+        hasDriftWarning: Bool = false
+    ) -> Color {
+        if hasDriftWarning {
+            return Color.orange
+        }
+        switch severity(for: fraction) {
+        case .healthy:
+            return mode == .app ? Color.accentColor : Color.purple
+        case .caution:
+            return Color(red: 0.88, green: 0.44, blue: 0.0)
+        case .critical:
             return Color.red
         }
     }
 
+    static func secondaryGaugeColor(for fraction: Double) -> Color {
+        switch severity(for: fraction) {
+        case .healthy:
+            return Color(red: 0.14, green: 0.66, blue: 0.52)
+        case .caution:
+            return Color(red: 0.88, green: 0.44, blue: 0.0)
+        case .critical:
+            return Color.red
+        }
+    }
+}
+
+struct QuotaPillView: View {
+    static let showsProportionalProgressFill = true
+    static let usesSubduedSecondaryGauge = true
+    static let usesBottomBarOnlyWithoutBodyFill = true
+
+    let item: QuotaDisplayItem
+    var mode: AccountTargetMode = .app
+    var isHovered: Bool = false
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var clampedFraction: Double {
+        QuotaVisualPolicy.clampedFraction(item.remainingFraction)
+    }
+
+    private var gaugeColor: Color {
+        QuotaVisualPolicy.secondaryGaugeColor(for: clampedFraction)
+    }
+
     var body: some View {
-        HStack(spacing: 2) {
+        let frac = clampedFraction
+        let sev = QuotaVisualPolicy.severity(for: frac)
+
+        HStack(spacing: 2.5) {
             Text(item.title)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(Color.primary.opacity(0.72))
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundColor(.secondary)
                 .fixedSize()
 
             Text("\(item.percentage)%")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(item.remainingFraction <= 0.2 ? statusColor : Color.primary)
+                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundColor(sev == .healthy ? .primary.opacity(0.88) : gaugeColor)
                 .fixedSize()
 
             if !item.countdown.isEmpty {
                 Text("·\(item.countdown)")
-                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.primary.opacity(0.62))
+                    .font(.system(size: 10, weight: .regular, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary)
                     .fixedSize()
             }
         }
-        .padding(.horizontal, 4.5)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .padding(.top, 3.5)
+        .padding(.bottom, 5.5)
         .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .strokeBorder(item.remainingFraction <= 0.2 ? statusColor.opacity(0.40) : Color.primary.opacity(0.12), lineWidth: 0.5)
+            ZStack(alignment: .bottomLeading) {
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(isHovered ? AgyTheme.hoverRowColor(for: colorScheme) : AgyTheme.wellSurfaceColor(for: colorScheme))
+
+                GeometryReader { geo in
+                    let fillWidth = frac > 0 ? max(3, geo.size.width * CGFloat(frac)) : 0
+                    ZStack(alignment: .bottomLeading) {
+                        Rectangle()
+                            .fill(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08))
+                            .frame(height: 2.5)
+
+                        Rectangle()
+                            .fill(gaugeColor.opacity(sev == .healthy ? 0.85 : 0.95))
+                            .frame(width: fillWidth, height: 2.5)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                .strokeBorder(
+                    sev == .healthy
+                        ? AgyTheme.hairlineColor(for: colorScheme)
+                        : gaugeColor.opacity(0.42),
+                    lineWidth: 0.5
                 )
         )
         .fixedSize(horizontal: true, vertical: true)
@@ -1854,6 +2199,9 @@ struct AccountCardFramePreferenceKey: PreferenceKey {
 }
 
 struct AccountNameCapacityBadgeView: View {
+    static let syncsPillFillWithProgressColor = true
+    static let usesFillOnlyWithoutBottomBar = true
+
     let name: String
     let fullEmail: String
     let mode: AccountTargetMode
@@ -1863,39 +2211,38 @@ struct AccountNameCapacityBadgeView: View {
     let fiveHourDisplay: FiveHourCapacityDisplay?
     let isQuotaTokenExpired: Bool
     var secondaryRoleBadge: String? = nil
+    var isHovered: Bool = false
 
-    private var accentTint: Color {
-        if hasDriftWarning {
-            return Color.orange
-        }
-        return mode == .app ? Color.accentColor : Color.purple
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var clampedFraction: Double {
+        guard let fh = fiveHourDisplay else { return 1.0 }
+        return QuotaVisualPolicy.clampedFraction(fh.remainingFraction)
     }
 
     private var capacityBarColor: Color {
-        guard let fh = fiveHourDisplay else { return accentTint }
-        if fh.remainingFraction > 0.2 {
-            return mode == .app ? Color.accentColor : Color.purple
-        } else if fh.remainingFraction > 0.05 {
-            return Color(red: 0.85, green: 0.42, blue: 0.0)
-        } else {
-            return Color.red
-        }
+        QuotaVisualPolicy.statusColor(for: clampedFraction, mode: mode, hasDriftWarning: hasDriftWarning)
     }
 
     private var borderStrokeColor: Color {
         if hasDriftWarning {
-            return Color.orange.opacity(0.55)
+            return Color.orange.opacity(0.45)
         }
-        if let fh = fiveHourDisplay, fh.remainingFraction <= 0.2 {
-            return capacityBarColor.opacity(0.45)
+        if fiveHourDisplay != nil && QuotaVisualPolicy.severity(for: clampedFraction) != .healthy {
+            return capacityBarColor.opacity(0.42)
         }
-        return isActiveTarget ? accentTint.opacity(0.32) : Color.primary.opacity(0.11)
+        if isActiveTarget && isSignedIn {
+            return capacityBarColor.opacity(isHovered ? 0.38 : (colorScheme == .dark ? 0.28 : 0.20))
+        }
+        return AgyTheme.hairlineColor(for: colorScheme)
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        let sev = fiveHourDisplay != nil ? QuotaVisualPolicy.severity(for: clampedFraction) : .healthy
+
+        HStack(spacing: 5) {
             Circle()
-                .fill(isSignedIn ? (isActiveTarget || hasDriftWarning ? accentTint : Color.secondary.opacity(0.35)) : Color.secondary.opacity(0.30))
+                .fill(isSignedIn ? (isActiveTarget || hasDriftWarning ? capacityBarColor : Color.secondary.opacity(0.35)) : Color.secondary.opacity(0.30))
                 .frame(width: 5, height: 5)
                 .fixedSize()
 
@@ -1908,66 +2255,74 @@ struct AccountNameCapacityBadgeView: View {
 
             if let roleBadge = secondaryRoleBadge, !roleBadge.isEmpty {
                 Text(roleBadge)
-                    .font(.system(size: 8.5, weight: .bold))
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 0.5)
-                    .background((roleBadge == "CLI" ? Color.purple : Color.accentColor).opacity(0.14))
-                    .foregroundColor(roleBadge == "CLI" ? Color.purple : Color.accentColor)
-                    .cornerRadius(3)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background((roleBadge == "CLI" ? Color.purple : Color.secondary).opacity(0.12))
+                    .foregroundColor(roleBadge == "CLI" ? Color.purple : .secondary)
+                    .cornerRadius(AgyTheme.Radius.micro)
                     .fixedSize()
                     .layoutPriority(2)
             }
 
             if let fh = fiveHourDisplay {
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     Text("\(fh.percentage)%")
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                        .foregroundColor(fh.remainingFraction <= 0.2 ? capacityBarColor : Color.primary.opacity(0.75))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundColor(sev == .healthy ? .primary.opacity(0.88) : capacityBarColor)
                     if !fh.countdown.isEmpty {
                         Text("·\(fh.countdown)")
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color.primary.opacity(0.58))
+                            .font(.system(size: 10, weight: .regular, design: .monospaced).monospacedDigit())
+                            .foregroundColor(.secondary)
                     }
                 }
                 .fixedSize()
                 .layoutPriority(2)
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
         .background(
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color.primary.opacity(0.045))
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(AgyTheme.wellSurfaceColor(for: colorScheme))
 
-                if let fh = fiveHourDisplay {
+                if fiveHourDisplay != nil {
                     GeometryReader { geo in
-                        let fillWidth = max(0, geo.size.width * CGFloat(fh.remainingFraction))
-                        ZStack(alignment: .bottomLeading) {
-                            Rectangle()
-                                .fill(capacityBarColor.opacity(0.16))
-                                .frame(width: fillWidth, height: geo.size.height)
-
-                            Rectangle()
-                                .fill(capacityBarColor.opacity(0.72))
-                                .frame(width: fillWidth, height: 1.75)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                        let frac = clampedFraction
+                        let fillWidth = frac > 0 ? max(4, geo.size.width * CGFloat(frac)) : 0
+                        let restOpacity = sev == .healthy
+                            ? (colorScheme == .dark ? 0.20 : 0.14)
+                            : (colorScheme == .dark ? 0.24 : 0.17)
+                        let hoverOpacity = sev == .healthy
+                            ? (colorScheme == .dark ? 0.28 : 0.21)
+                            : (colorScheme == .dark ? 0.32 : 0.24)
+                        Rectangle()
+                            .fill(capacityBarColor.opacity(isHovered ? hoverOpacity : restOpacity))
+                            .frame(width: fillWidth, height: geo.size.height)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     }
                     .opacity(isQuotaTokenExpired ? 0.55 : 1.0)
+                } else if isActiveTarget && isSignedIn || hasDriftWarning {
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .fill(capacityBarColor.opacity(isHovered ? (colorScheme == .dark ? 0.20 : 0.12) : (colorScheme == .dark ? 0.14 : 0.08)))
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .strokeBorder(borderStrokeColor, lineWidth: 0.6)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                .strokeBorder(borderStrokeColor, lineWidth: 0.5)
         )
         .help(fullEmail)
     }
 }
 
 struct AccountSummaryCardView: View {
+    static let usesCrispCardSurface = true
+    static let makesCapacityBadgeInteractiveButton = true
+    static let usesQuietNeutralSwitchButton = true
+
     @Binding var targetMode: AccountTargetMode
     let isCLIIndependentMode: Bool
     let snapshot: ActiveAccountSnapshot
@@ -1978,9 +2333,12 @@ struct AccountSummaryCardView: View {
     let onTogglePicker: () -> Void
     let onRefreshQuota: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.agyLanguage) private var lang
     @State private var isModeHovered = false
     @State private var isSwitchHovered = false
+    @State private var isCapacityHovered = false
+    @State private var isWeeklyHovered = false
 
     private var activeTint: Color {
         snapshot.effectiveMode == .app ? Color.accentColor : Color.purple
@@ -2018,17 +2376,35 @@ struct AccountSummaryCardView: View {
             modeSwitcherSegment
             warningIndicatorButton
 
-            AccountNameCapacityBadgeView(
-                name: snapshot.displayName,
-                fullEmail: tip.isEmpty ? snapshot.fullEmail : tip,
-                mode: snapshot.effectiveMode,
-                isSignedIn: snapshot.isSignedIn,
-                isActiveTarget: snapshot.isSignedIn,
-                hasDriftWarning: hasSharedKeychainMismatch && snapshot.effectiveMode == .app,
-                fiveHourDisplay: fhDisplay,
-                isQuotaTokenExpired: snapshot.isQuotaExpired
-            )
+            Button(action: onTogglePicker) {
+                AccountNameCapacityBadgeView(
+                    name: snapshot.displayName,
+                    fullEmail: tip.isEmpty ? snapshot.fullEmail : tip,
+                    mode: snapshot.effectiveMode,
+                    isSignedIn: snapshot.isSignedIn,
+                    isActiveTarget: snapshot.isSignedIn,
+                    hasDriftWarning: hasSharedKeychainMismatch && snapshot.effectiveMode == .app,
+                    fiveHourDisplay: fhDisplay,
+                    isQuotaTokenExpired: snapshot.isQuotaExpired,
+                    isHovered: isCapacityHovered
+                )
+            }
+            .buttonStyle(.plain)
             .layoutPriority(1)
+            .onHover { hovering in
+                isCapacityHovered = hovering
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .onDisappear {
+                if isCapacityHovered {
+                    isCapacityHovered = false
+                    NSCursor.arrow.set()
+                }
+            }
 
             weeklyQuotaSection(weeklyItems: weeklyItems, tooltip: tip)
 
@@ -2041,18 +2417,18 @@ struct AccountSummaryCardView: View {
             switchTriggerButton
         }
         .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, 4.5)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.035))
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
                 .strokeBorder(
                     (hasSharedKeychainMismatch && snapshot.effectiveMode == .app)
-                        ? Color.orange.opacity(0.40)
-                        : Color.primary.opacity(0.09),
-                    lineWidth: 0.6
+                        ? Color.orange.opacity(0.42)
+                        : AgyTheme.hairlineColor(for: colorScheme),
+                    lineWidth: 0.5
                 )
         )
     }
@@ -2060,30 +2436,30 @@ struct AccountSummaryCardView: View {
     @ViewBuilder
     private var modeSwitcherSegment: some View {
         if isCLIIndependentMode {
-            let modeTint = targetMode == .app ? Color.accentColor : Color.purple
+            let modeTint = targetMode == .cli ? Color.purple : Color.primary
             Button {
                 withAnimation(.easeOut(duration: 0.14)) {
                     targetMode = targetMode.toggled
                 }
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: 3.5) {
                     Image(systemName: targetMode == .cli ? "terminal" : "macwindow")
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .medium))
                     Text(targetMode.rawValue)
-                        .font(.system(size: 10.5, weight: .bold))
+                        .font(.system(size: 10.5, weight: .semibold))
                 }
-                .foregroundColor(modeTint)
+                .foregroundColor(targetMode == .cli ? modeTint : .secondary)
                 .padding(.horizontal, 6.5)
                 .padding(.vertical, 3.5)
                 .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(modeTint.opacity(isModeHovered ? 0.17 : 0.10))
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                        .fill(targetMode == .cli ? Color.purple.opacity(isModeHovered ? 0.15 : 0.09) : Color.primary.opacity(isModeHovered ? 0.07 : 0.04))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(modeTint.opacity(isModeHovered ? 0.38 : 0.22), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isModeHovered ? 0.14 : 0.07), lineWidth: 0.5)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous))
             }
             .buttonStyle(.plain)
             .fixedSize()
@@ -2105,13 +2481,13 @@ struct AccountSummaryCardView: View {
             .help(targetMode == .app ? L10n.t(.toggleToCLIModeTooltip, lang) : L10n.t(.toggleToAppModeTooltip, lang))
         } else {
             Text(AccountTargetMode.app.rawValue)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Color.accentColor)
-                .padding(.horizontal, 5.5)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 6)
                 .padding(.vertical, 2.5)
                 .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.10))
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                        .fill(Color.primary.opacity(0.045))
                 )
                 .fixedSize()
                 .layoutPriority(2)
@@ -2146,14 +2522,35 @@ struct AccountSummaryCardView: View {
     @ViewBuilder
     private func weeklyQuotaSection(weeklyItems: [QuotaDisplayItem], tooltip: String) -> some View {
         if snapshot.quota != nil && !weeklyItems.isEmpty {
-            HStack(spacing: 3) {
-                ForEach(weeklyItems) { item in
-                    QuotaPillView(item: item)
+            Button(action: onTogglePicker) {
+                HStack(spacing: 3) {
+                    ForEach(weeklyItems) { item in
+                        QuotaPillView(
+                            item: item,
+                            mode: snapshot.effectiveMode,
+                            isHovered: isWeeklyHovered
+                        )
+                    }
                 }
             }
+            .buttonStyle(.plain)
             .opacity(snapshot.isQuotaExpired ? 0.65 : 1.0)
             .fixedSize()
             .layoutPriority(2)
+            .onHover { hovering in
+                isWeeklyHovered = hovering
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .onDisappear {
+                if isWeeklyHovered {
+                    isWeeklyHovered = false
+                    NSCursor.arrow.set()
+                }
+            }
             .help(tooltip)
         } else if snapshot.isQuotaExpired {
             Button(action: onRefreshQuota) {
@@ -2186,22 +2583,29 @@ struct AccountSummaryCardView: View {
         Button(action: onTogglePicker) {
             HStack(spacing: 2.5) {
                 Text(L10n.t(.switchAction, lang))
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 10.5, weight: .medium))
                 Image(systemName: isPickerOpen ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 8, weight: .semibold))
             }
-            .foregroundColor(activeTint)
+            .foregroundColor(isPickerOpen ? activeTint : Color.primary.opacity(0.82))
             .padding(.horizontal, 6.5)
             .padding(.vertical, 3.5)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(activeTint.opacity(isPickerOpen ? 0.22 : (isSwitchHovered ? 0.18 : 0.11)))
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(
+                        isPickerOpen
+                            ? activeTint.opacity(colorScheme == .dark ? 0.16 : 0.10)
+                            : (isSwitchHovered ? AgyTheme.hoverRowColor(for: colorScheme) : AgyTheme.wellSurfaceColor(for: colorScheme))
+                    )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(activeTint.opacity(isPickerOpen ? 0.42 : 0.24), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .strokeBorder(
+                        isPickerOpen ? activeTint.opacity(0.32) : AgyTheme.hairlineColor(for: colorScheme),
+                        lineWidth: 0.5
+                    )
             )
-            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
         }
         .buttonStyle(.plain)
         .fixedSize()
@@ -2506,7 +2910,7 @@ struct AccountPickerRowView: View {
                 if accountQuota != nil && !weeklyItems.isEmpty {
                     HStack(spacing: 3) {
                         ForEach(weeklyItems) { item in
-                            QuotaPillView(item: item)
+                            QuotaPillView(item: item, mode: mode)
                         }
                     }
                     .opacity(isQuotaTokenExpired ? 0.65 : 1.0)
@@ -2927,6 +3331,7 @@ struct LiveTelemetryOverviewCardView: View {
     static let showsStandaloneLegendStrip = false
     static let drawsHollowEndpointForIdleSeries = true
     static let usesOneQuarterGrowingTimelinePage = true
+    static let expandsOnFullHeaderTap = true
 
     let samples: [LiveTelemetrySample]
     let todayStats: TodayStats
@@ -3078,15 +3483,11 @@ struct LiveTelemetryOverviewCardView: View {
     }
 
     private var cardSurfaceColor: Color {
-        colorScheme == .dark
-            ? Color(nsColor: .controlBackgroundColor).opacity(0.92)
-            : Color(nsColor: .windowBackgroundColor).opacity(0.98)
+        AgyTheme.cardSurfaceColor(for: colorScheme)
     }
 
     private var plotWellColor: Color {
-        colorScheme == .dark
-            ? Color.black.opacity(0.20)
-            : Color(nsColor: .textBackgroundColor).opacity(0.82)
+        AgyTheme.wellSurfaceColor(for: colorScheme)
     }
 
     var body: some View {
@@ -3101,43 +3502,75 @@ struct LiveTelemetryOverviewCardView: View {
         .padding(.horizontal, cardHorizontalPadding)
         .padding(.vertical, isCollapsed ? 7 : 9)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
                 .fill(cardSurfaceColor)
+                .onTapGesture {
+                    if isCollapsed {
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            isCollapsed = false
+                        }
+                    }
+                }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.07), lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
         )
-        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.045), radius: 5, y: 1.5)
     }
 
     private var cardHeaderBar: some View {
         HStack(spacing: 6) {
-            SectionCollapseToggleButton(title: L10n.t(.telemetrySectionTitle, lang), isCollapsed: isCollapsed) {
+            Button {
                 withAnimation(.easeOut(duration: 0.16)) {
                     isCollapsed.toggle()
                 }
-            }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(L10n.t(.telemetrySectionTitle, lang))
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(.primary)
 
-            if isCollapsed {
-                Text("\(L10n.telemetryAgentCount(displayedAgents, lang)) · \(Int(displayedTps.rounded())) t/s · \(String(format: "%.1f%%", displayedCachePct))")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            } else if let hovered = hoveredSample {
-                let deltaPart = hovered.deltaTokens > 0 ? " · +\(Formatters.formatTokens(hovered.deltaTokens))" : ""
-                Text("\(Self.hoverTimeFormatter.string(from: hovered.timestamp))\(deltaPart)")
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Color.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
-                    .background(Color.accentColor.opacity(0.10))
-                    .cornerRadius(4)
-                    .fixedSize()
-            }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 180))
+                        .foregroundColor(.secondary)
+                        .animation(.easeOut(duration: 0.16), value: isCollapsed)
 
-            Spacer(minLength: 4)
+                    if isCollapsed {
+                        Text("\(L10n.telemetryAgentCount(displayedAgents, lang)) · \(Int(displayedTps.rounded())) t/s · \(String(format: "%.1f%%", displayedCachePct))")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced).monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .padding(.leading, 3)
+                    } else if let hovered = hoveredSample {
+                        let deltaPart = hovered.deltaTokens > 0 ? " · +\(Formatters.formatTokens(hovered.deltaTokens))" : ""
+                        Text("\(Self.hoverTimeFormatter.string(from: hovered.timestamp))\(deltaPart)")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(Color.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Color.accentColor.opacity(0.10))
+                            .cornerRadius(4)
+                            .fixedSize()
+                            .padding(.leading, 2)
+                    }
+
+                    Spacer(minLength: 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, isCollapsed ? 2 : 1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .help(L10n.collapseToggleHelp(title: L10n.t(.telemetrySectionTitle, lang), isCollapsed: isCollapsed, lang))
 
             if !isCollapsed {
                 HStack(spacing: 1.5) {
@@ -3148,24 +3581,23 @@ struct LiveTelemetryOverviewCardView: View {
                             selectedRangeRaw = range.rawValue
                         } label: {
                             Text(range.rawValue)
-                                .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: isSelected ? .semibold : .medium, design: .monospaced))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2.5)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
                                         .fill(isSelected ? cardSurfaceColor : Color.clear)
-                                        .shadow(color: isSelected ? Color.black.opacity(0.08) : Color.clear, radius: 1, y: 0.5)
                                 )
                                 .foregroundColor(isSelected ? .primary : .secondary)
-                                .contentShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(2)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.primary.opacity(0.055))
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
                 )
                 .fixedSize()
             }
@@ -3229,7 +3661,7 @@ struct LiveTelemetryOverviewCardView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 1.5) {
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
 
@@ -3240,15 +3672,15 @@ struct LiveTelemetryOverviewCardView: View {
                         .frame(width: 5.5, height: 5.5)
                 }
                 Text(value)
-                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded).monospacedDigit())
                     .foregroundColor(valueColor)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
 
                 if let sub = subLabel {
                     Text(sub)
-                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(.secondary.opacity(0.85))
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.8))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -4044,8 +4476,9 @@ enum SessionRowTrailingColumn: Hashable {
 }
 
 enum SessionRowBadgePolicy {
-    static let modelFontSize: CGFloat = 9.5
-    static let contextFontSize: CGFloat = 9.5
+    static let usesColoredRowBorderByDefault = false
+    static let modelFontSize: CGFloat = 10
+    static let contextFontSize: CGFloat = 10
     static let modelColumnWidth: CGFloat = 70
     static let contextColumnWidth: CGFloat = 42
     static let metricsColumnWidth: CGFloat = 72
@@ -4211,92 +4644,67 @@ struct CompactSessionRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-
+        HStack(spacing: 6) {
+            // 仅用左侧细曲线色条建立图表联动索引，去掉整行彩框噪点
             if let link = chartColorLink {
                 RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                     .fill(link.primaryTone.color)
-                    .frame(width: isEmphasized ? 4 : 3, height: isEmphasized ? 18 : 15)
-                    .shadow(
-                        color: isHighlightedFromChart ? link.primaryTone.color.opacity(0.45) : .clear,
-                        radius: 2.5
-                    )
+                    .frame(width: isEmphasized ? 3.5 : 2.5, height: isEmphasized ? 17 : 14)
             }
 
-            if session.isActivelyWorking {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 5.5, height: 5.5)
-                    .shadow(color: Color.green.opacity(0.4), radius: 1.5)
-            } else {
-                Circle()
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 5, height: 5)
-            }
+            Circle()
+                .fill(session.isActivelyWorking ? Color.green : Color.secondary.opacity(0.32))
+                .frame(width: session.isActivelyWorking ? 5.5 : 4.5, height: session.isActivelyWorking ? 5.5 : 4.5)
 
             ScrollingSessionTitleView(
                 title: displayTitle,
-                font: .system(size: 12.5, weight: (session.isActivelyWorking || isHighlightedFromChart) ? .bold : .medium),
+                font: .system(size: 12, weight: (session.isActivelyWorking || isHighlightedFromChart) ? .semibold : .medium),
                 foregroundColor: (session.isActivelyWorking || isHighlightedFromChart) ? .primary : Color.primary.opacity(0.88),
                 isHovered: isHovered
             )
-            .overlay(alignment: .topTrailing) {
-                if let cliLabel = session.cliBadgeLabel {
-                    Text(cliLabel)
-                        .font(.system(size: 7.5, weight: .bold))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 0.5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(Color.purple.opacity(0.14))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .strokeBorder(Color.purple.opacity(0.28), lineWidth: 0.5)
-                        )
-                        .foregroundColor(Color.purple)
-                        .fixedSize()
-                        .offset(x: -2, y: -4.5)
-                        .allowsHitTesting(false)
-                        .help(L10n.t(.cliSessionTooltip, lang))
-                }
+
+            if let cliLabel = session.cliBadgeLabel {
+                Text(cliLabel)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                            .fill(Color.purple.opacity(0.11))
+                    )
+                    .foregroundColor(Color.purple.opacity(0.9))
+                    .fixedSize()
+                    .layoutPriority(1)
+                    .help(L10n.t(.cliSessionTooltip, lang))
             }
 
             if let badgeText = SessionRowBadgePolicy.subagentBadgeText(for: session, language: lang) {
                 let isActive = SessionRowBadgePolicy.isSubagentBadgeActive(for: session)
                 let activeFg = colorScheme == .dark
-                    ? Color(red: 0.45, green: 0.92, blue: 0.62)
-                    : Color(red: 0.06, green: 0.48, blue: 0.22)
+                    ? Color(red: 0.45, green: 0.90, blue: 0.62)
+                    : Color(red: 0.08, green: 0.50, blue: 0.24)
                 HStack(spacing: 3) {
                     Image(systemName: isActive ? "bolt.fill" : "square.stack.3d.up")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.system(size: 8.5, weight: .medium))
                     Text(badgeText)
-                        .font(.system(size: 9.5, weight: isActive ? .bold : .medium, design: .rounded).monospacedDigit())
+                        .font(.system(size: 10, weight: isActive ? .semibold : .medium, design: .rounded).monospacedDigit())
                         .lineLimit(1)
                     if let childTones = chartColorLink?.childTones, !childTones.isEmpty {
                         HStack(spacing: 2) {
                             ForEach(Array(childTones.prefix(3).enumerated()), id: \.offset) { _, tone in
                                 Circle()
                                     .fill(tone.color)
-                                    .frame(width: 5.5, height: 5.5)
+                                    .frame(width: 5, height: 5)
                             }
                         }
                     }
                 }
-                .foregroundColor(isActive ? activeFg : Color.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .foregroundColor(isActive ? activeFg : .secondary)
+                .padding(.horizontal, 5.5)
+                .padding(.vertical, 1.5)
                 .background(
-                    Capsule()
-                        .fill(isActive ? Color.green.opacity(colorScheme == .dark ? 0.18 : 0.11) : Color.primary.opacity(0.055))
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(isActive ? Color.green.opacity(0.35) : Color.primary.opacity(0.10), lineWidth: 0.5)
-                        )
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                        .fill(isActive ? Color.green.opacity(colorScheme == .dark ? 0.14 : 0.08) : Color.primary.opacity(0.04))
                 )
                 .fixedSize()
                 .layoutPriority(1)
@@ -4310,15 +4718,15 @@ struct CompactSessionRowView: View {
         .padding(.horizontal, horizontalPadding)
         .frame(height: SessionListLayoutPolicy.rowEstimatedHeight)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
                 .fill(rowBackgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(rowBorderColor, lineWidth: isHighlightedFromChart ? 1.1 : 0.6)
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                .strokeBorder(rowBorderColor, lineWidth: 0.5)
         )
         .animation(.easeOut(duration: 0.14), value: isHighlightedFromChart)
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous))
         .onHover { hovering in
             isHovered = hovering
             onHoverChartHighlight?(hovering)
@@ -4326,30 +4734,21 @@ struct CompactSessionRowView: View {
     }
 
     private var rowBackgroundColor: Color {
-        if let link = chartColorLink {
-            if isHighlightedFromChart {
-                return link.primaryTone.color.opacity(colorScheme == .dark ? 0.21 : 0.14)
-            }
-            if isHovered {
-                return link.primaryTone.color.opacity(colorScheme == .dark ? 0.16 : 0.11)
-            }
-            return link.primaryTone.color.opacity(colorScheme == .dark ? 0.09 : 0.055)
-        }
         if isHighlightedFromChart {
-            return Color.accentColor.opacity(colorScheme == .dark ? 0.16 : 0.10)
+            if let link = chartColorLink {
+                return link.primaryTone.color.opacity(colorScheme == .dark ? 0.14 : 0.08)
+            }
+            return Color.accentColor.opacity(colorScheme == .dark ? 0.12 : 0.07)
         }
-        return isHovered ? Color.primary.opacity(0.04) : Color.clear
+        return isHovered ? AgyTheme.hoverRowColor(for: colorScheme) : Color.clear
     }
 
     private var rowBorderColor: Color {
-        if let link = chartColorLink {
-            if isHighlightedFromChart {
-                return link.primaryTone.color.opacity(0.58)
-            }
-            return link.primaryTone.color.opacity(isHovered ? 0.36 : 0.18)
-        }
         if isHighlightedFromChart {
-            return Color.accentColor.opacity(0.45)
+            if let link = chartColorLink {
+                return link.primaryTone.color.opacity(0.32)
+            }
+            return Color.accentColor.opacity(0.30)
         }
         return .clear
     }
@@ -4360,16 +4759,10 @@ struct CompactSessionRowView: View {
         case .context:
             Group {
                 if session.contextTokens > 0 {
-                    SessionCapsuleBadge(
-                        text: SessionRowBadgePolicy.contextBadgeText(contextTokens: session.contextTokens),
-                        font: .system(size: SessionRowBadgePolicy.contextFontSize, weight: .semibold, design: .rounded).monospacedDigit(),
-                        foregroundColor: SessionRowBadgePolicy.contextForegroundColor(for: colorScheme),
-                        fillColor: SessionRowBadgePolicy.contextFillColor(for: colorScheme),
-                        borderColor: SessionRowBadgePolicy.contextBorderColor(for: colorScheme),
-                        horizontalPadding: 6.5,
-                        verticalPadding: 2
-                    )
-                    .fixedSize()
+                    Text(SessionRowBadgePolicy.contextBadgeText(contextTokens: session.contextTokens))
+                        .font(.system(size: SessionRowBadgePolicy.contextFontSize, weight: .semibold, design: .monospaced).monospacedDigit())
+                        .foregroundColor(SessionRowBadgePolicy.contextForegroundColor(for: colorScheme))
+                        .lineLimit(1)
                 } else {
                     Text("—")
                         .font(.system(size: 10))
@@ -4387,13 +4780,13 @@ struct CompactSessionRowView: View {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 8.5))
                         Text(session.tps > 0 ? String(format: "%.0ft/s", session.tps) : L10n.t(.runningStatus, lang))
-                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced).monospacedDigit())
                     }
                     .foregroundColor(Color.accentColor)
                 } else {
                     Text(SessionRowBadgePolicy.idleMetricsText(for: session))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.primary.opacity(0.72))
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced).monospacedDigit())
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
             }
@@ -4402,15 +4795,11 @@ struct CompactSessionRowView: View {
         case .model:
             Group {
                 if SessionRowBadgePolicy.hasModel(session.model) {
-                    SessionCapsuleBadge(
-                        text: SessionRowBadgePolicy.modelBadgeText(session.model),
-                        font: .system(size: SessionRowBadgePolicy.modelFontSize, weight: .medium),
-                        foregroundColor: Color.primary.opacity(0.75),
-                        fillColor: Color.primary.opacity(0.055),
-                        horizontalPadding: 6.5,
-                        verticalPadding: 2
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(SessionRowBadgePolicy.modelBadgeText(session.model))
+                        .font(.system(size: SessionRowBadgePolicy.modelFontSize, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 } else {
                     Text("—")
                         .font(.system(size: 10))
@@ -4424,16 +4813,22 @@ struct CompactSessionRowView: View {
 }
 
 struct SessionDetailCardView: View {
+    static let subagentsCollapseByDefaultWhenIdle = true
+
     let session: SessionItem
     var diagnostics: SessionDiagnosticsPayload? = nil
     var isLoadingDiagnostics: Bool = false
+    var breadcrumbs: [SessionBreadcrumbItem] = []
     let onBack: () -> Void
+    var onSelectBreadcrumb: ((String?) -> Void)? = nil
     var onRefreshDiagnostics: (() -> Void)? = nil
     var onSelectSubagent: ((String) -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.agyLanguage) private var lang
     @State private var copiedDiagnosticsRecently: Bool = false
+    @State private var subagentsCollapsedOverride: Bool? = nil
+    @State private var showAllSubagents: Bool = false
 
     private var headerDisplayTitle: String {
         let cleaned = SessionTitleCleaner.cleanTitle(session.title, fallbackUUID: session.uuid, language: lang)
@@ -4444,87 +4839,38 @@ struct SessionDetailCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Button(action: onBack) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text(L10n.t(.backButton, lang))
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
-                    .foregroundColor(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                if let onRefreshDiagnostics {
-                    Button(action: onRefreshDiagnostics) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .padding(4)
-                            .background(Color.primary.opacity(0.05))
-                            .cornerRadius(3.5)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isLoadingDiagnostics)
-                    .help(L10n.t(.refreshDiagnosticsTooltip, lang))
-                }
-
-                if let diagnostics {
-                    Button(action: {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(SessionDiagnosticsPolicy.formattedClipboardReport(diagnostics, language: lang), forType: .string)
-                        copiedDiagnosticsRecently = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                            copiedDiagnosticsRecently = false
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: copiedDiagnosticsRecently ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text(copiedDiagnosticsRecently ? L10n.t(.copiedButton, lang) : L10n.t(.copySummaryButton, lang))
-                                .font(.system(size: 10.5, weight: .medium))
-                        }
-                        .foregroundColor(copiedDiagnosticsRecently ? .green : Color.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
-                        .background((copiedDiagnosticsRecently ? Color.green : Color.accentColor).opacity(0.1))
-                        .cornerRadius(3.5)
-                    }
-                    .buttonStyle(.plain)
-                    .help(L10n.t(.copySummaryTooltip, lang))
-                }
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            detailNavigationBar
 
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 7) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
                             if session.isActivelyWorking {
                                 Circle()
                                     .fill(Color.green)
                                     .frame(width: 6, height: 6)
                             }
                             Text(headerDisplayTitle)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundColor(.primary)
                                 .lineLimit(2)
                         }
 
-                        if !session.agentRole.isEmpty {
-                            Text(session.agentRole)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Color.accentColor)
-                        }
-
                         HStack(spacing: 6) {
+                            if !session.agentRole.isEmpty {
+                                Text(session.agentRole)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(Color.accentColor)
+                                Text("·")
+                                    .foregroundColor(.secondary.opacity(0.4))
+                            }
+
                             Text(session.model)
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
 
                             Text("·")
                                 .foregroundColor(.secondary.opacity(0.4))
@@ -4532,21 +4878,20 @@ struct SessionDetailCardView: View {
                             Text(L10n.interactionsCount(session.interactions, lang))
                                 .font(.system(size: 10.5))
                                 .foregroundColor(.secondary)
+                                .fixedSize()
 
                             Text("·")
                                 .foregroundColor(.secondary.opacity(0.4))
 
                             Text(Formatters.formatHMS(session.totalActiveSec))
-                                .font(.system(size: 10.5, design: .monospaced))
+                                .font(.system(size: 10.5, design: .monospaced).monospacedDigit())
                                 .foregroundColor(.secondary)
+                                .fixedSize()
                         }
                     }
 
-                    Divider().opacity(0.25)
-
-                    let hasSubagents = !session.subagents.isEmpty
                     let statHelpText: String = {
-                        guard hasSubagents else { return "" }
+                        guard !session.subagents.isEmpty else { return "" }
                         let subCost = max(0, session.aggregatedTotalCostUsd - session.totalCostUsd)
                         let subTokens = max(0, session.aggregatedTotalTokensConsumed - session.totalTokensConsumed)
                         return L10n.mainAndSubagentsTooltip(
@@ -4558,196 +4903,604 @@ struct SessionDetailCardView: View {
                             lang
                         )
                     }()
-                    HStack(spacing: 0) {
-                        detailStatItem(title: L10n.t(.statEstCost, lang), value: Formatters.formatCost(session.aggregatedTotalCostUsd))
-                        detailStatItem(title: L10n.t(.statTotalTokens, lang), value: Formatters.formatTokens(session.aggregatedTotalTokensConsumed))
-                        detailStatItem(title: L10n.t(.statContext, lang), value: Formatters.formatTokens(session.contextTokens))
-                        detailStatItem(title: L10n.t(.statCacheHit, lang), value: String(format: "%.0f%%", session.aggregatedCachePct))
+                    let tokenBreakdown = SessionDiagnosticsPolicy.resolvedTokenBreakdown(
+                        session: session,
+                        diagnostics: diagnostics
+                    )
+                    let displayedTotalTokens = session.aggregatedTotalTokensConsumed > 0
+                        ? session.aggregatedTotalTokensConsumed
+                        : tokenBreakdown.totalTokens
+
+                    // 将 4 项核心指标与圆柱构成条整合进同一 L1 卡片，消灭双层套框
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 0) {
+                            detailStatItem(title: L10n.t(.statEstCost, lang), value: Formatters.formatCost(session.aggregatedTotalCostUsd))
+                            detailStatItem(title: L10n.t(.statTotalTokens, lang), value: Formatters.formatTokens(displayedTotalTokens))
+                            detailStatItem(title: L10n.t(.statContext, lang), value: Formatters.formatTokens(session.contextTokens))
+                            detailStatItem(title: L10n.t(.statCacheHit, lang), value: String(format: "%.0f%%", session.aggregatedCachePct))
+                        }
+
+                        Rectangle()
+                            .fill(AgyTheme.hairlineColor(for: colorScheme))
+                            .frame(height: 0.5)
+
+                        SessionDetailTokenBarView(
+                            totalTokens: displayedTotalTokens,
+                            breakdown: tokenBreakdown,
+                            embeddedInCard: true
+                        )
                     }
-                    .padding(.vertical, 2)
+                    .padding(11)
+                    .background(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                            .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                            .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                    )
                     .help(statHelpText)
 
                     if !session.subagents.isEmpty {
-                        Divider().opacity(0.25)
                         subagentsDetailSection
                     }
-
-                    Divider().opacity(0.25)
 
                     SessionDiagnosticsInlineSection(
                         payload: diagnostics,
                         isLoading: isLoadingDiagnostics
                     )
                 }
+                .padding(.bottom, 4)
             }
             .frame(maxHeight: .infinity)
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.025))
-        )
+    }
+
+    @ViewBuilder
+    private var detailNavigationBar: some View {
+        HStack(spacing: 6) {
+            if breadcrumbs.count > 1 {
+                HStack(spacing: 4) {
+                    ForEach(Array(breadcrumbs.enumerated()), id: \.element.id) { idx, item in
+                        if idx > 0 {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundColor(.secondary.opacity(0.45))
+                        }
+
+                        if item.isCurrent {
+                            Text(item.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(0)
+                        } else {
+                            Button {
+                                if let onSelectBreadcrumb {
+                                    onSelectBreadcrumb(item.uuid)
+                                } else {
+                                    onBack()
+                                }
+                            } label: {
+                                HStack(spacing: 2.5) {
+                                    if idx == 0 {
+                                        Image(systemName: "chevron.left")
+                                            .font(.system(size: 9.5, weight: .semibold))
+                                    }
+                                    Text(item.title)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                }
+                                .foregroundColor(idx == 0 ? Color.accentColor : .secondary)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .layoutPriority(idx == 0 ? 2 : 1)
+                        }
+                    }
+                }
+            } else {
+                Button(action: onBack) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(L10n.t(.backButton, lang))
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .foregroundColor(Color.accentColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 6)
+
+            if let onRefreshDiagnostics {
+                ImpeccableIconButton(
+                    icon: "arrow.clockwise",
+                    tooltip: L10n.t(.refreshDiagnosticsTooltip, lang),
+                    size: 24,
+                    iconSize: 10.5
+                ) {
+                    onRefreshDiagnostics()
+                }
+                .disabled(isLoadingDiagnostics)
+            }
+
+            if let diagnostics {
+                Button(action: {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(SessionDiagnosticsPolicy.formattedClipboardReport(diagnostics, language: lang), forType: .string)
+                    copiedDiagnosticsRecently = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                        copiedDiagnosticsRecently = false
+                    }
+                }) {
+                    HStack(spacing: 3.5) {
+                        Image(systemName: copiedDiagnosticsRecently ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9.5, weight: .medium))
+                        Text(copiedDiagnosticsRecently ? L10n.t(.copiedButton, lang) : L10n.t(.copySummaryButton, lang))
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                    .foregroundColor(copiedDiagnosticsRecently ? .green : .primary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                            .fill(copiedDiagnosticsRecently ? Color.green.opacity(0.10) : Color.primary.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                            .strokeBorder(copiedDiagnosticsRecently ? Color.green.opacity(0.32) : AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(L10n.t(.copySummaryTooltip, lang))
+            }
+        }
+        .frame(height: 26)
     }
 
     private var subagentsDetailSection: some View {
         let sortedSubs = SessionDetailSubagentPolicy.sortedSubagents(session.subagents)
-        let activeBadge = SessionRowBadgePolicy.subagentBadgeText(for: session, language: lang) ?? L10n.subagentFallbackBadge(sortedSubs.count, lang)
         let isActive = SessionRowBadgePolicy.isSubagentBadgeActive(for: session)
+        let isCollapsed = subagentsCollapsedOverride ?? SubagentCollapsePolicy.defaultIsCollapsed(for: session)
+        let visibleSubs = SubagentCollapsePolicy.visibleSubagents(from: sortedSubs, showAll: showAllSubagents)
         let activeFg = colorScheme == .dark
-            ? Color(red: 0.45, green: 0.92, blue: 0.62)
-            : Color(red: 0.06, green: 0.48, blue: 0.22)
+            ? Color(red: 0.45, green: 0.90, blue: 0.62)
+            : Color(red: 0.08, green: 0.50, blue: 0.24)
+        let activeSummary = isActive
+            ? (SessionRowBadgePolicy.subagentBadgeText(for: session, language: lang) ?? L10n.t(.runningStatus, lang))
+            : L10n.t(.subagentsAllIdleHint, lang)
 
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(L10n.t(.subagentsSectionTitle, lang))
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(activeBadge)
-                    .font(.system(size: 9.5, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundColor(isActive ? activeFg : .secondary)
-                    .padding(.horizontal, 5.5)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule()
-                            .fill(isActive ? Color.green.opacity(0.12) : Color.primary.opacity(0.055))
-                    )
+        return VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    subagentsCollapsedOverride = !isCollapsed
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(isActive ? Color.green : Color.secondary.opacity(0.35))
+                        .frame(width: 5.5, height: 5.5)
+
+                    Text("\(L10n.t(.subagentsSectionTitle, lang)) · \(sortedSubs.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.primary)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 180))
+                        .foregroundColor(.secondary)
+                        .animation(.easeOut(duration: 0.16), value: isCollapsed)
+
+                    Text("·")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.45))
+
+                    Text(activeSummary)
+                        .font(.system(size: 10, weight: isActive ? .semibold : .regular, design: .monospaced).monospacedDigit())
+                        .foregroundColor(isActive ? activeFg : .secondary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 6)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
             }
 
-            VStack(spacing: 3) {
-                ForEach(sortedSubs) { sub in
-                    subagentDetailRow(sub)
+            if !isCollapsed {
+                Rectangle()
+                    .fill(AgyTheme.hairlineColor(for: colorScheme))
+                    .frame(height: 0.5)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(visibleSubs.enumerated()), id: \.element.id) { idx, sub in
+                        if idx > 0 {
+                            Rectangle()
+                                .fill(AgyTheme.hairlineColor(for: colorScheme))
+                                .frame(height: 0.5)
+                                .padding(.leading, 22)
+                        }
+                        subagentDetailRow(sub)
+                    }
+                }
+
+                if sortedSubs.count > SubagentCollapsePolicy.previewLimit {
+                    Rectangle()
+                        .fill(AgyTheme.hairlineColor(for: colorScheme))
+                        .frame(height: 0.5)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            showAllSubagents.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(showAllSubagents
+                                 ? L10n.subagentsShowFewerCount(SubagentCollapsePolicy.previewLimit, lang)
+                                 : L10n.subagentsShowAllCount(sortedSubs.count, lang))
+                                .font(.system(size: 10.5, weight: .medium))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .rotationEffect(.degrees(showAllSubagents ? 180 : 0))
+                                .animation(.easeOut(duration: 0.16), value: showAllSubagents)
+                        }
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+        )
     }
 
     private func subagentDetailRow(_ sub: SessionItem) -> some View {
         let name = SessionDetailSubagentPolicy.displayName(for: sub, language: lang)
         let rawActionHint = sub.recentError ?? (sub.isRunning ? sub.currentAction : "")
         let actionHint = L10n.localizeRuntimeText(rawActionHint, language: lang)
+        let tipParts = [
+            !sub.agentRole.isEmpty ? "\(sub.agentRole) (\(sub.uuid))" : sub.uuid,
+            actionHint
+        ].filter { !$0.isEmpty }
 
         return Button {
             onSelectSubagent?(sub.uuid)
         } label: {
-            VStack(alignment: .leading, spacing: 2.5) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
                     Circle()
-                        .fill(sub.isRunning ? Color.green : Color.secondary.opacity(0.35))
-                        .frame(width: 5, height: 5)
+                        .fill(sub.recentError != nil ? Color.red : (sub.isRunning ? Color.green : Color.secondary.opacity(0.32)))
+                        .frame(width: 5.5, height: 5.5)
 
                     Text(name)
-                        .font(.system(size: 11, weight: sub.isRunning ? .bold : .medium))
+                        .font(.system(size: 11.5, weight: sub.isRunning ? .semibold : .medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-
-                    Text(sub.shortId)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.secondary)
 
                     Spacer(minLength: 4)
 
                     if SessionRowBadgePolicy.hasModel(sub.model) {
                         Text(SessionRowBadgePolicy.modelBadgeText(sub.model))
-                            .font(.system(size: 8.5, weight: .medium))
+                            .font(.system(size: 10, weight: .regular))
                             .foregroundColor(.secondary)
-                            .padding(.horizontal, 4.5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.primary.opacity(0.055)))
                             .lineLimit(1)
+                            .frame(maxWidth: 74, alignment: .trailing)
                     }
 
                     if sub.contextTokens > 0 {
                         Text(Formatters.formatTokens(sub.contextTokens))
-                            .font(.system(size: 9, weight: .semibold, design: .rounded).monospacedDigit())
+                            .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
                             .foregroundColor(SessionRowBadgePolicy.contextForegroundColor(for: colorScheme))
+                            .frame(width: 38, alignment: .trailing)
                     }
 
                     if sub.isRunning {
-                        HStack(spacing: 1.5) {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 8))
-                            Text(sub.tps > 0 ? String(format: "%.0ft/s", sub.tps) : L10n.t(.runningStatus, lang))
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        }
-                        .foregroundColor(Color.accentColor)
+                        Text(sub.tps > 0 ? String(format: "%.0ft/s", sub.tps) : L10n.t(.runningStatus, lang))
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced).monospacedDigit())
+                            .foregroundColor(Color.accentColor)
+                            .frame(width: 66, alignment: .trailing)
                     } else {
-                        Text("\(Formatters.formatTokens(sub.totalTokensConsumed)) \(String(format: "%.0f%%", sub.cachePct))")
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color.primary.opacity(0.72))
+                        Text("\(Formatters.formatTokens(sub.totalTokensConsumed)) · \(String(format: "%.0f%%", sub.cachePct))")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .frame(width: 66, alignment: .trailing)
                     }
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.secondary.opacity(0.6))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.5))
                 }
 
-                if !actionHint.isEmpty {
+                if sub.recentError != nil, !actionHint.isEmpty {
                     Text(actionHint)
-                        .font(.system(size: 9))
-                        .foregroundColor(sub.recentError != nil ? .red : .secondary)
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .padding(.leading, 10)
+                        .padding(.leading, 11.5)
                 }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4.5)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(sub.isRunning ? Color.green.opacity(0.06) : Color.primary.opacity(0.035))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(sub.isRunning ? Color.green.opacity(0.22) : Color.primary.opacity(0.06), lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(!sub.agentRole.isEmpty ? "\(sub.agentRole) (\(sub.uuid))" : sub.uuid)
+        .help(tipParts.joined(separator: "\n"))
     }
 
     private func detailStatItem(title: String, value: String) -> some View {
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 9))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.secondary)
+                .lineLimit(1)
             Text(value)
-                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                .font(.system(size: 13.5, weight: .semibold, design: .monospaced).monospacedDigit())
                 .foregroundColor(.primary)
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-enum DiagnosticDistributionTab: String, CaseIterable {
-    case phases = "按工作阶段"
-    case sources = "按上下文来源"
+struct SessionDetailTokenBarView: View {
+    let totalTokens: Int
+    let breakdown: SessionDetailTokenBreakdown
+    var embeddedInCard: Bool = false
 
-    func title(for lang: AppLanguage.Resolved) -> String {
-        switch self {
-        case .phases: return L10n.t(.diagTabPhases, lang)
-        case .sources: return L10n.t(.diagTabSources, lang)
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.agyLanguage) private var lang
+    @AppStorage("agyhub.detail.breakdownDimension") private var dimensionRaw: String = TokenBreakdownDimension.cost.rawValue
+    @State private var hoveredCategory: TokenBreakdownCategory? = nil
+
+    private var selectedDimension: TokenBreakdownDimension {
+        TokenBreakdownDimension(rawValue: dimensionRaw) ?? .cost
+    }
+
+    private var activeDimension: TokenBreakdownDimension {
+        if selectedDimension == .cost && breakdown.totalCostUsd <= 0 && breakdown.totalTokens > 0 {
+            return .tokens
         }
+        return selectedDimension
+    }
+
+    private var cardSurface: Color {
+        AgyTheme.cardSurfaceColor(for: colorScheme)
+    }
+
+    private func segmentColor(for category: TokenBreakdownCategory) -> Color {
+        switch category {
+        case .input:
+            return Color.blue
+        case .output:
+            return Color.orange
+        case .cache:
+            return colorScheme == .dark
+                ? Color(red: 0.24, green: 0.82, blue: 0.56)
+                : Color(red: 0.16, green: 0.72, blue: 0.48)
+        }
+    }
+
+    private func shortLabel(for category: TokenBreakdownCategory) -> String {
+        switch category {
+        case .input: return L10n.t(.detailShortInput, lang)
+        case .output: return L10n.t(.detailShortOutput, lang)
+        case .cache: return L10n.t(.detailShortCache, lang)
+        }
+    }
+
+    private func segmentOpacity(for category: TokenBreakdownCategory) -> Double {
+        guard let hovered = hoveredCategory else { return 0.9 }
+        return hovered == category ? 1.0 : 0.30
+    }
+
+    private func legendOpacity(for category: TokenBreakdownCategory) -> Double {
+        guard let hovered = hoveredCategory else { return 1.0 }
+        return hovered == category ? 1.0 : 0.42
+    }
+
+    private func legendValueText(for slice: TokenBarSlice, dimension: TokenBreakdownDimension) -> String {
+        switch dimension {
+        case .cost: return Formatters.formatCost(slice.costUsd)
+        case .tokens: return Formatters.formatTokens(slice.tokens)
+        }
+    }
+
+    private func hasPositiveDenominator(for dimension: TokenBreakdownDimension) -> Bool {
+        switch dimension {
+        case .cost: return breakdown.totalCostUsd > 0
+        case .tokens: return breakdown.totalTokens > 0
+        }
+    }
+
+    var body: some View {
+        let dim = activeDimension
+        let zeroBarSlices = SessionDetailTokenBarPolicy.computeSlices(breakdown: breakdown, totalWidth: 100, dimension: dim)
+        let displayedSum = totalTokens > 0 ? totalTokens : breakdown.totalTokens
+
+        let innerContent = VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text(L10n.t(.detailCompositionTitle, lang))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                if !embeddedInCard {
+                    Text(dim == .cost ? Formatters.formatCost(breakdown.totalCostUsd) : Formatters.formatTokens(displayedSum))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced).monospacedDigit())
+                        .foregroundColor(.primary)
+                }
+
+                Spacer(minLength: 4)
+
+                HStack(spacing: 1.5) {
+                    ForEach(TokenBreakdownDimension.allCases) { option in
+                        let isSelected = (dim == option)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                dimensionRaw = option.rawValue
+                            }
+                        } label: {
+                            Text(option == .cost ? L10n.t(.detailDimCost, lang) : L10n.t(.detailDimTokens, lang))
+                                .font(.system(size: 9.5, weight: isSelected ? .semibold : .medium))
+                                .foregroundColor(isSelected ? .primary : .secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                        .fill(isSelected ? AgyTheme.cardSurfaceColor(for: colorScheme) : Color.clear)
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .fill(AgyTheme.wellSurfaceColor(for: colorScheme))
+                )
+            }
+
+            GeometryReader { geo in
+                let slices = SessionDetailTokenBarPolicy.computeSlices(
+                    breakdown: breakdown,
+                    totalWidth: geo.size.width,
+                    dimension: dim
+                )
+                let activeSlices = slices.filter { dim == .cost ? $0.costUsd > 0 : $0.tokens > 0 }
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.065))
+                        .frame(height: SessionDetailTokenBarPolicy.barHeight)
+
+                    if !activeSlices.isEmpty {
+                        HStack(spacing: SessionDetailTokenBarPolicy.segmentSpacing) {
+                            ForEach(activeSlices) { slice in
+                                let pctStr = SessionDetailTokenBarPolicy.formatSharePct(slice.sharePct, tokens: slice.tokens)
+                                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                                    .fill(segmentColor(for: slice.category))
+                                    .frame(width: slice.width, height: SessionDetailTokenBarPolicy.barHeight)
+                                    .opacity(segmentOpacity(for: slice.category))
+                                    .contentShape(Rectangle())
+                                    .onHover { inside in
+                                        hoveredCategory = inside ? slice.category : (hoveredCategory == slice.category ? nil : hoveredCategory)
+                                    }
+                                    .help("\(shortLabel(for: slice.category)): \(Formatters.formatCost(slice.costUsd)) · \(Formatters.formatTokens(slice.tokens)) (\(pctStr))")
+                            }
+                        }
+                        .clipShape(Capsule())
+                        .animation(.easeOut(duration: 0.14), value: hoveredCategory)
+                        .animation(.easeOut(duration: 0.16), value: dim)
+                    }
+                }
+            }
+            .frame(height: SessionDetailTokenBarPolicy.barHeight)
+
+            HStack(spacing: 0) {
+                ForEach(Array(zeroBarSlices.enumerated()), id: \.element.id) { idx, slice in
+                    if idx > 0 {
+                        Spacer(minLength: 4)
+                    }
+                    legendItem(for: slice, dimension: dim)
+                }
+            }
+        }
+
+        if embeddedInCard {
+            innerContent
+        } else {
+            innerContent
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .fill(cardSurface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                )
+        }
+    }
+
+    private func legendItem(for slice: TokenBarSlice, dimension: TokenBreakdownDimension) -> some View {
+        let color = segmentColor(for: slice.category)
+        let label = shortLabel(for: slice.category)
+        let pctStr = SessionDetailTokenBarPolicy.formatSharePct(slice.sharePct, tokens: slice.tokens)
+        let valStr = legendValueText(for: slice, dimension: dimension)
+
+        return HStack(alignment: .firstTextBaseline, spacing: 3.5) {
+            Circle()
+                .fill(color)
+                .frame(width: 5.5, height: 5.5)
+                .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 3.5 }
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+            Text(valStr)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced).monospacedDigit())
+                .foregroundColor(.primary)
+            if hasPositiveDenominator(for: dimension) {
+                Text(pctStr)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary.opacity(0.85))
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.88)
+        .opacity(legendOpacity(for: slice.category))
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hoveredCategory = inside ? slice.category : (hoveredCategory == slice.category ? nil : hoveredCategory)
+        }
+        .animation(.easeOut(duration: 0.14), value: hoveredCategory)
+        .help("\(label): \(Formatters.formatCost(slice.costUsd)) · \(Formatters.formatTokens(slice.tokens)) (\(pctStr))")
     }
 }
 
 struct SessionDiagnosticsInlineSection: View {
+    static let showsTokenContextDistributionCard = false
+    static let collapsesTopEventsByDefault = true
+
     let payload: SessionDiagnosticsPayload?
     let isLoading: Bool
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.agyLanguage) private var lang
-    @State private var distributionTab: DiagnosticDistributionTab = .sources
-    @State private var showMissEvents: Bool = false
+    @State private var showMissDetailsDrawer: Bool = false
 
     private var cardSurface: Color {
-        colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)
+        AgyTheme.cardSurfaceColor(for: colorScheme)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if isLoading && payload == nil {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -4757,68 +5510,42 @@ struct SessionDiagnosticsInlineSection: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 18)
-                .background(cardSurface)
-                .cornerRadius(7)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .fill(cardSurface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                )
             } else if let d = payload {
-                VStack(alignment: .leading, spacing: 8) {
-
-                    distributionSection(d)
-
-                    cacheMissSection(
-                        d.cacheMiss,
-                        recommendations: d.recommendations,
-                        hasSubagents: (d.subagentCount ?? 0) > 0
-                    )
-                }
+                cacheMissSection(
+                    d.cacheMiss,
+                    recommendations: d.recommendations,
+                    hasSubagents: (d.subagentCount ?? 0) > 0
+                )
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary.opacity(0.7))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary.opacity(0.75))
                     Text(L10n.t(.diagEmpty, lang))
                         .font(.system(size: 10.5))
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 14)
-                .background(cardSurface)
-                .cornerRadius(7)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .fill(cardSurface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                )
             }
         }
-    }
-
-    private func donutChartView(
-        values: [Double],
-        colors: [Color],
-        centerTop: String,
-        centerBottom: String
-    ) -> some View {
-        let slices = SessionDiagnosticsPolicy.donutSlices(values: values)
-        return ZStack {
-            if slices.isEmpty {
-                Circle()
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 11)
-            } else {
-                ForEach(slices) { slice in
-                    let color = slice.id < colors.count ? colors[slice.id] : Color.accentColor
-                    Circle()
-                        .trim(from: slice.start, to: max(slice.start, slice.end - 0.006))
-                        .stroke(color.opacity(0.88), style: StrokeStyle(lineWidth: 11, lineCap: .butt))
-                        .rotationEffect(.degrees(-90))
-                }
-            }
-            VStack(spacing: 0.5) {
-                Text(centerTop)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.primary)
-                Text(centerBottom)
-                    .font(.system(size: 8.5))
-                    .foregroundColor(.secondary)
-            }
-        }
-        .frame(width: 78, height: 78)
-        .padding(4)
     }
 
     private func cacheMissSection(
@@ -4827,297 +5554,179 @@ struct SessionDiagnosticsInlineSection: View {
         hasSubagents: Bool
     ) -> some View {
         let maxCauseCost = max(0.01, miss.byCause.map(\.extraCostUsd).max() ?? 0.01)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(L10n.t(.diagCacheMissTitle, lang), systemImage: "flame.fill")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundColor(miss.totalMisses > 0 ? .orange : .green)
+        let hasMisses = miss.totalMisses > 0
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Label(
+                    L10n.t(.diagCacheMissTitle, lang),
+                    systemImage: hasMisses ? "exclamationmark.triangle" : "checkmark.circle"
+                )
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(hasMisses ? .primary : .green)
+
                 Spacer()
-                if miss.totalMisses > 0 {
+
+                if hasMisses {
                     Text(L10n.cacheMissSummary(miss.totalMisses, miss.extraCostUsd, miss.wastePctOfTotal, lang))
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced).monospacedDigit())
                         .foregroundColor(miss.extraCostUsd >= 1.0 ? .red : .orange)
                 } else {
                     Text(L10n.t(.diagCacheHealthy, lang))
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.green)
                 }
             }
 
             if !miss.byCause.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 7) {
                     ForEach(miss.byCause) { item in
                         let cColor = SessionDiagnosticsPolicy.causeColor(item.cause)
-                        let tag = SessionDiagnosticsPolicy.causeControlTag(item.cause, language: lang)
-                        let isOptimizable = SessionDiagnosticsPolicy.isOptimizableCause(item.cause)
                         let share = miss.extraCostUsd > 0 ? (item.extraCostUsd / miss.extraCostUsd * 100.0) : 0.0
                         let barRatio = max(0.04, min(1.0, item.extraCostUsd / maxCauseCost))
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 5) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
                                 Circle().fill(cColor).frame(width: 6, height: 6)
                                 Text(L10n.localizeDiagnosticCause(item.cause, language: lang))
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.primary)
                                     .lineLimit(1)
-                                Text(tag)
-                                    .font(.system(size: 8.5, weight: .medium))
-                                    .foregroundColor(isOptimizable ? .orange : .secondary)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 0.5)
-                                    .background((isOptimizable ? Color.orange : Color.secondary).opacity(0.12))
-                                    .cornerRadius(3)
                                 Spacer(minLength: 4)
                                 Text(L10n.cacheMissCountShare(item.count, share, lang))
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: 10, design: .monospaced).monospacedDigit())
                                     .foregroundColor(.secondary)
                                 Text(String(format: "+$%.2f", item.extraCostUsd))
-                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced).monospacedDigit())
                                     .foregroundColor(cColor)
-                                    .frame(width: 48, alignment: .trailing)
+                                    .frame(width: 50, alignment: .trailing)
                             }
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 2)
+                                    RoundedRectangle(cornerRadius: 1.5)
                                         .fill(Color.primary.opacity(0.06))
-                                        .frame(height: 3.5)
-                                    RoundedRectangle(cornerRadius: 2)
+                                        .frame(height: 2.5)
+                                    RoundedRectangle(cornerRadius: 1.5)
                                         .fill(cColor.opacity(0.85))
-                                        .frame(width: max(3, geo.size.width * barRatio), height: 3.5)
+                                        .frame(width: max(3, geo.size.width * barRatio), height: 2.5)
                                 }
                             }
-                            .frame(height: 3.5)
+                            .frame(height: 2.5)
                         }
                     }
                 }
             }
 
-            if !miss.topEvents.isEmpty {
-                Divider().opacity(0.25)
-                let visibleEvents = showMissEvents
-                    ? Array(miss.topEvents.prefix(5))
-                    : Array(miss.topEvents.prefix(2))
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(visibleEvents) { ev in
-                        let cColor = SessionDiagnosticsPolicy.causeColor(ev.cause)
-                        HStack(alignment: .top, spacing: 5) {
-                            Text(ev.time)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .frame(width: 54, alignment: .leading)
-                            VStack(alignment: .leading, spacing: 0.5) {
-                                HStack(spacing: 4) {
-                                    if hasSubagents, let agent = ev.agentName, !agent.isEmpty {
-                                        Text("[\(L10n.localizeAgentLabel(agent, language: lang))]")
-                                            .font(.system(size: 8.5, weight: .semibold))
-                                            .foregroundColor(.primary.opacity(0.8))
+            if !miss.topEvents.isEmpty || !recommendations.isEmpty {
+                Rectangle()
+                    .fill(AgyTheme.hairlineColor(for: colorScheme))
+                    .frame(height: 0.5)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showMissDetailsDrawer.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(L10n.diagSummaryCompact(eventCount: miss.topEvents.count, recCount: recommendations.count, lang))
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(showMissDetailsDrawer ? 180 : 0))
+                            .foregroundColor(.secondary)
+                            .animation(.easeOut(duration: 0.16), value: showMissDetailsDrawer)
+                        Spacer(minLength: 6)
+                    }
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.set()
+                    } else {
+                        NSCursor.arrow.set()
+                    }
+                }
+
+                if showMissDetailsDrawer {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !miss.topEvents.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(Array(miss.topEvents.prefix(5))) { ev in
+                                    let cColor = SessionDiagnosticsPolicy.causeColor(ev.cause)
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Text(ev.time)
+                                            .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .frame(width: 56, alignment: .leading)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            HStack(spacing: 4) {
+                                                if hasSubagents, let agent = ev.agentName, !agent.isEmpty {
+                                                    Text("[\(L10n.localizeAgentLabel(agent, language: lang))]")
+                                                        .font(.system(size: 10, weight: .semibold))
+                                                        .foregroundColor(.primary.opacity(0.85))
+                                                }
+                                                Text(L10n.localizeDiagnosticCause(ev.cause, language: lang))
+                                                    .font(.system(size: 10, weight: .semibold))
+                                                    .foregroundColor(cColor)
+                                                Text("#\(ev.stepIndex)")
+                                                    .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Text(L10n.localizeDiagnosticDetail(ev.detail, language: lang))
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer(minLength: 4)
+                                        Text(String(format: "+$%.2f", ev.extraCostUsd))
+                                            .font(.system(size: 10, weight: .semibold, design: .monospaced).monospacedDigit())
+                                            .foregroundColor(cColor)
+                                            .frame(width: 48, alignment: .trailing)
                                     }
-                                    Text(L10n.localizeDiagnosticCause(ev.cause, language: lang))
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundColor(cColor)
-                                    Text("#\(ev.stepIndex)")
-                                        .font(.system(size: 8.5, design: .monospaced))
-                                        .foregroundColor(.secondary)
                                 }
-                                Text(L10n.localizeDiagnosticDetail(ev.detail, language: lang))
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
                             }
-                            Spacer(minLength: 4)
-                            Text(String(format: "+$%.2f", ev.extraCostUsd))
-                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(cColor)
-                                .frame(width: 46, alignment: .trailing)
                         }
-                    }
-                }
-                .padding(.top, 1)
 
-                if miss.topEvents.count > 2 {
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            showMissEvents.toggle()
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Text(showMissEvents ? L10n.t(.diagCollapseEvents, lang) : L10n.diagExpandTopEvents(miss.topEvents.count, lang))
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-                            Image(systemName: showMissEvents ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if !recommendations.isEmpty {
-                Divider().opacity(0.25)
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(recommendations.prefix(3).enumerated()), id: \.offset) { _, rec in
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "lightbulb.fill")
-                                .font(.system(size: 9))
-                                .foregroundColor(.yellow)
-                                .padding(.top, 1.5)
-                            Text(L10n.localizeDiagnosticRecommendation(rec, language: lang))
-                                .font(.system(size: 9.5))
-                                .foregroundColor(.primary.opacity(0.9))
-                                .fixedSize(horizontal: false, vertical: true)
+                        if !recommendations.isEmpty {
+                            if !miss.topEvents.isEmpty {
+                                Rectangle()
+                                    .fill(AgyTheme.hairlineColor(for: colorScheme))
+                                    .frame(height: 0.5)
+                            }
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(recommendations.prefix(3).enumerated()), id: \.offset) { _, rec in
+                                    HStack(alignment: .top, spacing: 5) {
+                                        Image(systemName: "lightbulb")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundColor(.orange)
+                                            .padding(.top, 1.5)
+                                        Text(L10n.localizeDiagnosticRecommendation(rec, language: lang))
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.primary.opacity(0.9))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
                         }
                     }
+                    .padding(.top, 2)
                 }
             }
         }
-        .padding(8)
-        .background(cardSurface)
-        .cornerRadius(7)
-    }
-
-    private func distributionSection(_ d: SessionDiagnosticsPayload) -> some View {
-        let isPhases = (distributionTab == .phases)
-        let topSources = Array(d.sources.prefix(6))
-        let values = isPhases ? d.phases.map(\.pct) : topSources.map(\.pct)
-        let colors = isPhases
-            ? d.phases.map { SessionDiagnosticsPolicy.phaseColor($0.name) }
-            : topSources.map { SessionDiagnosticsPolicy.sourceColor($0.name) }
-
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Text(L10n.t(.diagDistributionTitle, lang))
-                    .font(.system(size: 10.5, weight: .semibold))
-                if let subCount = d.subagentCount, subCount > 0 {
-                    Text(L10n.diagSubagentCount(subCount, lang))
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundColor(Color.accentColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.1))
-                        .cornerRadius(3)
-                }
-                Spacer()
-                HStack(spacing: 2) {
-                    ForEach(DiagnosticDistributionTab.allCases, id: \.self) { tab in
-                        let selected = (distributionTab == tab)
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.12)) {
-                                distributionTab = tab
-                            }
-                        }) {
-                            Text(tab.title(for: lang))
-                                .font(.system(size: 9.5, weight: selected ? .semibold : .regular))
-                                .foregroundColor(selected ? .primary : .secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(selected ? Color.primary.opacity(0.1) : Color.clear)
-                                .cornerRadius(4)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(1.5)
-                .background(Color.primary.opacity(0.04))
-                .cornerRadius(5)
-            }
-
-            HStack(alignment: .center, spacing: 12) {
-                donutChartView(
-                    values: values,
-                    colors: colors,
-                    centerTop: isPhases ? "\(d.turns)" : String(format: "%.0f%%", d.attributedPct),
-                    centerBottom: isPhases ? L10n.t(.diagCenterTurns, lang) : L10n.t(.diagCenterAttributed, lang)
-                )
-
-                if isPhases {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(d.phases) { phase in
-                            let pColor = SessionDiagnosticsPolicy.phaseColor(phase.name)
-                            HStack(spacing: 5) {
-                                Circle().fill(pColor).frame(width: 6.5, height: 6.5)
-                                Text(L10n.localizeDiagnosticPhase(phase.name, language: lang))
-                                    .font(.system(size: 10, weight: .medium))
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                Text(String(format: "%.1f%%", phase.pct))
-                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.primary)
-                                Text(String(format: "$%.2f", phase.costUsd))
-                                    .font(.system(size: 9.5, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 46, alignment: .trailing)
-                            }
-                        }
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 3.5) {
-                        ForEach(topSources) { src in
-                            let sColor = SessionDiagnosticsPolicy.sourceColor(src.name)
-                            HStack(spacing: 5) {
-                                RoundedRectangle(cornerRadius: 1.5)
-                                    .fill(sColor)
-                                    .frame(width: 6.5, height: 6.5)
-                                Text(L10n.localizeDiagnosticSource(src.name, language: lang))
-                                    .font(.system(size: 9.5))
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                Text(String(format: "%.1f%%", src.pct))
-                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.primary)
-                                Text(SessionDiagnosticsPolicy.compactChars(src.chars))
-                                    .font(.system(size: 9, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 40, alignment: .trailing)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let hints = d.bloatHints, !hints.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(hints.prefix(2), id: \.self) { hint in
-                        HStack(alignment: .top, spacing: 4) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 8.5))
-                                .foregroundColor(.accentColor)
-                                .padding(.top, 1.5)
-                            Text(L10n.localizeDiagnosticRecommendation(hint, language: lang))
-                                .font(.system(size: 9.5))
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .padding(.top, 2)
-            }
-        }
-        .padding(8)
-        .background(cardSurface)
-        .cornerRadius(7)
-    }
-
-    private func recommendationsSection(_ recs: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label(L10n.t(.diagRecommendationsTitle, lang), systemImage: "lightbulb.fill")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundColor(.yellow)
-            ForEach(Array(recs.enumerated()), id: \.offset) { idx, rec in
-                HStack(alignment: .top, spacing: 5) {
-                    Text("\(idx + 1).")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Text(L10n.localizeDiagnosticRecommendation(rec, language: lang))
-                        .font(.system(size: 10))
-                        .foregroundColor(.primary.opacity(0.9))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .padding(8)
-        .background(Color.yellow.opacity(colorScheme == .dark ? 0.08 : 0.1))
-        .cornerRadius(7)
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .fill(cardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+        )
     }
 }
 
@@ -5125,6 +5734,7 @@ struct UsageAnalyticsView: View {
     @ObservedObject var store: AGYHubStore
     let onBack: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("agyhub.usage.selectedRange") private var selectedRangeRaw: String = UsageRangeOption.today.rawValue
     @AppStorage("agyhub.usage.metricMode") private var selectedMetricRaw: String = UsageMetricMode.cost.rawValue
     @AppStorage("agyhub.usage.breakdownDimension") private var breakdownDimensionRaw: String = UsageBreakdownDimension.model.rawValue
@@ -5171,8 +5781,6 @@ struct UsageAnalyticsView: View {
             } else {
                 loadingPlaceholder
             }
-
-            bottomRangeSelector
         }
         .onAppear {
             store.fetchUsageHistory(force: store.usageHistory == nil)
@@ -5183,92 +5791,124 @@ struct UsageAnalyticsView: View {
     }
 
     private var topNavigationRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button(action: onBack) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text(L10n.t(.backButton, lang))
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
-                    .foregroundColor(Color.accentColor)
-                    .contentShape(Rectangle())
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text(L10n.t(.backButton, lang))
+                        .font(.system(size: 11.5, weight: .medium))
                 }
-                .buttonStyle(.plain)
+                .foregroundColor(Color.accentColor)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-                Text(selectedRange.shortHeaderTitle(for: lang))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.primary)
+            Text(L10n.t(.usageNavTitle, lang))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.primary)
+                .lineLimit(1)
 
-                if store.isLoadingUsageHistory {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.68)
-                }
+            if store.isLoadingUsageHistory {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.68)
+            }
 
-                Spacer()
+            Spacer(minLength: 4)
 
-                HStack(spacing: 2) {
-                    ForEach(UsageMetricMode.allCases) { mode in
-                        let isSelected = metricMode == mode
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.14)) {
-                                setMetric(mode)
-                            }
-                        } label: {
-                            Text(mode.title(for: lang))
-                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+            HStack(spacing: 2) {
+                ForEach(UsageRangeOption.allCases) { option in
+                    let isSelected = selectedRange == option
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.14)) {
+                            setRange(option)
+                        }
+                    } label: {
+                        Text(option.compactTitle(for: lang))
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                             .foregroundColor(isSelected ? .primary : .secondary)
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(
-                                RoundedRectangle(cornerRadius: 4.5, style: .continuous)
-                                    .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-                                    .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 1, y: 0.5)
+                                RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                    .fill(isSelected ? AgyTheme.cardSurfaceColor(for: colorScheme) : Color.clear)
                             )
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(2)
-            .background(Color.primary.opacity(0.055))
-            .cornerRadius(6)
+            .background(
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+
+            HStack(spacing: 2) {
+                ForEach(UsageMetricMode.allCases) { mode in
+                    let isSelected = metricMode == mode
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.14)) {
+                            setMetric(mode)
+                        }
+                    } label: {
+                        Text(mode.compactTitle(for: lang))
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                            .foregroundColor(isSelected ? .primary : .secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                    .fill(isSelected ? AgyTheme.cardSurfaceColor(for: colorScheme) : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .background(
+                RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
         }
+        .frame(height: 26)
     }
 
     private func summaryStrip(_ summary: UsageAnalyticsPolicy.RangeSummary) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(Formatters.formatCost(summary.totalCostUsd))
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundColor(.primary)
 
             Text("·")
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(.secondary.opacity(0.45))
 
             Text("\(Formatters.formatTokens(summary.totalTokens)) Tokens")
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundColor(.secondary)
 
             Spacer(minLength: 4)
 
-            VStack(alignment: .trailing, spacing: 1) {
+            VStack(alignment: .trailing, spacing: 1.5) {
                 Text(L10n.usageSummaryCacheCalls(cachePct: summary.cachePct, calls: summary.totalCalls, lang))
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
                     .foregroundColor(.secondary)
                 Text(L10n.usageSummaryInOut(inputTokens: summary.inputTokens, outputTokens: summary.outputTokens, lang))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundColor(.secondary.opacity(0.75))
+                    .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary.opacity(0.8))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.03))
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
                 )
         )
     }
@@ -5317,30 +5957,40 @@ struct UsageAnalyticsView: View {
         let segments = buildChartSegments(for: summary)
         let ticks = UsageAnalyticsPolicy.xAxisTickLabels(for: summary.bars, range: selectedRange)
         let hoveredBar = summary.bars.first(where: { $0.id == hoveredBarId })
+        let peakBar = UsageAnalyticsPolicy.peakBar(in: summary.bars, by: metricMode)
+        let legendModels = UsageAnalyticsPolicy.topLegendModels(from: summary, by: metricMode, maxCount: 4)
 
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                Text(L10n.t(.usageTrendTitle, lang))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+
+                Spacer(minLength: 4)
+
                 if let bar = hoveredBar {
-                    Text(bar.detailTitle)
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.primary)
-                    Text(L10n.usageBarHoverSummary(cost: bar.costUsd, tokens: bar.totalTokens, calls: bar.calls, lang))
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.accentColor)
-                    if let topModel = bar.models.first {
-                        Text("(\(topModel.displayName))")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(bar.detailTitle)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.primary)
+                        Text(L10n.usageBarHoverSummary(cost: bar.costUsd, tokens: bar.totalTokens, calls: bar.calls, lang))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
+                            .foregroundColor(Color.accentColor)
                     }
+                    .lineLimit(1)
+                } else if let peak = peakBar {
+                    Text(L10n.usagePeakSummary(label: peak.detailTitle, cost: peak.costUsd, tokens: peak.totalTokens, metric: metricMode, lang))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 } else {
                     Text(L10n.usageChartPrompt(isToday: selectedRange == .today, lang))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary.opacity(0.85))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
-                Spacer(minLength: 0)
             }
-            .frame(height: 15)
+            .frame(height: 16)
 
             Chart(segments) { seg in
                 if seg.modelKey == "__empty__" {
@@ -5371,7 +6021,7 @@ struct UsageAnalyticsView: View {
                     AxisValueLabel {
                         if let label = value.as(String.self) {
                             Text(label)
-                                .font(.system(size: 9, design: .monospaced))
+                                .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.85))
                         }
                     }
@@ -5384,8 +6034,8 @@ struct UsageAnalyticsView: View {
                     AxisValueLabel {
                         if let num = value.as(Double.self) {
                             Text(metricMode == .cost ? Formatters.formatCost(num) : Formatters.formatTokens(Int(num)))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.secondary.opacity(0.80))
+                                .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                                .foregroundColor(.secondary.opacity(0.85))
                         }
                     }
                 }
@@ -5415,16 +6065,35 @@ struct UsageAnalyticsView: View {
                         }
                 }
             }
-            .frame(minHeight: 148, idealHeight: 165, maxHeight: 220)
+            .frame(minHeight: 146, idealHeight: 162, maxHeight: 220)
+
+            if !legendModels.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(legendModels) { row in
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(UsageAnalyticsPolicy.accentColor(for: row.model))
+                                .frame(width: 6, height: 6)
+                            Text(row.displayName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 1)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.025))
+            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
                 )
         )
     }
@@ -5435,8 +6104,18 @@ struct UsageAnalyticsView: View {
         let sortedConversations = UsageAnalyticsPolicy.sortedConversations(summary.conversations, by: metricMode)
         let activeCount = breakdownDimension == .model ? sortedModels.count : sortedConversations.count
 
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                Text(L10n.t(.usageBreakdownSectionTitle, lang))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+
+                Text(L10n.usageBreakdownHeader(metric: metricMode, dimension: breakdownDimension, count: activeCount, lang))
+                    .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
                 HStack(spacing: 2) {
                     ForEach(UsageBreakdownDimension.allCases) { dim in
                         let isSelected = breakdownDimension == dim
@@ -5446,28 +6125,23 @@ struct UsageAnalyticsView: View {
                             }
                         } label: {
                             Text(dim.title(for: lang))
-                                .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                                .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                                 .foregroundColor(isSelected ? .primary : .secondary)
-                                .padding(.horizontal, 8)
+                                .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 4.5, style: .continuous)
-                                        .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-                                        .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 1, y: 0.5)
+                                    RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                        .fill(isSelected ? AgyTheme.cardSurfaceColor(for: colorScheme) : Color.clear)
                                 )
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(2)
-                .background(Color.primary.opacity(0.055))
-                .cornerRadius(6)
-
-                Spacer()
-
-                Text(L10n.usageBreakdownHeader(metric: metricMode, dimension: breakdownDimension, count: activeCount, lang))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.secondary.opacity(0.8))
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.control, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                )
             }
 
             if activeCount == 0 {
@@ -5479,21 +6153,48 @@ struct UsageAnalyticsView: View {
                     Spacer(minLength: 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                        )
+                )
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: 0) {
                         if breakdownDimension == .model {
-                            ForEach(sortedModels) { row in
+                            ForEach(Array(sortedModels.enumerated()), id: \.element.id) { idx, row in
+                                if idx > 0 {
+                                    Rectangle()
+                                        .fill(AgyTheme.hairlineColor(for: colorScheme))
+                                        .frame(height: 0.5)
+                                        .padding(.leading, 22)
+                                }
                                 modelStatRow(row)
                             }
                         } else {
-                            ForEach(sortedConversations) { conv in
+                            ForEach(Array(sortedConversations.enumerated()), id: \.element.id) { idx, conv in
+                                if idx > 0 {
+                                    Rectangle()
+                                        .fill(AgyTheme.hairlineColor(for: colorScheme))
+                                        .frame(height: 0.5)
+                                        .padding(.leading, 22)
+                                }
                                 conversationStatRow(conv)
                             }
                         }
                     }
-                    .padding(.vertical, 1)
                 }
+                .background(
+                    RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                        .fill(AgyTheme.cardSurfaceColor(for: colorScheme))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AgyTheme.Radius.container, style: .continuous)
+                                .strokeBorder(AgyTheme.hairlineColor(for: colorScheme), lineWidth: 0.5)
+                        )
+                )
                 .frame(maxHeight: .infinity)
             }
         }
@@ -5503,12 +6204,15 @@ struct UsageAnalyticsView: View {
     private func modelStatRow(_ row: UsageAnalyticsPolicy.ModelSummaryRow) -> some View {
         let color = UsageAnalyticsPolicy.accentColor(for: row.model)
         let pct = metricMode == .cost ? row.costSharePct : row.tokenSharePct
-        return breakdownStatCard(
+        let primaryValue = metricMode == .cost
+            ? Formatters.formatCost(row.costUsd)
+            : Formatters.formatTokens(row.totalTokens)
+        return breakdownTableRow(
             color: color,
             title: row.displayName,
             badgeText: nil,
             pct: pct,
-            costUsd: row.costUsd,
+            primaryValue: primaryValue,
             metricSummary: L10n.usageModelMetricSummary(tokens: row.totalTokens, calls: row.calls, cachePct: row.cachePct, lang)
         )
     }
@@ -5523,22 +6227,25 @@ struct UsageAnalyticsView: View {
             if conv.subagentCount > 0 { parts.append(L10n.usageConversationSubagentBadge(conv.subagentCount, lang)) }
             return parts.isEmpty ? nil : parts.joined(separator: "·")
         }()
-        return breakdownStatCard(
+        let primaryValue = metricMode == .cost
+            ? Formatters.formatCost(conv.costUsd)
+            : Formatters.formatTokens(conv.totalTokens)
+        return breakdownTableRow(
             color: color,
             title: cleanTitle,
             badgeText: badge,
             pct: pct,
-            costUsd: conv.costUsd,
+            primaryValue: primaryValue,
             metricSummary: L10n.usageConversationMetricSummary(topModel: conv.topModelDisplay, tokens: conv.totalTokens, calls: conv.calls, cachePct: conv.cachePct, lang)
         )
     }
 
-    private func breakdownStatCard(
+    private func breakdownTableRow(
         color: Color,
         title: String,
         badgeText: String?,
         pct: Double,
-        costUsd: Double,
+        primaryValue: String,
         metricSummary: String
     ) -> some View {
         let progressRatio = min(max(pct / 100.0, 0.0), 1.0)
@@ -5547,36 +6254,49 @@ struct UsageAnalyticsView: View {
             HStack(spacing: 6) {
                 Circle()
                     .fill(color)
-                    .frame(width: 7, height: 7)
+                    .frame(width: 6.5, height: 6.5)
 
                 Text(title)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(.primary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
 
                 if let badgeText = badgeText {
                     Text(badgeText)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.secondary)
-                        .padding(.horizontal, 4.5)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.primary.opacity(0.06))
-                        .cornerRadius(3.5)
+                        .background(
+                            RoundedRectangle(cornerRadius: AgyTheme.Radius.micro, style: .continuous)
+                                .fill(Color.primary.opacity(0.05))
+                        )
                 }
 
                 Spacer(minLength: 6)
 
                 Text(String(format: "%.1f%%", pct))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced).monospacedDigit())
                     .foregroundColor(.secondary)
+                    .frame(width: 44, alignment: .trailing)
 
-                Text(Formatters.formatCost(costUsd))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                Text(primaryValue)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                     .foregroundColor(.primary)
-                    .frame(minWidth: 50, alignment: .trailing)
+                    .frame(minWidth: 54, alignment: .trailing)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Text(metricSummary)
+                    .font(.system(size: 10, design: .monospaced).monospacedDigit())
+                    .foregroundColor(.secondary.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 12.5)
+
+                Spacer(minLength: 8)
+
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
@@ -5586,53 +6306,11 @@ struct UsageAnalyticsView: View {
                             .frame(width: max(3, geo.size.width * progressRatio))
                     }
                 }
-                .frame(height: 4)
-
-                Text(metricSummary)
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundColor(.secondary.opacity(0.85))
-                    .fixedSize(horizontal: true, vertical: false)
+                .frame(width: 88, height: 2.5)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(0.028))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
-                )
-        )
-    }
-
-    private var bottomRangeSelector: some View {
-        HStack(spacing: 3) {
-            ForEach(UsageRangeOption.allCases) { option in
-                let isSelected = selectedRange == option
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        setRange(option)
-                    }
-                } label: {
-                    Text(option.title(for: lang))
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? .primary : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5.5, style: .continuous)
-                                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-                                .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 1.5, y: 0.5)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(Color.primary.opacity(0.055))
-        .cornerRadius(7.5)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
     }
 
     private var loadingPlaceholder: some View {

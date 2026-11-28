@@ -148,6 +148,10 @@ struct AGYHubTestsRunner {
         testLiveTelemetryIdleGapBridgingAndHollowIdleTail()
         testTelemetryDefaultHidesHorizontalGuideRulesAndOffsetsCalloutFromDot()
         testOneQuarterAdvancingTimelineCycleAndAdaptiveCallout()
+        testQuotaSwitchRaceMismatchAndStartupExpectedStateIsolation()
+        testLiveSlotOwnerVerificationBlocksCLIFallbackAndMidProbeSwap()
+        testSessionDetailTokenBarPolicySlicesAndEdgeCases()
+        testRedesignThemeTokensBreadcrumbsAndUsageLegendPolicies()
 
         if failures > 0 {
             fputs("\n❌ 共 \(failures) 个断言失败\n", stderr)
@@ -1390,10 +1394,10 @@ struct AGYHubTestsRunner {
         expectEqual(SessionRowBadgePolicy.contextBadgeText(contextTokens: 141591), "142k", "141591 应格式化为 142k")
         expectEqual(SessionRowBadgePolicy.contextBadgeText(contextTokens: 1_200_000), "1.2M", "超过 1M 应格式化为 1.2M")
 
-        expect(SessionRowBadgePolicy.modelColumnWidth < 88, "模型胶囊列宽应比原先 88pt 更小")
-        expect(SessionRowBadgePolicy.modelFontSize < 10, "模型胶囊字号应比原先 10pt 更小")
-        expect(SessionRowBadgePolicy.contextFontSize < 10, "上下文胶囊字号应比原先 10pt 更小")
-        expect(SessionRowBadgePolicy.contextColumnWidth > 0, "上下文胶囊应具备独立列宽")
+        expect(SessionRowBadgePolicy.modelColumnWidth < 88, "模型尾列宽应比原先 88pt 更紧凑")
+        expect(SessionRowBadgePolicy.modelFontSize >= 10, "重构后模型标签字号不得低于 10pt 可读下限")
+        expect(SessionRowBadgePolicy.contextFontSize >= 10, "重构后上下文数字字号不得低于 10pt 可读下限")
+        expect(SessionRowBadgePolicy.contextColumnWidth > 0, "上下文列应具备独立定宽")
 
         let session = SessionItem(
             uuid: "capsule-test-001",
@@ -2683,8 +2687,9 @@ struct AGYHubTestsRunner {
         let payload = try? JSONDecoder().decode(SessionDiagnosticsPayload.self, from: jsonStr.data(using: .utf8)!)
         expect(payload != nil, "应成功解码 SessionDiagnosticsPayload")
         expectEqual(payload?.uuid, "8bb54407-1abd-4f79-a476-6e6c9aa48c11", "UUID 匹配")
-        expectEqual(payload?.phases.count, 2, "阶段列表应包含 2 项")
-        expectEqual(payload?.sources.count, 2, "来源列表应包含 2 项")
+        expectEqual(payload?.inputTokens, 726984, "应解码 inputTokens")
+        expectEqual(payload?.outputTokens, 71671, "应解码 outputTokens")
+        expectEqual(payload?.cacheTokens, 11632229, "应解码 cacheTokens")
         expectEqual(payload?.cacheMiss.totalMisses, 2, "缓存失效次数应为 2")
         expectEqual(payload?.cacheMiss.byCause.count, 2, "缓存失效根因应为 2 类")
         expectEqual(payload?.cacheMiss.topEvents.first?.stepIndex, 205, "最高耗时事件应为 step 205")
@@ -2693,17 +2698,127 @@ struct AGYHubTestsRunner {
             let report = SessionDiagnosticsPolicy.formattedClipboardReport(payload)
             expect(report.contains("CI E2E 排查"), "剪贴板摘要应包含会话标题")
             expect(report.contains("$2.50") || report.contains("2.50"), "剪贴板摘要应包含总费用")
+            expect(report.contains("Input") && report.contains("Output"), "剪贴板摘要应包含 Input 与 Output Token")
+            expect(report.contains("缓存 Token") || report.contains("Cache"), "剪贴板摘要应包含缓存 Token")
+            expect(!report.contains("[工作阶段占比]") && !report.contains("[上下文来源构成]"), "剪贴板摘要不得再输出已移除的工作阶段与上下文来源块")
             expect(report.contains("前缀/系统注入变动"), "剪贴板摘要应包含缓存失效根因")
-            expect(report.contains("调研/检索"), "剪贴板摘要应包含工作阶段")
-            expect(report.contains("read_file 读取"), "剪贴板摘要应包含上下文来源")
             expect(report.contains("建议"), "剪贴板摘要应包含优化建议")
+
+            let enReport = SessionDiagnosticsPolicy.formattedClipboardReport(payload, language: .en)
+            expect(!enReport.contains("[Work Phases]") && !enReport.contains("[Context Sources]"), "英文摘要也不得输出已移除阶段/来源块")
+            expect(enReport.contains("Input:") && enReport.contains("Output:") && enReport.contains("Cache:"), "英文摘要应展示 Input/Output/Cache Token")
         }
 
-        let slices = SessionDiagnosticsPolicy.donutSlices(values: [75.0, 25.0, 0.0])
-        expectEqual(slices.count, 2, "零值切片应被过滤，仅保留有效正值分片")
-        expectEqual(slices.first?.start ?? -1.0, 0.0, "首片起始角度应为 0.0")
-        expectEqual(slices.last?.end ?? -1.0, 1.0, "末片结束角度应严格闭合至 1.0")
-        expect(SessionDiagnosticsPolicy.donutSlices(values: [0.0, 0.0]).isEmpty, "全零数组应安全返回空切片且不除零")
+        expect(!SessionDiagnosticsInlineSection.showsTokenContextDistributionCard, "详情页必须移除 Token 与上下文分布卡片逻辑")
+
+        let childSub = SessionItem(
+            uuid: "child-tok-1",
+            shortId: "chld1",
+            agentName: "worker",
+            agentRole: "Worker",
+            title: "Sub",
+            isRunning: false,
+            interactions: 2,
+            inputTokens: 1000,
+            cacheTokens: 2000,
+            outputTokens: 500,
+            contextTokens: 3000,
+            cachePct: 66.7,
+            tps: 0,
+            totalTokensConsumed: 3500,
+            totalCostUsd: 0.01,
+            totalCacheConsumed: 2000,
+            totalInputConsumed: 1000,
+            totalOutputConsumed: 500,
+            currentStall: 0,
+            health: "🟢",
+            healthDesc: "",
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-3.8-flash",
+            subagents: [],
+            subagentCount: 0,
+            activeSubagentCount: 0,
+            activeSubagentTps: 0
+        )
+        let rootWithSub = SessionItem(
+            uuid: "root-tok-1",
+            shortId: "root1",
+            agentName: "",
+            agentRole: "",
+            title: "Root",
+            isRunning: false,
+            interactions: 5,
+            inputTokens: 5000,
+            cacheTokens: 10000,
+            outputTokens: 1500,
+            contextTokens: 15000,
+            cachePct: 66.7,
+            tps: 0,
+            totalTokensConsumed: 16500,
+            totalCostUsd: 0.05,
+            totalCacheConsumed: 10000,
+            totalInputConsumed: 5000,
+            totalOutputConsumed: 1500,
+            currentStall: 0,
+            health: "🟢",
+            healthDesc: "",
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-3.8-flash",
+            subagents: [childSub],
+            subagentCount: 1,
+            activeSubagentCount: 0,
+            activeSubagentTps: 0
+        )
+        let resolvedFromSession = SessionDiagnosticsPolicy.resolvedTokenBreakdown(session: rootWithSub, diagnostics: nil)
+        expectEqual(resolvedFromSession.inputTokens, 6000, "应聚合主会话与子 Agent 的累计 Input Token")
+        expectEqual(resolvedFromSession.outputTokens, 2000, "应聚合主会话与子 Agent 的累计 Output Token")
+        expectEqual(resolvedFromSession.cacheTokens, 12000, "应聚合主会话与子 Agent 的累计缓存 Token")
+
+        let zeroSession = SessionItem(
+            uuid: "zero-tok-1",
+            shortId: "zero1",
+            agentName: "",
+            agentRole: "",
+            title: "Fallback",
+            isRunning: false,
+            interactions: 0,
+            inputTokens: 0,
+            cacheTokens: 0,
+            outputTokens: 0,
+            contextTokens: 0,
+            cachePct: 0,
+            tps: 0,
+            totalTokensConsumed: 0,
+            totalCostUsd: 0,
+            totalCacheConsumed: 0,
+            totalInputConsumed: 0,
+            totalOutputConsumed: 0,
+            currentStall: 0,
+            health: "🟢",
+            healthDesc: "",
+            currentPhase: "",
+            currentAction: "",
+            recentError: nil,
+            historySteps: [],
+            exists: true,
+            model: "gemini-3.8-flash",
+            subagents: [],
+            subagentCount: 0,
+            activeSubagentCount: 0,
+            activeSubagentTps: 0
+        )
+        let resolvedFallback = SessionDiagnosticsPolicy.resolvedTokenBreakdown(session: zeroSession, diagnostics: payload)
+        expectEqual(resolvedFallback.inputTokens, 726984, "快照总量为 0 时应回退使用 diagnostics 的 inputTokens")
+        expectEqual(resolvedFallback.outputTokens, 71671, "快照总量为 0 时应回退使用 diagnostics 的 outputTokens")
+        expectEqual(resolvedFallback.cacheTokens, 11632229, "快照总量为 0 时应回退使用 diagnostics 的 cacheTokens")
 
         MainActor.assumeIsolated {
             let store = AGYHubStore(startMonitoring: false)
@@ -3348,17 +3463,6 @@ struct AGYHubTestsRunner {
             expect(!en.isEmpty, "L10nKey.\(key.rawValue) 英文不能为空")
             expect(!containsCJK(en), "L10nKey.\(key.rawValue) 英文翻译绝不能包含中文: \(en)")
             expect(!zh.contains("TODO") && !en.contains("TODO"), "L10nKey.\(key.rawValue) 不得包含未完成占位符")
-        }
-
-        let diagSources = [
-            "read_file 读取", "后台测试/E2E回传", "后台其他命令回传",
-            "同步测试/构建输出", "同步搜索/Git输出", "同步其他命令输出",
-            "edit/write 回执", "看板/子Agent协作", "其他系统提示",
-            "模型思考与输出", "模型思考/回复与参数", "用户输入", "报错信息"
-        ]
-        for raw in diagSources {
-            let enVal = L10n.localizeDiagnosticSource(raw, language: .en)
-            expect(!containsCJK(enVal), "诊断来源英文翻译残留中文 [\(raw)] -> \(enVal)")
         }
 
         expectEqual(L10n.localizeAgentLabel("主会话", language: .en), "Main", "主会话标签英文应为 Main")
@@ -4917,6 +5021,11 @@ for line in sys.stdin:
         expect(narrow.telemetryCardHorizontalPadding < wide.telemetryCardHorizontalPadding, "窄窗口图表卡片内边距应同步收窄")
         expect(narrow.telemetryPlotHorizontalPadding < wide.telemetryPlotHorizontalPadding, "窄窗口图表绘图区内边距应同步收窄")
         expect(narrow.totalChartEdgeInset <= 18.0, "窄窗口图表总左右留白应从原 33pt 显著压缩到 <= 18pt (actual=\(narrow.totalChartEdgeInset))")
+        expectEqual(wide.accountCardHorizontalPadding, wide.telemetryCardHorizontalPadding, "常规宽度下账号栏、实时监控卡与下方列表内容左起始基准线必须严格对齐")
+        expectEqual(wide.sectionHeaderHorizontalPadding, wide.telemetryCardHorizontalPadding, "SESSIONS 标题必须与上方实时监控卡片文字左对齐")
+        expectEqual(wide.sessionRowHorizontalPadding, wide.telemetryCardHorizontalPadding, "会话行起始基准必须与 SESSIONS 标题及上方卡片对齐")
+        expectEqual(narrow.accountCardHorizontalPadding, narrow.telemetryCardHorizontalPadding, "窄窗口下各卡片内容左起始基准也须保持严格对齐")
+        expectEqual(narrow.sectionHeaderHorizontalPadding, narrow.telemetryCardHorizontalPadding, "窄窗口下 SESSIONS 标题必须与上方卡片文字左对齐")
 
         let now = Date()
         let samples = [
@@ -5611,7 +5720,7 @@ for line in sys.stdin:
         expect(!DashboardFooterBarView.showsTodayPillInFooter, "底部栏应恢复为左时间戳 + 右设置按钮的纯净样式")
         expectEqual(TodayUsagePillButton.closedChevronSystemName, "chevron.down", "折叠态箭头应向下指示可展开今日账单明细")
         expectEqual(TodayUsagePillButton.openChevronSystemName, "chevron.up", "展开态箭头应向上指示可收起今日账单明细")
-        expect(TodayUsagePillButton.usesElevatedCrispSurface, "Today 用量胶囊在浅色底上应使用通透亮白卡片面而非灰扑扑的半透明灰底")
+        expect(!TodayUsagePillButton.usesElevatedCrispSurface, "重构后 Today 入口应收敛为扁平无阴影控件，避免与主界面账号栏抢焦点")
 
         let stats = TodayStats(
             totalTokens: 218_900_000,
@@ -5917,7 +6026,7 @@ for line in sys.stdin:
         MainActor.assumeIsolated { () -> Void in
             let store = AGYHubStore(startMonitoring: false, userDefaults: defaults)
             for lang in [AppLanguage.Resolved.zhHans, AppLanguage.Resolved.en] {
-                for width in [CGFloat(328), CGFloat(360)] {
+                for width in [CGFloat(328), CGFloat(360), CGFloat(432)] {
                     let view = SettingsPopoverView(store: store, onClose: {})
                         .environment(\.agyLanguage, lang)
                     let host = NSHostingView(rootView: view.frame(width: width))
@@ -6237,5 +6346,488 @@ for line in sys.stdin:
         expectEqual(fullWindowSamples.map(\.id), [1, 2], "KPI 累计窗口统计仍保留完整 3m(180s) 口径")
 
         expect(LiveTelemetryOverviewCardView.usesOneQuarterGrowingTimelinePage, "实时图表应启用从 1/4 向前生长至最右端后回落 1/4 的分页模式")
+    }
+
+    @MainActor
+    static func testQuotaSwitchRaceMismatchAndStartupExpectedStateIsolation() {
+        let home = makeTempHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+
+        let now = Date()
+        let aliceInitial = AccountQuotaSummary(
+            email: "alice@example.com",
+            isUltra: false,
+            geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.83, resetTime: now.addingTimeInterval(5 * 86400), resetTimeStr: nil),
+            argonQuota: nil,
+            geminiFiveHourQuota: WeeklyQuotaBucket(remainingFraction: 0.86, resetTime: now.addingTimeInterval(3600), resetTimeStr: nil),
+            lastFetched: now.addingTimeInterval(-600)
+        )
+        AccountQuotaManager.saveQuotaCache(["alice@example.com": aliceInitial], homeDir: home)
+
+        let bobQuotaJSON = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.46,"reset_time":"2099-01-08T00:00:00Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":1.0,"reset_time":"2099-01-01T05:00:00Z"}]}]}}}
+        """.data(using: .utf8)!
+
+        // 1) In-flight probe started for alice must NOT overwrite alice with bob's quota after switching to bob
+        let suite1 = "com.antigravity.agyhub.tests.quotarace1.\(UUID().uuidString)"
+        let defaults1 = UserDefaults(suiteName: suite1)!
+        defer { defaults1.removePersistentDomain(forName: suite1) }
+
+        let store1 = AGYHubStore(startMonitoring: false, userDefaults: defaults1, homeDir: home)
+        store1.profiles = [
+            AGYProfile(name: "alice@example.com", email: "alice@example.com", userDataDir: ""),
+            AGYProfile(name: "bob@example.com", email: "bob@example.com", userDataDir: "")
+        ]
+        store1.expectedAppEmail = "alice@example.com"
+        store1.appStorageEmail = "alice@example.com"
+        store1.isCLIIndependentMode = false
+        var slotActuallySwitched = false
+        store1.quotaProbeRunner = { _, _, _, _ in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            // Returns whatever is in the shared Keychain slot when the probe executes
+            if slotActuallySwitched {
+                return (0, bobQuotaJSON, Data())
+            }
+            return (0, bobQuotaJSON, Data())
+        }
+        store1.refreshQuotasIfNeeded(force: true)
+        slotActuallySwitched = true
+        store1.expectedAppEmail = "bob@example.com"
+        store1.appStorageEmail = "bob@example.com"
+        store1.refreshQuotasIfNeeded(force: true)
+
+        let deadline1 = Date().addingTimeInterval(2.5)
+        while !store1.fetchingQuotaEmails.isEmpty && Date() < deadline1 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        expectEqual(store1.accountQuotas["alice@example.com"]?.geminiQuota?.percentage, 83, "切到 bob 后在途的旧探测绝不能把 bob 的 46% 覆盖到被切走的 alice 上")
+        expectEqual(store1.accountQuotas["bob@example.com"]?.geminiQuota?.percentage, 46, "新切入的 bob 应正确更新为 46%")
+        store1.shutdownBackgroundWorkers()
+
+        // 2) Shared Keychain drift mismatch must NOT probe Keychain under expectedAppEmail
+        let suite2 = "com.antigravity.agyhub.tests.quotarace2.\(UUID().uuidString)"
+        let defaults2 = UserDefaults(suiteName: suite2)!
+        defer { defaults2.removePersistentDomain(forName: suite2) }
+
+        AccountQuotaManager.saveQuotaCache(["alice@example.com": aliceInitial], homeDir: home)
+        let store2 = AGYHubStore(startMonitoring: false, userDefaults: defaults2, homeDir: home)
+        store2.profiles = [
+            AGYProfile(name: "alice@example.com", email: "alice@example.com", userDataDir: ""),
+            AGYProfile(name: "bob@example.com", email: "bob@example.com", userDataDir: "")
+        ]
+        store2.expectedAppEmail = "alice@example.com"
+        store2.appStorageEmail = "alice@example.com"
+        store2.sharedKeychainResolution = CLIAccountManager.SharedKeychainResolution(
+            email: "bob@example.com",
+            source: .cliRefresh,
+            eventDate: now,
+            isTokenRefreshHijack: true
+        )
+        var driftProbeCount = 0
+        store2.quotaProbeRunner = { _, _, _, _ in
+            driftProbeCount += 1
+            return (0, bobQuotaJSON, Data())
+        }
+        store2.refreshQuotasIfNeeded(force: true)
+        let deadline2 = Date().addingTimeInterval(1.0)
+        while !store2.fetchingQuotaEmails.isEmpty && Date() < deadline2 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        expectEqual(driftProbeCount, 0, "检测到共享钥匙串错配 (Keychain 实际属于 bob 而预期为 alice) 时，绝不能向 alice 归属此次探针结果")
+        expectEqual(store2.accountQuotas["alice@example.com"]?.geminiQuota?.percentage, 83, "错配期间 alice 必须保持原有 83% 额度不被覆盖")
+        store2.shutdownBackgroundWorkers()
+
+        // 3) Startup loadProfiles must respect persisted app_expected.json over stale app_storage.json
+        let home3 = makeTempHome()
+        defer { try? FileManager.default.removeItem(atPath: home3) }
+        let staleAppStorage = "{\"agy.onboarding.lastLoginUsername\":\"alice@example.com\"}\n".data(using: .utf8)!
+        try? staleAppStorage.write(to: URL(fileURLWithPath: "\(home3)/Library/Application Support/Antigravity/app_storage.json"))
+        CLIAccountManager.writeExpectedAppStateFile(email: "bob@example.com", profilesRootDir: "\(home3)/.agy-profiles")
+
+        let suite3 = "com.antigravity.agyhub.tests.quotarace3.\(UUID().uuidString)"
+        let defaults3 = UserDefaults(suiteName: suite3)!
+        defer { defaults3.removePersistentDomain(forName: suite3) }
+        let store3 = AGYHubStore(startMonitoring: false, userDefaults: defaults3, homeDir: home3)
+        expectEqual(store3.expectedAppEmail, "bob@example.com", "启动同步加载配置时应优先采用已持久化的 app_expected.json (bob)，不能被过时的 app_storage.json (alice) 误导")
+        store3.shutdownBackgroundWorkers()
+    }
+
+    static func testLiveSlotOwnerVerificationBlocksCLIFallbackAndMidProbeSwap() {
+        let home = makeTempHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+
+        let bobQuotaJSON = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.37,"reset_time":"2099-01-08T00:00:00Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.91,"reset_time":"2099-01-01T05:00:00Z"}]}]}}}
+        """.data(using: .utf8)!
+
+        func makeCred(_ email: String) -> Data {
+            """
+            {"id_token_email":"\(email)","token":{"access_token":"tok-\(email)"}}
+            """.data(using: .utf8)!
+        }
+
+        // 1) .activeCLI owner verification must NEVER fall back to App's shared Keychain when CLI token file is missing
+        let sharedAlice = makeCred("alice@example.com")
+        expectEqual(
+            AccountQuotaManager.resolveLiveSlotOwnerEmail(
+                target: .activeApp,
+                homeDir: home,
+                readSharedCredential: { sharedAlice },
+                hasActiveSharedCredential: { true }
+            ),
+            "alice@example.com",
+            ".activeApp 应识别共享钥匙串实际邮箱"
+        )
+        expectEqual(
+            AccountQuotaManager.resolveLiveSlotOwnerEmail(
+                target: .activeCLI,
+                homeDir: home,
+                readSharedCredential: { sharedAlice },
+                hasActiveSharedCredential: { true }
+            ),
+            nil,
+            "CLI token 文件缺失时 .activeCLI 必须返回 nil，绝不能回退复用共享钥匙串邮箱"
+        )
+
+        // Write bob's healthy CLI token file -> .activeCLI should now resolve strictly to bob
+        let cliWritten = CLIAccountManager.writeCLITokenFile(makeCred("bob@example.com"), homeDir: home)
+        expect(cliWritten, "写入健康的 CLI token 文件应成功")
+        expectEqual(
+            AccountQuotaManager.resolveLiveSlotOwnerEmail(
+                target: .activeCLI,
+                homeDir: home,
+                readSharedCredential: { sharedAlice },
+                hasActiveSharedCredential: { true }
+            ),
+            "bob@example.com",
+            "存在健康 CLI token 文件时 .activeCLI 应只识别 token 文件所属邮箱 bob"
+        )
+
+        // 2) Pre-probe mismatch skips invoking CLI; mid-probe slot mutation discards output
+        var preCheckCalls = 0
+        var preMismatchResult: AccountQuotaManager.QuotaFetchResult = .failed
+        var midSwapOwner = "alice@example.com"
+        var midSwapResult: AccountQuotaManager.QuotaFetchResult = .failed
+        var cliMismatchResult: AccountQuotaManager.QuotaFetchResult = .failed
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            preMismatchResult = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeApp,
+                email: "alice@example.com",
+                tier: nil,
+                homeDir: home,
+                resolveSlotOwner: { _, _ in "bob@example.com" },
+                runCLI: { _, _ in
+                    preCheckCalls += 1
+                    return (0, bobQuotaJSON, Data())
+                }
+            )
+            midSwapResult = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeApp,
+                email: "alice@example.com",
+                tier: nil,
+                homeDir: home,
+                resolveSlotOwner: { _, _ in midSwapOwner },
+                runCLI: { _, _ in
+                    midSwapOwner = "bob@example.com"
+                    return (0, bobQuotaJSON, Data())
+                }
+            )
+            // Mismatched .activeCLI target requesting alice while token file belongs to bob
+            cliMismatchResult = await AccountQuotaManager.fetchActiveSlotQuota(
+                target: .activeCLI,
+                email: "alice@example.com",
+                tier: nil,
+                homeDir: home,
+                resolveSlotOwner: { slot, dir in
+                    AccountQuotaManager.resolveLiveSlotOwnerEmail(
+                        target: slot,
+                        homeDir: dir,
+                        readSharedCredential: { sharedAlice },
+                        hasActiveSharedCredential: { true }
+                    )
+                },
+                runCLI: { _, _ in
+                    return (0, bobQuotaJSON, Data())
+                }
+            )
+            sem.signal()
+        }
+        sem.wait()
+
+        expectEqual(preCheckCalls, 0, "探测前核验到真实槽位持有人与目标不符时，必须直接熔断且不得调用 CLI")
+        expectEqual(preMismatchResult, .slotMismatch, "探测前槽位归属不符必须返回 .slotMismatch")
+        expectEqual(midSwapResult, .slotMismatch, "CLI 执行期间槽位被切换为其他账号时，必须丢弃本次输出并返回 .slotMismatch")
+        expectEqual(cliMismatchResult, .slotMismatch, "CLI token 文件实际归属 bob 时，请求 alice 配额必须返回 .slotMismatch")
+
+        // 3) Store integration with quotaSlotOwnerResolver: preserves cached quota on .slotMismatch without marking expired
+        let aliceInitial = AccountQuotaSummary(
+            email: "alice@example.com",
+            isUltra: false,
+            geminiQuota: WeeklyQuotaBucket(remainingFraction: 0.83, resetTime: Date().addingTimeInterval(5 * 86400), resetTimeStr: nil),
+            argonQuota: nil,
+            lastFetched: Date().addingTimeInterval(-600)
+        )
+        AccountQuotaManager.saveQuotaCache(["alice@example.com": aliceInitial], homeDir: home)
+
+        let suite = "com.antigravity.agyhub.tests.slotmismatch.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        MainActor.assumeIsolated {
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults, homeDir: home)
+            store.profiles = [
+                AGYProfile(name: "alice@example.com", email: "alice@example.com", userDataDir: ""),
+                AGYProfile(name: "bob@example.com", email: "bob@example.com", userDataDir: "")
+            ]
+            store.expectedAppEmail = "alice@example.com"
+            store.appStorageEmail = "alice@example.com"
+            store.isCLIIndependentMode = false
+            var currentOwner = "alice@example.com"
+            store.quotaSlotOwnerResolver = { _, _ in currentOwner }
+            store.quotaProbeRunner = { _, _, _, _ in
+                currentOwner = "bob@example.com"
+                return (0, bobQuotaJSON, Data())
+            }
+            store.refreshQuotasIfNeeded(force: true)
+            let deadline = Date().addingTimeInterval(2.0)
+            while !store.fetchingQuotaEmails.isEmpty && Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            expectEqual(store.accountQuotas["alice@example.com"]?.geminiQuota?.percentage, 83, "槽位中途切换返回 .slotMismatch 时，alice 必须保持原缓存 83% 不被覆盖")
+            expect(!store.expiredQuotaEmails.contains("alice@example.com"), "因槽位保护放弃写入不得误将 alice 标记为配额过期")
+            store.shutdownBackgroundWorkers()
+        }
+    }
+
+    static func testSessionDetailTokenBarPolicySlicesAndEdgeCases() {
+        // 1) All-zero boundary: totalTokens == 0, zero sliver width
+        let empty = SessionDetailTokenBreakdown(inputTokens: 0, outputTokens: 0, cacheTokens: 0)
+        expectEqual(empty.totalTokens, 0, "全 0 明细的 totalTokens 必须为 0")
+        let emptySlices = SessionDetailTokenBarPolicy.computeSlices(breakdown: empty, totalWidth: 360)
+        expectEqual(emptySlices.count, 3, "应固定返回 Input/Output/Cache 3 类切片定义")
+        expect(emptySlices.allSatisfy { $0.width == 0 && $0.sharePct == 0 }, "全 0 态各分片宽度与占比必须为 0")
+
+        // 2) Single non-zero category: takes 100% full width without spacing loss
+        let inputOnly = SessionDetailTokenBreakdown(inputTokens: 250_000, outputTokens: 0, cacheTokens: 0)
+        let inputOnlySlices = SessionDetailTokenBarPolicy.computeSlices(breakdown: inputOnly, totalWidth: 300)
+        expectEqual(inputOnlySlices[0].category, .input, "首段应为 input")
+        expect(abs(inputOnlySlices[0].width - 300.0) < 0.01, "单段非零时必须铺满整个进度条宽度 (300pt)")
+        expectEqual(inputOnlySlices[1].width, 0, "Output 为 0 时宽度必须为 0")
+        expectEqual(inputOnlySlices[2].width, 0, "Cache 为 0 时宽度必须为 0")
+
+        // 3) Asymmetric realistic case (like 1.2M / 42k / 2.9M): tiny 1% Output still gets >= minSegmentWidth
+        let typical = SessionDetailTokenBreakdown(inputTokens: 1_200_000, outputTokens: 42_000, cacheTokens: 2_900_000)
+        expectEqual(typical.totalTokens, 4_142_000, "totalTokens 应精确求和 Input + Output + Cache")
+        let totalW: CGFloat = 400.0
+        let slices = SessionDetailTokenBarPolicy.computeSlices(breakdown: typical, totalWidth: totalW)
+        let activeSlices = slices.filter { $0.tokens > 0 }
+        expectEqual(activeSlices.count, 3, "三项均有消耗时应渲染 3 段")
+        expect(slices[1].width >= SessionDetailTokenBarPolicy.minNonZeroSegmentWidth, "仅有 ~1% 占比的 Output 段仍须保证最小可读宽度")
+        expect(slices[2].width > slices[0].width && slices[0].width > slices[1].width, "三段宽度应严格保持 Cache > Input > Output 的相对大小关系")
+        let summedWidth = slices.reduce(CGFloat(0)) { $0 + $1.width } + CGFloat(activeSlices.count - 1) * SessionDetailTokenBarPolicy.segmentSpacing
+        expect(abs(summedWidth - totalW) < 0.05, "所有分片宽度与间隙之和必须精确等于容器总宽 (\(summedWidth) vs \(totalW))")
+
+        // 4) Share formatting never displays "0%" for small positive usage
+        expectEqual(SessionDetailTokenBarPolicy.formatSharePct(0, tokens: 0), "0%", "0 token 时占比应显示 0%")
+        expectEqual(SessionDetailTokenBarPolicy.formatSharePct(0.04, tokens: 1200), "<0.1%", "极微非零消耗应显示 <0.1% 而非 0%")
+        expectEqual(SessionDetailTokenBarPolicy.formatSharePct(0.62, tokens: 25_000), "0.6%", "不足 1% 的非零消耗应保留一位小数")
+        expectEqual(SessionDetailTokenBarPolicy.formatSharePct(70.01, tokens: 2_900_000), "70%", "1% 及以上应取整显示百分比")
+
+        // 5) Dual-dimension breakdown (Cost vs Tokens)
+        let dual = SessionDetailTokenBreakdown(
+            inputTokens: 15_300_000,
+            outputTokens: 1_900_000,
+            cacheTokens: 308_400_000,
+            inputCostUsd: 22.95,
+            outputCostUsd: 14.25,
+            cacheCostUsd: 23.13
+        )
+        expect(abs(dual.totalCostUsd - 60.33) < 0.001, "totalCostUsd 应精确求和输入/输出/缓存费用")
+
+        let costSlices = SessionDetailTokenBarPolicy.computeSlices(breakdown: dual, totalWidth: 400, dimension: .cost)
+        let tokenSlices = SessionDetailTokenBarPolicy.computeSlices(breakdown: dual, totalWidth: 400, dimension: .tokens)
+        expect(costSlices[1].sharePct > 20.0 && tokenSlices[1].sharePct < 1.0, "Output 在 Token 维度不足 1%，但在账单维度应占 20% 以上")
+        expect(costSlices[1].width > tokenSlices[1].width * 4.0, "切换到账单维度时 Output 柱段应按费用真实比例大幅拉宽")
+        expect(tokenSlices[2].sharePct > 90.0 && costSlices[2].sharePct < 45.0, "缓存按 Token 占 95%，按账单占比应回落至 ~38%")
+
+        // 6) Fallback cost resolution when legacy session omits component cost fields
+        let rootLegacy = SessionItem(
+            uuid: "cost-fallback-root",
+            totalTokensConsumed: 325_600_000,
+            totalCostUsd: 60.33,
+            totalCacheConsumed: 308_400_000,
+            totalInputConsumed: 15_300_000,
+            totalOutputConsumed: 1_900_000,
+            model: "gemini-4-hydrogen"
+        )
+        let resolvedDual = SessionDiagnosticsPolicy.resolvedTokenBreakdown(session: rootLegacy, diagnostics: nil)
+        expect(abs(resolvedDual.totalCostUsd - 60.33) < 0.05, "无分项费用字段时应基于模型费率按总账单归一化推算三项费用")
+        expect(resolvedDual.outputCostUsd > 13.0 && resolvedDual.inputCostUsd > 22.0, "估算出的 Input 与 Output 费用应贴近真实定价比例")
+
+        // 7) Simplified bar view fits compact and regular widths cleanly
+        MainActor.assumeIsolated { () -> Void in
+            for width in [CGFloat(340), CGFloat(418)] {
+                let bar = SessionDetailTokenBarView(
+                    totalTokens: dual.totalTokens,
+                    breakdown: dual,
+                    embeddedInCard: true
+                )
+                let host = NSHostingView(rootView: bar.frame(width: width))
+                host.layoutSubtreeIfNeeded()
+                expect(host.fittingSize.width <= width + 0.5, "精简版 Token/账单构成条在 \(width)pt 宽内不得横向溢出 (actual=\(host.fittingSize.width))")
+            }
+        }
+    }
+
+    static func testRedesignThemeTokensBreadcrumbsAndUsageLegendPolicies() {
+        // 1) 3-tier corner radius & quiet chrome defaults
+        expectEqual(AgyTheme.Radius.micro, 4, "Micro 圆角应统一收敛为 4pt")
+        expectEqual(AgyTheme.Radius.control, 6, "Control 圆角应统一收敛为 6pt")
+        expectEqual(AgyTheme.Radius.container, 10, "Container 圆角应统一收敛为 10pt")
+
+        expect(MainDashboardView.shouldShowProfileManagerSection(isUsageOpen: false, selectedSessionUUID: nil), "主界面应展示账号栏")
+        expect(!MainDashboardView.shouldShowProfileManagerSection(isUsageOpen: true, selectedSessionUUID: nil), "每日统计页应隐藏账号栏")
+        expect(!MainDashboardView.shouldShowProfileManagerSection(isUsageOpen: false, selectedSessionUUID: "root-1"), "会话/子Agent详情页应统一隐藏账号栏")
+        expect(AccountSummaryCardView.usesCrispCardSurface, "账号栏应采用与实时监控卡一致的 L1 清爽白/深灰底面，避免灰底叠灰")
+        expect(SettingsPopoverView.fillsAvailableOverlayWidth, "设置弹窗必须铺满浮层可用宽度，避免左右留出大块空边")
+
+        expect(!SessionRowBadgePolicy.usesColoredRowBorderByDefault, "主界面会话行默认不得整行涂彩底/彩框")
+        expect(SessionDiagnosticsInlineSection.collapsesTopEventsByDefault, "诊断明细事件与优化建议默认应折叠为单行摘要")
+        expect(LiveTelemetryOverviewCardView.expandsOnFullHeaderTap, "实时监控收起/展开应紧贴标题并支持点击整行头部区域自动展开")
+        expect(SessionDetailCardView.subagentsCollapseByDefaultWhenIdle, "子 Agent 全部空闲时默认应自然收起，避免遮挡下方缓存诊断")
+        expect(AccountSummaryCardView.makesCapacityBadgeInteractiveButton, "左侧 5 小时额度区域应整体作为可点击交互按钮使用")
+        expect(AccountSummaryCardView.usesQuietNeutralSwitchButton, "切换按钮应降级为中性轻量控件，避免出现一排多个蓝色高饱和胶囊")
+        expect(AccountNameCapacityBadgeView.syncsPillFillWithProgressColor, "左侧 5 小时额度按钮背景填充与配色必须与剩余进度条同步")
+        expect(AccountNameCapacityBadgeView.usesFillOnlyWithoutBottomBar, "左侧 5 小时额度仅保留等比背景填充，不叠加底部深色横条")
+        expect(QuotaPillView.showsProportionalProgressFill, "右侧周度额度标签应同样具备等比进度填充与颜色提示，一眼可辨余额")
+        expect(QuotaPillView.usesSubduedSecondaryGauge, "周度额度标签应采用次级中性底面+底部独立进度条样式，突出左侧 5 小时主额度重心")
+        expect(QuotaPillView.usesBottomBarOnlyWithoutBodyFill, "右侧周度额度仅展示底部进度条，不铺整块背景填充")
+
+        expectEqual(QuotaVisualPolicy.clampedFraction(-0.1), 0.0, "负余量应夹紧为 0")
+        expectEqual(QuotaVisualPolicy.clampedFraction(1.3), 1.0, "超 100% 余量应夹紧为 1")
+        expectEqual(QuotaVisualPolicy.severity(for: 0.73), .healthy, "73% 应处于健康区间")
+        expectEqual(QuotaVisualPolicy.severity(for: 0.20), .caution, "20% 应处于橙色预警区间")
+        expectEqual(QuotaVisualPolicy.severity(for: 0.05), .critical, "5% 及以下应处于红色告急区间")
+        expect(QuotaVisualPolicy.secondaryGaugeColor(for: 0.60) != QuotaVisualPolicy.statusColor(for: 0.60, mode: .app), "周度次级进度条健康色应与左侧 5 小时主蓝色区分，避免同质化")
+        expectEqual(QuotaVisualPolicy.secondaryGaugeColor(for: 0.15), QuotaVisualPolicy.statusColor(for: 0.15, mode: .app), "低余量预警时次级进度条应同样切换为橙色告警")
+        expectEqual(QuotaVisualPolicy.secondaryGaugeColor(for: 0.03), QuotaVisualPolicy.statusColor(for: 0.03, mode: .app), "极低余量时次级进度条应同样切换为红色告急")
+
+        let idleSub1 = SessionItem(uuid: "sub-idle-1", isRunning: false)
+        let idleSub2 = SessionItem(uuid: "sub-idle-2", isRunning: false)
+        let idleParent = SessionItem(uuid: "p-idle", isRunning: false, subagents: [idleSub1, idleSub2], subagentCount: 2, activeSubagentCount: 0)
+        expect(SubagentCollapsePolicy.defaultIsCollapsed(for: idleParent), "无运行中子 Agent 时默认应自然收起")
+
+        let activeSub = SessionItem(uuid: "sub-run-1", isRunning: true, tps: 80)
+        let activeParent = SessionItem(uuid: "p-active", isRunning: false, subagents: [activeSub, idleSub1], subagentCount: 2, activeSubagentCount: 1)
+        expect(!SubagentCollapsePolicy.defaultIsCollapsed(for: activeParent), "有运行中子 Agent 时默认应保持展开以展示实时工作状态")
+
+        let manySubs = (1...10).map { SessionItem(uuid: "sub-\($0)", isRunning: $0 <= 1) }
+        expectEqual(SubagentCollapsePolicy.visibleSubagents(from: manySubs, showAll: false).count, SubagentCollapsePolicy.previewLimit, "展开过多子 Agent 时默认应先预览前 4 条")
+        expectEqual(SubagentCollapsePolicy.visibleSubagents(from: manySubs, showAll: true).count, 10, "点击显示全部后应展示全部 10 条子 Agent")
+
+        // 2) Breadcrumb navigation trail & jump-back on AGYHubStore
+        let leafSub = SessionItem(uuid: "leaf-1", agentRole: "Verifier", title: "Leaf Worker")
+        let midSub = SessionItem(uuid: "mid-1", agentRole: "Planner", title: "Mid Worker", subagents: [leafSub])
+        let rootSession = SessionItem(uuid: "root-1", title: "Main Task", subagents: [midSub])
+
+        let trailDepth0 = SessionNavigationPolicy.breadcrumbTrail(
+            stackUUIDs: [],
+            currentUUID: "root-1",
+            in: [rootSession],
+            language: .zhHans
+        )
+        expectEqual(trailDepth0.map { $0.title }, ["全部会话", "Main Task"], "1级详情页应显示 全部会话 > 主会话")
+
+        let trailDepth2 = SessionNavigationPolicy.breadcrumbTrail(
+            stackUUIDs: ["root-1", "mid-1"],
+            currentUUID: "leaf-1",
+            in: [rootSession],
+            language: .zhHans
+        )
+        expectEqual(trailDepth2.count, 4, "3级子Agent钻取应包含 全部会话 + root + mid + leaf 共 4 个面包屑节点")
+        expectEqual(trailDepth2.last?.uuid, "leaf-1", "末级节点应指向当前子Agent")
+
+        let suiteName = "com.antigravity.agyhub.tests.nav.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        MainActor.assumeIsolated { () -> Void in
+            let store = AGYHubStore(startMonitoring: false, userDefaults: defaults)
+            store.payload = MonitorPayload(
+                timestamp: "2026-11-28 20:20:00",
+                dataDir: "~/.gemini/antigravity",
+                activeCount: 1,
+                totalRoundtrips: 1,
+                hasAlert: false,
+                menubar: MenuBarSummary(icon: "🟢", text: "ok", statusLevel: "ok", activeCount: 1),
+                todayStats: .empty,
+                sessions: [rootSession]
+            )
+            store.openSessionDetail("root-1")
+            store.drillDownToSession("mid-1")
+            store.drillDownToSession("leaf-1")
+            expectEqual(store.selectedSessionUUID, "leaf-1", "逐层下钻后应停留在 leaf-1")
+            expectEqual(store.sessionNavigationStack, ["root-1", "mid-1"], "栈内应依次保存 root-1 与 mid-1")
+
+            store.navigateToBreadcrumb(uuid: "root-1")
+            expectEqual(store.selectedSessionUUID, "root-1", "点击面包屑祖先节点应直达跳回 root-1")
+            expectEqual(store.sessionNavigationStack, [], "跳回 root-1 后应截断后续导航栈")
+
+            store.drillDownToSession("mid-1")
+            store.popToRootSessionList()
+            expect(store.selectedSessionUUID == nil, "点击全部会话根面包屑应退出详情页返回主列表")
+            expect(store.sessionNavigationStack.isEmpty, "返回主列表时导航栈必须清空")
+            store.shutdownBackgroundWorkers()
+        }
+
+        // 3) Usage analytics top legend & peak bar summary helpers
+        let barA = UsageAnalyticsPolicy.BarPoint(
+            id: "10",
+            axisLabel: "10",
+            detailTitle: "今日 10:00",
+            costUsd: 1.2,
+            totalTokens: 1_000_000,
+            calls: 10,
+            models: [
+                UsageModelStat(model: "gemini-4-hydrogen", displayName: "Gemini 4 Hydrogen", costUsd: 1.2, totalTokens: 1_000_000, inputTokens: 200_000, cacheTokens: 700_000, outputTokens: 100_000, calls: 10)
+            ]
+        )
+        let barPeak = UsageAnalyticsPolicy.BarPoint(
+            id: "14",
+            axisLabel: "14",
+            detailTitle: "今日 14:00",
+            costUsd: 4.8,
+            totalTokens: 5_200_000,
+            calls: 32,
+            models: [
+                UsageModelStat(model: "claude-opus-4-6", displayName: "Claude Opus 4.6", costUsd: 4.8, totalTokens: 5_200_000, inputTokens: 1_000_000, cacheTokens: 4_000_000, outputTokens: 200_000, calls: 32)
+            ]
+        )
+        let modelsList: [UsageAnalyticsPolicy.ModelSummaryRow] = [
+            UsageAnalyticsPolicy.ModelSummaryRow(model: "gemini-4-hydrogen", displayName: "Gemini 4 Hydrogen", costUsd: 1.2, totalTokens: 1_000_000, inputTokens: 200_000, cacheTokens: 700_000, outputTokens: 100_000, calls: 10, costSharePct: 20, tokenSharePct: 16, cachePct: 77),
+            UsageAnalyticsPolicy.ModelSummaryRow(model: "claude-opus-4-6", displayName: "Claude Opus 4.6", costUsd: 4.8, totalTokens: 5_200_000, inputTokens: 1_000_000, cacheTokens: 4_000_000, outputTokens: 200_000, calls: 32, costSharePct: 80, tokenSharePct: 84, cachePct: 80),
+            UsageAnalyticsPolicy.ModelSummaryRow(model: "m3", displayName: "M3", costUsd: 0.5, totalTokens: 300_000, inputTokens: 100_000, cacheTokens: 150_000, outputTokens: 50_000, calls: 4, costSharePct: 5, tokenSharePct: 3, cachePct: 60),
+            UsageAnalyticsPolicy.ModelSummaryRow(model: "m4", displayName: "M4", costUsd: 0.2, totalTokens: 100_000, inputTokens: 40_000, cacheTokens: 50_000, outputTokens: 10_000, calls: 2, costSharePct: 2, tokenSharePct: 1, cachePct: 55),
+            UsageAnalyticsPolicy.ModelSummaryRow(model: "m5", displayName: "M5", costUsd: 0.1, totalTokens: 50_000, inputTokens: 20_000, cacheTokens: 20_000, outputTokens: 10_000, calls: 1, costSharePct: 1, tokenSharePct: 1, cachePct: 50),
+        ]
+        let mockSummary = UsageAnalyticsPolicy.RangeSummary(
+            range: .today,
+            totalCostUsd: 6.8,
+            totalTokens: 6_650_000,
+            inputTokens: 1_360_000,
+            cacheTokens: 4_920_000,
+            outputTokens: 370_000,
+            cachePct: 78,
+            totalCalls: 49,
+            bars: [barA, barPeak],
+            models: modelsList,
+            conversations: []
+        )
+
+        let legend = UsageAnalyticsPolicy.topLegendModels(from: mockSummary, by: .cost, maxCount: 4)
+        expectEqual(legend.count, 4, "图表图例最多应展示 4 个主模型")
+        expectEqual(legend.first?.model, "claude-opus-4-6", "图例排序应与当前指标一致，按费用时最高消费模型排第一")
+        let peakByCost = UsageAnalyticsPolicy.peakBar(in: mockSummary.bars, by: .cost)
+        expectEqual(peakByCost?.id, "14", "默认态应正确识别费用峰值柱 14")
+        expect(UsageAnalyticsPolicy.peakBar(in: [], by: .cost) == nil, "空柱列表峰值应返回 nil")
     }
 }

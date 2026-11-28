@@ -1715,6 +1715,7 @@ enum AccountQuotaManager {
         case success(AccountQuotaSummary)
         case authRequired
         case failed
+        case slotMismatch
     }
 
     static let minimumSupportedCLIVersion = CLISemVer(major: 1, minor: 1, patch: 11)
@@ -2161,24 +2162,83 @@ enum AccountQuotaManager {
 
     private static let officialProbeQueue = DispatchQueue(label: "com.antigravity.agyhub.usageprobe", qos: .utility)
 
+    /// 核验官方 CLI 在指定槽位下实际使用的凭证邮箱；`.activeCLI` 严格只认健康 token 文件，绝不隐式回退到系统共享钥匙串
+    static func resolveLiveSlotOwnerEmail(
+        target: QuotaSlotTarget,
+        homeDir: String,
+        readSharedCredential: () -> Data? = { CLIAccountManager.systemSharedCredential.read() },
+        hasActiveSharedCredential: () -> Bool = { CLIAccountManager.hasActiveCredential() }
+    ) -> String? {
+        switch target {
+        case .activeApp:
+            guard hasActiveSharedCredential(),
+                  let data = readSharedCredential(),
+                  let owner = CLIAccountManager.credentialEmail(data)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased(),
+                  owner.contains("@") else {
+                return nil
+            }
+            return owner
+        case .activeCLI:
+            guard CLIAccountManager.isCLITokenFileHealthy(homeDir: homeDir),
+                  let owner = CLIAccountManager.readCLITokenFileEmail(homeDir: homeDir)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased(),
+                  owner.contains("@") else {
+                return nil
+            }
+            return owner
+        }
+    }
+
     static func fetchActiveSlotQuota(
         target: QuotaSlotTarget,
         email: String,
         tier: String?,
         homeDir: String,
+        resolveSlotOwner: ((QuotaSlotTarget, String) -> String?)? = nil,
         runCLI: ((QuotaSlotTarget, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = nil
     ) async -> QuotaFetchResult {
+        let expectedKey = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let effectiveOwnerResolver: ((QuotaSlotTarget, String) -> String?)? = resolveSlotOwner ?? (
+            runCLI == nil
+                ? { probeSlot, probeHome in
+                    resolveLiveSlotOwnerEmail(target: probeSlot, homeDir: probeHome)
+                }
+                : nil
+        )
+
+        func slotOwnerMatches() -> Bool {
+            guard let ownerResolver = effectiveOwnerResolver else { return true }
+            let actual = ownerResolver(target, homeDir)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return actual == expectedKey
+        }
+
         let cliResult: (exitCode: Int32, stdout: Data, stderr: Data)
         if let customRunner = runCLI {
+            guard slotOwnerMatches() else { return .slotMismatch }
             cliResult = await customRunner(target, homeDir)
+            guard slotOwnerMatches() else { return .slotMismatch }
         } else {
             guard let agyPath = resolveOfficialAGYBinary(homeDir: homeDir) else {
                 return .failed
             }
-            cliResult = await withCheckedContinuation { continuation in
+            enum SyncProbeOutcome {
+                case executed(exitCode: Int32, stdout: Data, stderr: Data)
+                case unsupportedOrMissingBinary
+                case slotMismatch
+            }
+            let outcome = await withCheckedContinuation { continuation in
                 officialProbeQueue.async {
                     guard ensureSupportedCLIVersion(agyPath: agyPath, homeDir: homeDir) else {
-                        continuation.resume(returning: (-1, Data(), Data()))
+                        continuation.resume(returning: SyncProbeOutcome.unsupportedOrMissingBinary)
+                        return
+                    }
+                    guard slotOwnerMatches() else {
+                        continuation.resume(returning: SyncProbeOutcome.slotMismatch)
                         return
                     }
                     let env = buildUsageProbeEnvironment(target: target, homeDir: homeDir)
@@ -2188,8 +2248,20 @@ enum AccountQuotaManager {
                         environment: env,
                         timeoutSeconds: 25.0
                     )
-                    continuation.resume(returning: res)
+                    guard slotOwnerMatches() else {
+                        continuation.resume(returning: SyncProbeOutcome.slotMismatch)
+                        return
+                    }
+                    continuation.resume(returning: SyncProbeOutcome.executed(exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr))
                 }
+            }
+            switch outcome {
+            case .executed(let code, let out, let err):
+                cliResult = (code, out, err)
+            case .unsupportedOrMissingBinary:
+                return .failed
+            case .slotMismatch:
+                return .slotMismatch
             }
         }
 

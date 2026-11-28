@@ -1010,6 +1010,40 @@ class AgyMonitorUsageAnalyticsTests(unittest.TestCase):
         self.assertEqual(child_report["subagent_count"], 0)
         self.assertEqual(child_report["turns"], 2)
 
+    def test_inspect_session_outputs_component_costs_summing_to_total_cost(self) -> None:
+        cid = "c0000000-0000-0000-0000-000000000099"
+        _write_transcript(
+            self.brain_dir,
+            cid,
+            [
+                {
+                    "step_index": 0,
+                    "type": "PLANNER_RESPONSE",
+                    "created_at": "2026-11-28T12:00:00Z",
+                    "input_tokens": 2_000_000,
+                    "cache_read_tokens": 20_000_000,
+                    "output_tokens": 500_000,
+                }
+            ],
+        )
+        self._write_conv_models(cid, ["gemini-4-hydrogen"])
+
+        info = agy_monitor.inspect_session(
+            cid,
+            db_path=os.path.join(self.tmp.name, "nonexistent.db"),
+            brain_dir=self.brain_dir,
+            conversations_dir=self.conv_dir,
+        )
+        # gemini-4-hydrogen rates: input=$1.50/M, cache=$0.075/M, output=$7.50/M
+        self.assertAlmostEqual(info["total_input_cost_usd"], 3.00, places=4)
+        self.assertAlmostEqual(info["total_cache_cost_usd"], 1.50, places=4)
+        self.assertAlmostEqual(info["total_output_cost_usd"], 3.75, places=4)
+        self.assertAlmostEqual(
+            info["total_input_cost_usd"] + info["total_cache_cost_usd"] + info["total_output_cost_usd"],
+            info["total_cost_usd"],
+            places=4,
+        )
+
 class AgyMonitorPerfCacheAndDaemonTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="agy_mon_perf_")

@@ -225,34 +225,6 @@ struct SessionStep: Codable, Identifiable, Hashable {
     let summary: String
 }
 
-struct SessionPhaseStat: Codable, Identifiable, Hashable {
-    var id: String { name }
-    let name: String
-    let turns: Int
-    let tokens: Int
-    let inputTokens: Int
-    let cacheTokens: Int
-    let outputTokens: Int
-    let costUsd: Double
-    let pct: Double
-
-    enum CodingKeys: String, CodingKey {
-        case name, turns, tokens, pct
-        case inputTokens = "input_tokens"
-        case cacheTokens = "cache_tokens"
-        case outputTokens = "output_tokens"
-        case costUsd = "cost_usd"
-    }
-}
-
-struct SessionSourceStat: Codable, Identifiable, Hashable {
-    var id: String { name }
-    let name: String
-    let chars: Int
-    let count: Int
-    let pct: Double
-}
-
 struct CacheMissCauseStat: Codable, Identifiable, Hashable {
     var id: String { cause }
     let cause: String
@@ -306,13 +278,6 @@ struct CacheMissSummary: Codable, Hashable {
     }
 }
 
-struct SessionConsumerItem: Codable, Identifiable, Hashable {
-    var id: String { "\(category)-\(label)-\(chars)" }
-    let category: String
-    let label: String
-    let chars: Int
-}
-
 struct SessionDiagnosticsPayload: Codable, Hashable {
     let uuid: String
     let title: String
@@ -324,32 +289,213 @@ struct SessionDiagnosticsPayload: Codable, Hashable {
     let cacheTokens: Int
     let outputTokens: Int
     let totalCostUsd: Double
-    let totalChars: Int
-    let attributedPct: Double
-    let phases: [SessionPhaseStat]
-    let sources: [SessionSourceStat]
     let cacheMiss: CacheMissSummary
-    let topConsumers: [SessionConsumerItem]
-    let bloatHints: [String]?
     let recommendations: [String]
 
     enum CodingKeys: String, CodingKey {
-        case uuid, title, model, turns, phases, sources, recommendations
+        case uuid, title, model, turns, recommendations
         case subagentCount = "subagent_count"
         case totalTokens = "total_tokens"
         case inputTokens = "input_tokens"
         case cacheTokens = "cache_tokens"
         case outputTokens = "output_tokens"
         case totalCostUsd = "total_cost_usd"
-        case totalChars = "total_chars"
-        case attributedPct = "attributed_pct"
         case cacheMiss = "cache_miss"
-        case topConsumers = "top_consumers"
-        case bloatHints = "bloat_hints"
+    }
+}
+
+enum TokenBreakdownCategory: String, CaseIterable, Identifiable {
+    case input
+    case output
+    case cache
+
+    var id: String { rawValue }
+}
+
+/// 构成进度条展示维度：按账单费用 ($) 或按 Token 数量
+enum TokenBreakdownDimension: String, CaseIterable, Identifiable {
+    case cost
+    case tokens
+
+    var id: String { rawValue }
+}
+
+struct TokenBarSlice: Equatable, Identifiable {
+    let category: TokenBreakdownCategory
+    let tokens: Int
+    let costUsd: Double
+    let sharePct: Double
+    let width: CGFloat
+
+    var id: TokenBreakdownCategory { category }
+}
+
+struct SessionDetailTokenBreakdown: Equatable {
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheTokens: Int
+    let inputCostUsd: Double
+    let outputCostUsd: Double
+    let cacheCostUsd: Double
+
+    init(
+        inputTokens: Int,
+        outputTokens: Int,
+        cacheTokens: Int,
+        inputCostUsd: Double = 0.0,
+        outputCostUsd: Double = 0.0,
+        cacheCostUsd: Double = 0.0
+    ) {
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheTokens = cacheTokens
+        self.inputCostUsd = inputCostUsd
+        self.outputCostUsd = outputCostUsd
+        self.cacheCostUsd = cacheCostUsd
+    }
+
+    var totalTokens: Int {
+        max(0, inputTokens) + max(0, outputTokens) + max(0, cacheTokens)
+    }
+
+    var totalCostUsd: Double {
+        max(0.0, inputCostUsd) + max(0.0, outputCostUsd) + max(0.0, cacheCostUsd)
+    }
+}
+
+enum SessionDetailTokenBarPolicy {
+    static let barHeight: CGFloat = 7.0
+    static let segmentSpacing: CGFloat = 1.5
+    static let minNonZeroSegmentWidth: CGFloat = 6.0
+
+    /// 计算三段横向胶囊条的像素宽度，支持按 Token 数量或按账单费用切换，并保证极小非零段仍可读
+    static func computeSlices(
+        breakdown: SessionDetailTokenBreakdown,
+        totalWidth: CGFloat,
+        dimension: TokenBreakdownDimension = .tokens,
+        minSegmentWidth: CGFloat = minNonZeroSegmentWidth,
+        spacing: CGFloat = segmentSpacing
+    ) -> [TokenBarSlice] {
+        let tokenValues: [(TokenBreakdownCategory, Int, Double)] = [
+            (.input, max(0, breakdown.inputTokens), max(0.0, breakdown.inputCostUsd)),
+            (.output, max(0, breakdown.outputTokens), max(0.0, breakdown.outputCostUsd)),
+            (.cache, max(0, breakdown.cacheTokens), max(0.0, breakdown.cacheCostUsd))
+        ]
+        let weights: [Double] = tokenValues.map { _, tok, cost in
+            switch dimension {
+            case .tokens: return Double(tok)
+            case .cost: return cost > 0 ? cost : Double(tok) * 0.0 // 费用为 0 时保持 0
+            }
+        }
+        let sum = weights.reduce(0.0, +)
+        guard sum > 0 else {
+            return tokenValues.map { TokenBarSlice(category: $0.0, tokens: $0.1, costUsd: $0.2, sharePct: 0, width: 0) }
+        }
+
+        let activeCount = weights.filter { $0 > 0 }.count
+        let clampedTotal = max(0, totalWidth)
+        let gapsTotal = CGFloat(max(0, activeCount - 1)) * max(0, spacing)
+        let usableWidth = max(0, clampedTotal - gapsTotal)
+        let effectiveMin = activeCount > 0 ? min(max(0, minSegmentWidth), usableWidth / CGFloat(activeCount)) : 0
+        let extraPool = max(0, usableWidth - effectiveMin * CGFloat(activeCount))
+
+        return zip(tokenValues, weights).map { item, weight in
+            let (category, tokens, cost) = item
+            guard weight > 0 else {
+                return TokenBarSlice(category: category, tokens: tokens, costUsd: cost, sharePct: 0, width: 0)
+            }
+            let ratio = weight / sum
+            let width = effectiveMin + extraPool * CGFloat(ratio)
+            return TokenBarSlice(
+                category: category,
+                tokens: tokens,
+                costUsd: cost,
+                sharePct: ratio * 100.0,
+                width: width
+            )
+        }
+    }
+
+    static func formatSharePct(_ sharePct: Double, tokens: Int) -> String {
+        guard tokens > 0 && sharePct > 0 else { return "0%" }
+        if sharePct < 0.1 { return "<0.1%" }
+        if sharePct < 1.0 { return String(format: "%.1f%%", sharePct) }
+        return "\(Int(sharePct.rounded()))%"
     }
 }
 
 enum SessionDiagnosticsPolicy {
+    /// 与 agy-monitor.py 对齐的参考费率 ($/1M tokens)，供缺失分项成本的旧快照归一化估算
+    private static func estimatedRatesPerMillion(for model: String) -> (input: Double, cache: Double, output: Double) {
+        let lower = model.lowercased()
+        if lower.contains("hydrogen") { return (1.50, 0.075, 7.50) }
+        if lower.contains("neon") { return (3.00, 0.15, 15.00) }
+        if lower.contains("argon") || lower.contains("carbon") { return (2.00, 0.10, 10.00) }
+        if lower.contains("3.8-flash") || lower.contains("3.8_flash") { return (0.75, 0.075, 3.75) }
+        if lower.contains("claude") {
+            if lower.contains("5-5") || lower.contains("5.5") {
+                return lower.contains("opus") ? (4.00, 0.20, 20.00) : (2.00, 0.10, 10.00)
+            }
+            return lower.contains("opus") ? (5.00, 0.50, 25.00) : (3.00, 0.30, 15.00)
+        }
+        if lower.contains("gpt-oss") { return (0.09, 0.009, 0.36) }
+        if lower.contains("gpt-4") || lower.contains("o1") { return (2.50, 1.25, 10.00) }
+        if lower.contains("pro") || lower.contains("orchestrator") { return (1.25, 0.125, 10.00) }
+        return (0.30, 0.03, 2.50)
+    }
+
+    static func resolvedTokenBreakdown(
+        session: SessionItem,
+        diagnostics: SessionDiagnosticsPayload?
+    ) -> SessionDetailTokenBreakdown {
+        let inTok: Int
+        let outTok: Int
+        let cacheTok: Int
+        if session.aggregatedTotalTokensConsumed > 0 {
+            inTok = session.aggregatedTotalInputConsumed
+            outTok = session.aggregatedTotalOutputConsumed
+            cacheTok = session.aggregatedTotalCacheConsumed
+        } else if let diagnostics {
+            inTok = diagnostics.inputTokens
+            outTok = diagnostics.outputTokens
+            cacheTok = diagnostics.cacheTokens
+        } else {
+            return SessionDetailTokenBreakdown(inputTokens: 0, outputTokens: 0, cacheTokens: 0)
+        }
+
+        let explicitInCost = session.aggregatedInputCostUsd
+        let explicitOutCost = session.aggregatedOutputCostUsd
+        let explicitCacheCost = session.aggregatedCacheCostUsd
+        if explicitInCost + explicitOutCost + explicitCacheCost > 0 {
+            return SessionDetailTokenBreakdown(
+                inputTokens: inTok,
+                outputTokens: outTok,
+                cacheTokens: cacheTok,
+                inputCostUsd: explicitInCost,
+                outputCostUsd: explicitOutCost,
+                cacheCostUsd: explicitCacheCost
+            )
+        }
+
+        // 若是历史缓存或测试构造的数据未携带分项费用，按模型费率加权分配并对齐总预估账单
+        let rates = estimatedRatesPerMillion(for: session.model)
+        let rawIn = Double(max(0, inTok)) * rates.input / 1_000_000.0
+        let rawOut = Double(max(0, outTok)) * rates.output / 1_000_000.0
+        let rawCache = Double(max(0, cacheTok)) * rates.cache / 1_000_000.0
+        let rawSum = rawIn + rawOut + rawCache
+        let targetCost = session.aggregatedTotalCostUsd > 0 ? session.aggregatedTotalCostUsd : (diagnostics?.totalCostUsd ?? 0.0)
+        let scale = (rawSum > 0 && targetCost > 0) ? (targetCost / rawSum) : 1.0
+
+        return SessionDetailTokenBreakdown(
+            inputTokens: inTok,
+            outputTokens: outTok,
+            cacheTokens: cacheTok,
+            inputCostUsd: rawIn * scale,
+            outputCostUsd: rawOut * scale,
+            cacheCostUsd: rawCache * scale
+        )
+    }
+
     static func causeControlTag(_ cause: String, language: AppLanguage.Resolved = .zhHans) -> String {
         if cause.contains("报错") || cause.contains("重连") { return L10n.t(.diagTagPlatform, language) }
         if cause.contains("压缩") || cause.contains("重开") { return L10n.t(.diagTagNormal, language) }
@@ -359,31 +505,6 @@ enum SessionDiagnosticsPolicy {
     static func isOptimizableCause(_ cause: String) -> Bool {
         !(cause.contains("报错") || cause.contains("重连") || cause.contains("压缩") || cause.contains("重开"))
     }
-    static func phaseColor(_ name: String) -> Color {
-        switch name {
-        case "调研/检索":
-            return .blue
-        case "编码修改":
-            return .green
-        case "测试/构建/排错":
-            return .orange
-        case "调度/看板协作":
-            return .purple
-        default:
-            return .teal
-        }
-    }
-
-    static func sourceColor(_ name: String) -> Color {
-        if name.contains("read_file") { return .blue }
-        if name.contains("模型") { return .teal }
-        if name.contains("后台") { return .orange }
-        if name.contains("同步") { return .indigo }
-        if name.contains("看板") || name.contains("协作") { return .purple }
-        if name.contains("edit") { return .green }
-        if name.contains("报错") { return .red }
-        return .secondary
-    }
 
     static func causeColor(_ cause: String) -> Color {
         if cause.contains("报错") || cause.contains("重连") { return .red }
@@ -392,32 +513,20 @@ enum SessionDiagnosticsPolicy {
         return .blue
     }
 
-    static func formatChars(_ chars: Int, language: AppLanguage.Resolved = .zhHans) -> String {
-        let unit = language == .zhHans ? " 字符" : " chars"
-        if chars >= 1_000_000 {
-            return String(format: "%.1fM%@", Double(chars) / 1_000_000.0, unit)
-        }
-        if chars >= 1_000 {
-            return String(format: "%.1fK%@", Double(chars) / 1_000.0, unit)
-        }
-        return "\(chars)\(unit)"
-    }
-
-    static func compactChars(_ chars: Int) -> String {
-        if chars >= 1_000_000 {
-            return String(format: "%.1fM", Double(chars) / 1_000_000.0)
-        }
-        if chars >= 1_000 {
-            return String(format: "%.1fK", Double(chars) / 1_000.0)
-        }
-        return "\(chars)"
-    }
-
     static func formattedClipboardReport(_ d: SessionDiagnosticsPayload, language: AppLanguage.Resolved = .zhHans) -> String {
         var lines: [String] = []
         if language == .en {
             lines.append("[AGYHub Session Diagnostics] \(d.title) (\(String(d.uuid.prefix(8))))")
-            lines.append(String(format: "Model: %@ | Turns: %d | Total Tokens: %@ | Est. Cost: $%.2f", d.model, d.turns, Formatters.formatTokens(d.totalTokens), d.totalCostUsd))
+            lines.append(String(
+                format: "Model: %@ | Turns: %d | Total Tokens: %@ (Input: %@, Output: %@, Cache: %@) | Est. Cost: $%.2f",
+                d.model,
+                d.turns,
+                Formatters.formatTokens(d.totalTokens),
+                Formatters.formatTokens(d.inputTokens),
+                Formatters.formatTokens(d.outputTokens),
+                Formatters.formatTokens(d.cacheTokens),
+                d.totalCostUsd
+            ))
             lines.append(String(format: "Cache Misses: %d | Rebuilt %@ | Extra Cost $%.2f (%.1f%% of total)", d.cacheMiss.totalMisses, Formatters.formatTokens(d.cacheMiss.rebuiltTokens), d.cacheMiss.extraCostUsd, d.cacheMiss.wastePctOfTotal))
 
             if !d.cacheMiss.byCause.isEmpty {
@@ -425,22 +534,6 @@ enum SessionDiagnosticsPolicy {
                 for c in d.cacheMiss.byCause {
                     let causeLabel = L10n.localizeDiagnosticCause(c.cause, language: .en)
                     lines.append(String(format: "- %@: %d misses, rebuilt %@, extra $%.2f", causeLabel, c.count, Formatters.formatTokens(c.rebuiltTokens), c.extraCostUsd))
-                }
-            }
-
-            if !d.phases.isEmpty {
-                lines.append("\n[Work Phases]")
-                for p in d.phases {
-                    let phaseLabel = L10n.localizeDiagnosticPhase(p.name, language: .en)
-                    lines.append(String(format: "- %@: %.1f%% (%d turns, %@, $%.2f)", phaseLabel, p.pct, p.turns, Formatters.formatTokens(p.tokens), p.costUsd))
-                }
-            }
-
-            if !d.sources.isEmpty {
-                lines.append(String(format: "\n[Context Sources (%.1f%% attributed)]", d.attributedPct))
-                for s in d.sources.prefix(6) {
-                    let srcLabel = L10n.localizeDiagnosticSource(s.name, language: .en)
-                    lines.append(String(format: "- %@: %.1f%% (%@, %d calls)", srcLabel, s.pct, formatChars(s.chars, language: .en), s.count))
                 }
             }
 
@@ -454,27 +547,22 @@ enum SessionDiagnosticsPolicy {
         }
 
         lines.append("【AGYHub 会话消耗诊断】\(d.title) (\(String(d.uuid.prefix(8))))")
-        lines.append(String(format: "模型: %@ | 轮次: %d | 总 Token: %@ | 总花费: $%.2f", d.model, d.turns, Formatters.formatTokens(d.totalTokens), d.totalCostUsd))
+        lines.append(String(
+            format: "模型: %@ | 轮次: %d | 总 Token: %@ (Input: %@, Output: %@, 缓存 Token: %@) | 总花费: $%.2f",
+            d.model,
+            d.turns,
+            Formatters.formatTokens(d.totalTokens),
+            Formatters.formatTokens(d.inputTokens),
+            Formatters.formatTokens(d.outputTokens),
+            Formatters.formatTokens(d.cacheTokens),
+            d.totalCostUsd
+        ))
         lines.append(String(format: "缓存失效: %d 次 | 重算 %@ | 多花 $%.2f (占总费用 %.1f%%)", d.cacheMiss.totalMisses, Formatters.formatTokens(d.cacheMiss.rebuiltTokens), d.cacheMiss.extraCostUsd, d.cacheMiss.wastePctOfTotal))
 
         if !d.cacheMiss.byCause.isEmpty {
             lines.append("\n[缓存失效根因]")
             for c in d.cacheMiss.byCause {
                 lines.append(String(format: "- %@: %d 次, 重算 %@, 多花 $%.2f", c.cause, c.count, Formatters.formatTokens(c.rebuiltTokens), c.extraCostUsd))
-            }
-        }
-
-        if !d.phases.isEmpty {
-            lines.append("\n[工作阶段占比]")
-            for p in d.phases {
-                lines.append(String(format: "- %@: %.1f%% (%d 轮, %@, $%.2f)", p.name, p.pct, p.turns, Formatters.formatTokens(p.tokens), p.costUsd))
-            }
-        }
-
-        if !d.sources.isEmpty {
-            lines.append(String(format: "\n[上下文来源构成 (归因率 %.1f%%)]", d.attributedPct))
-            for s in d.sources.prefix(6) {
-                lines.append(String(format: "- %@: %.1f%% (%@, %d 次)", s.name, s.pct, formatChars(s.chars, language: .zhHans), s.count))
             }
         }
 
@@ -485,27 +573,6 @@ enum SessionDiagnosticsPolicy {
             }
         }
         return lines.joined(separator: "\n")
-    }
-
-    struct DonutSlice: Identifiable, Hashable {
-        let id: Int
-        let start: Double
-        let end: Double
-    }
-
-    static func donutSlices(values: [Double]) -> [DonutSlice] {
-        let positives = values.enumerated().filter { $0.element > 0 }
-        let total = positives.reduce(0.0) { $0 + $1.element }
-        guard total > 0 else { return [] }
-
-        var result: [DonutSlice] = []
-        var cursor = 0.0
-        for (pos, item) in positives.enumerated() {
-            let next = (pos == positives.count - 1) ? 1.0 : min(1.0, cursor + item.element / total)
-            result.append(DonutSlice(id: item.offset, start: cursor, end: next))
-            cursor = next
-        }
-        return result
     }
 }
 
@@ -529,6 +596,9 @@ struct SessionItem: Codable, Identifiable, Hashable {
     let tps: Double
     let totalTokensConsumed: Int
     let totalCostUsd: Double
+    let totalInputCostUsd: Double
+    let totalOutputCostUsd: Double
+    let totalCacheCostUsd: Double
     let totalCacheConsumed: Int
     let totalInputConsumed: Int
     let totalOutputConsumed: Int
@@ -574,6 +644,9 @@ struct SessionItem: Codable, Identifiable, Hashable {
         case tps
         case totalTokensConsumed = "total_tokens_consumed"
         case totalCostUsd = "total_cost_usd"
+        case totalInputCostUsd = "total_input_cost_usd"
+        case totalOutputCostUsd = "total_output_cost_usd"
+        case totalCacheCostUsd = "total_cache_cost_usd"
         case totalCacheConsumed = "total_cache_consumed"
         case totalInputConsumed = "total_input_consumed"
         case totalOutputConsumed = "total_output_consumed"
@@ -623,6 +696,9 @@ struct SessionItem: Codable, Identifiable, Hashable {
         self.tps = try c.decodeIfPresent(Double.self, forKey: .tps) ?? 0.0
         self.totalTokensConsumed = try c.decodeIfPresent(Int.self, forKey: .totalTokensConsumed) ?? 0
         self.totalCostUsd = try c.decodeIfPresent(Double.self, forKey: .totalCostUsd) ?? 0.0
+        self.totalInputCostUsd = try c.decodeIfPresent(Double.self, forKey: .totalInputCostUsd) ?? 0.0
+        self.totalOutputCostUsd = try c.decodeIfPresent(Double.self, forKey: .totalOutputCostUsd) ?? 0.0
+        self.totalCacheCostUsd = try c.decodeIfPresent(Double.self, forKey: .totalCacheCostUsd) ?? 0.0
         self.totalCacheConsumed = try c.decodeIfPresent(Int.self, forKey: .totalCacheConsumed) ?? 0
         self.totalInputConsumed = try c.decodeIfPresent(Int.self, forKey: .totalInputConsumed) ?? 0
         self.totalOutputConsumed = try c.decodeIfPresent(Int.self, forKey: .totalOutputConsumed) ?? 0
@@ -676,6 +752,18 @@ struct SessionItem: Codable, Identifiable, Hashable {
 
     var aggregatedTotalCostUsd: Double {
         totalCostUsd + subagents.reduce(0.0) { $0 + $1.aggregatedTotalCostUsd }
+    }
+
+    var aggregatedInputCostUsd: Double {
+        totalInputCostUsd + subagents.reduce(0.0) { $0 + $1.aggregatedInputCostUsd }
+    }
+
+    var aggregatedOutputCostUsd: Double {
+        totalOutputCostUsd + subagents.reduce(0.0) { $0 + $1.aggregatedOutputCostUsd }
+    }
+
+    var aggregatedCacheCostUsd: Double {
+        totalCacheCostUsd + subagents.reduce(0.0) { $0 + $1.aggregatedCacheCostUsd }
     }
 
     var aggregatedTotalCacheConsumed: Int {
@@ -742,6 +830,9 @@ struct SessionItem: Codable, Identifiable, Hashable {
         tps: Double = 0.0,
         totalTokensConsumed: Int = 0,
         totalCostUsd: Double = 0.0,
+        totalInputCostUsd: Double = 0.0,
+        totalOutputCostUsd: Double = 0.0,
+        totalCacheCostUsd: Double = 0.0,
         totalCacheConsumed: Int = 0,
         totalInputConsumed: Int = 0,
         totalOutputConsumed: Int = 0,
@@ -786,6 +877,9 @@ struct SessionItem: Codable, Identifiable, Hashable {
         self.tps = tps
         self.totalTokensConsumed = totalTokensConsumed
         self.totalCostUsd = totalCostUsd
+        self.totalInputCostUsd = totalInputCostUsd
+        self.totalOutputCostUsd = totalOutputCostUsd
+        self.totalCacheCostUsd = totalCacheCostUsd
         self.totalCacheConsumed = totalCacheConsumed
         self.totalInputConsumed = totalInputConsumed
         self.totalOutputConsumed = totalOutputConsumed
@@ -840,6 +934,15 @@ enum UsageRangeOption: String, CaseIterable, Identifiable, Equatable {
         case .last30Days: return L10n.t(.usageHeader30Days, lang)
         }
     }
+
+    /// 顶栏紧凑分段器文案，确保在 464pt 窄窗下与指标开关并排不换行
+    func compactTitle(for lang: AppLanguage.Resolved) -> String {
+        switch self {
+        case .today: return L10n.t(.usageCompactToday, lang)
+        case .last7Days: return L10n.t(.usageCompact7D, lang)
+        case .last30Days: return L10n.t(.usageCompact30D, lang)
+        }
+    }
 }
 
 enum UsageMetricMode: String, CaseIterable, Identifiable, Equatable {
@@ -854,6 +957,14 @@ enum UsageMetricMode: String, CaseIterable, Identifiable, Equatable {
         switch self {
         case .cost: return L10n.t(.usageMetricCost, lang)
         case .tokens: return L10n.t(.usageMetricTokens, lang)
+        }
+    }
+
+    /// 顶栏紧凑切换文案
+    func compactTitle(for lang: AppLanguage.Resolved) -> String {
+        switch self {
+        case .cost: return L10n.t(.usageMetricCompactCost, lang)
+        case .tokens: return L10n.t(.usageMetricCompactTokens, lang)
         }
     }
 }
@@ -1280,7 +1391,12 @@ enum UsageAnalyticsPolicy {
     static func sortedModels(_ models: [ModelSummaryRow], by metric: UsageMetricMode) -> [ModelSummaryRow] {
         switch metric {
         case .cost:
-            return models
+            return models.sorted {
+                if $0.costUsd != $1.costUsd {
+                    return $0.costUsd > $1.costUsd
+                }
+                return $0.totalTokens > $1.totalTokens
+            }
         case .tokens:
             return models.sorted {
                 if $0.totalTokens != $1.totalTokens {
@@ -1362,6 +1478,122 @@ enum UsageAnalyticsPolicy {
             return Color(red: 0.52, green: 0.44, blue: 0.82)
         }
         return Color.secondary.opacity(0.65)
+    }
+
+    /// 提取当前周期与当前指标下排序靠前的主模型图例项（最多 maxCount 条）
+    static func topLegendModels(
+        from summary: RangeSummary,
+        by metric: UsageMetricMode,
+        maxCount: Int = 4
+    ) -> [ModelSummaryRow] {
+        guard maxCount > 0 else { return [] }
+        return Array(
+            sortedModels(summary.models, by: metric)
+                .filter { metric == .cost ? $0.costUsd > 0 : $0.totalTokens > 0 }
+                .prefix(maxCount)
+        )
+    }
+
+    /// 提取当前周期内的消耗峰值柱（全 0 态返回 nil）
+    static func peakBar(in bars: [BarPoint], by metric: UsageMetricMode) -> BarPoint? {
+        let nonZero = bars.filter { metric == .cost ? $0.costUsd > 0 : $0.totalTokens > 0 }
+        return nonZero.max { lhs, rhs in
+            switch metric {
+            case .cost:
+                return lhs.costUsd < rhs.costUsd
+            case .tokens:
+                return lhs.totalTokens < rhs.totalTokens
+            }
+        }
+    }
+}
+
+/// 会话与子 Agent 详情页的面包屑节点模型
+struct SessionBreadcrumbItem: Identifiable, Equatable {
+    let id: String
+    let uuid: String?
+    let title: String
+    let isCurrent: Bool
+}
+
+/// 会话多级下钻导航路径构造策略
+enum SessionNavigationPolicy {
+    /// 根据导航栈与当前选中 UUID 拼装完整面包屑列表（[全部会话, 祖先..., 当前会话]）
+    static func breadcrumbTrail(
+        stackUUIDs: [String],
+        currentUUID: String?,
+        in sessions: [SessionItem],
+        language: AppLanguage.Resolved
+    ) -> [SessionBreadcrumbItem] {
+        var items: [SessionBreadcrumbItem] = [
+            SessionBreadcrumbItem(
+                id: "__root__",
+                uuid: nil,
+                title: L10n.t(.breadcrumbAllSessions, language),
+                isCurrent: currentUUID == nil
+            )
+        ]
+
+        var pathUUIDs: [String] = []
+        for uuid in stackUUIDs where !pathUUIDs.contains(uuid) {
+            pathUUIDs.append(uuid)
+        }
+        if let currentUUID, !currentUUID.isEmpty, !pathUUIDs.contains(currentUUID) {
+            pathUUIDs.append(currentUUID)
+        }
+
+        for (idx, uuid) in pathUUIDs.enumerated() {
+            let isLast = (idx == pathUUIDs.count - 1)
+            let title = resolvedBreadcrumbTitle(for: uuid, in: sessions, language: language)
+            items.append(
+                SessionBreadcrumbItem(
+                    id: uuid,
+                    uuid: uuid,
+                    title: title,
+                    isCurrent: isLast
+                )
+            )
+        }
+        return items
+    }
+
+    private static func resolvedBreadcrumbTitle(
+        for uuid: String,
+        in sessions: [SessionItem],
+        language: AppLanguage.Resolved
+    ) -> String {
+        guard let item = SessionLookup.findSession(uuid: uuid, in: sessions) else {
+            return String(uuid.prefix(8))
+        }
+        let cleaned = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty {
+            return cleaned
+        }
+        if !item.agentRole.isEmpty {
+            return item.agentRole
+        }
+        if !item.agentName.isEmpty {
+            return item.agentName
+        }
+        return language == .zhHans ? "会话 \(item.shortId)" : "Session \(item.shortId)"
+    }
+}
+
+/// 详情页子 Agent 列表的自然收起与预览条数策略
+enum SubagentCollapsePolicy {
+    static let previewLimit = 4
+
+    /// 所有子 Agent 均已待命/完成时默认自然收起，避免推走下方缓存诊断卡片；有运行中则默认展开
+    static func defaultIsCollapsed(for session: SessionItem) -> Bool {
+        session.effectiveActiveSubagentCount == 0
+    }
+
+    /// 展开状态下优先预览前 previewLimit 条，点击“展开全部”后再完整展示
+    static func visibleSubagents(from sortedSubagents: [SessionItem], showAll: Bool) -> [SessionItem] {
+        if showAll || sortedSubagents.count <= previewLimit {
+            return sortedSubagents
+        }
+        return Array(sortedSubagents.prefix(previewLimit))
     }
 }
 
@@ -3238,9 +3470,9 @@ struct DashboardAdaptiveLayoutMetrics: Equatable {
                 footerHorizontalPadding: 8,
                 telemetryCardHorizontalPadding: 6,
                 telemetryPlotHorizontalPadding: 4,
-                accountCardHorizontalPadding: 5,
-                sessionRowHorizontalPadding: 4,
-                sectionHeaderHorizontalPadding: 0
+                accountCardHorizontalPadding: 6,
+                sessionRowHorizontalPadding: 6,
+                sectionHeaderHorizontalPadding: 6
             )
         }
         return DashboardAdaptiveLayoutMetrics(
@@ -3249,9 +3481,9 @@ struct DashboardAdaptiveLayoutMetrics: Equatable {
             footerHorizontalPadding: 12,
             telemetryCardHorizontalPadding: 9,
             telemetryPlotHorizontalPadding: 6,
-            accountCardHorizontalPadding: 6,
-            sessionRowHorizontalPadding: 7,
-            sectionHeaderHorizontalPadding: 2
+            accountCardHorizontalPadding: 9,
+            sessionRowHorizontalPadding: 9,
+            sectionHeaderHorizontalPadding: 9
         )
     }
 }

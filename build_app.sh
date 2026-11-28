@@ -5,13 +5,13 @@ set -euo pipefail
 SYNC_TOOLS=false
 UNIVERSAL=false
 BUILD_DMG=false
-APP_VERSION="1.0.0"
+APP_VERSION="1.1.0"
 
 usage() {
     echo "用法: ./build_app.sh [选项]"
     echo "  --universal        编译 Apple Silicon + Intel 双架构 Universal Binary"
     echo "  --dmg              打包 .dmg 与 .zip 发布安装包到 dist/ 目录（含 SHA256 校验和）"
-    echo "  --version <ver>    指定版本号（默认: 1.0.0，如 1.2.0）"
+    echo "  --version <ver>    指定版本号（默认: 1.1.0，如 1.2.0）"
     echo "  --sync-tools       构建完成后同步覆盖 ~/.gemini/config/tools/agy-monitor.py"
     echo "  -h, --help         显示帮助信息"
 }

@@ -614,6 +614,9 @@ def _parse_session_transcript_static(
     tot_err = 0.0
     tot_consumed = 0
     tot_cost_usd = 0.0
+    tot_input_cost_usd = 0.0
+    tot_output_cost_usd = 0.0
+    tot_cache_cost_usd = 0.0
     tot_cache_consumed = 0
     tot_input_consumed = 0
     tot_output_consumed = 0
@@ -639,7 +642,14 @@ def _parse_session_transcript_static(
             tot_cache_consumed += cache_t
             tot_input_consumed += in_t
             tot_output_consumed += out_t
-            tot_cost_usd += calculate_step_cost(session_model, in_t, cache_t, out_t, now=now_dt)
+            price_in, price_cache, price_out = _resolve_model_rates(session_model, in_t + cache_t, now=now_dt)
+            in_c = (in_t * price_in) / 1_000_000.0
+            cache_c = (cache_t * price_cache) / 1_000_000.0
+            out_c = (out_t * price_out) / 1_000_000.0
+            tot_input_cost_usd += in_c
+            tot_cache_cost_usd += cache_c
+            tot_output_cost_usd += out_c
+            tot_cost_usd += in_c + cache_c + out_c
 
         if i == 0:
             continue
@@ -795,6 +805,9 @@ def _parse_session_transcript_static(
         "tps": tps,
         "total_tokens_consumed": tot_consumed,
         "total_cost_usd": round(tot_cost_usd, 6),
+        "total_input_cost_usd": round(tot_input_cost_usd, 6),
+        "total_output_cost_usd": round(tot_output_cost_usd, 6),
+        "total_cache_cost_usd": round(tot_cache_cost_usd, 6),
         "total_cache_consumed": tot_cache_consumed,
         "total_input_consumed": tot_input_consumed,
         "total_output_consumed": tot_output_consumed,
@@ -844,6 +857,13 @@ def _apply_dynamic_session_fields(res: dict, static_data: dict, brief: bool, now
         "compact_time_str",
     ):
         res[k] = static_data[k]
+
+    for k in (
+        "total_input_cost_usd",
+        "total_output_cost_usd",
+        "total_cache_cost_usd",
+    ):
+        res[k] = static_data.get(k, 0.0)
 
     if static_data.get("uses_stall"):
         last_ts = static_data.get("last_step_created_at") or ""
@@ -940,6 +960,9 @@ def inspect_session(
         "tps": 0.0,
         "total_tokens_consumed": 0,
         "total_cost_usd": 0.0,
+        "total_input_cost_usd": 0.0,
+        "total_output_cost_usd": 0.0,
+        "total_cache_cost_usd": 0.0,
         "total_cache_consumed": 0,
         "total_input_consumed": 0,
         "total_output_consumed": 0,

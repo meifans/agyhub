@@ -39,7 +39,7 @@
     <td align="center" width="50%">
       <img src="./assets/screenshot-detail.png" alt="Session Detail — Running Subagents, Context Breakdown & Cache Miss Diagnostics" width="100%" />
       <br />
-      <em>Running subagent speed, context source attribution donut &amp; cache-miss cost diagnostics.</em>
+      <em>Running subagent speed, Cost / Tokens breakdown bar &amp; cache-miss cost diagnostics.</em>
     </td>
     <td align="center" width="50%">
       <img src="./assets/screenshot-usage.png" alt="7-Day Usage Analytics — Daily Trend & Model Cost Breakdown" width="100%" />

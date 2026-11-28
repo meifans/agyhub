@@ -962,10 +962,15 @@ final class AGYHubStore: ObservableObject {
     private var lastQuotaFetchTimes: [String: Date] = [:]
     private var lastQuotaFailureTimes: [String: Date] = [:]
     private(set) var fetchingQuotaEmails: Set<String> = []
+    private var fetchingQuotaTokens: [String: (token: UUID, slot: AccountQuotaManager.QuotaSlotTarget, epoch: UInt64)] = [:]
+    private var appQuotaEpoch: UInt64 = 0
+    private var cliQuotaEpoch: UInt64 = 0
     var quotaProbeRunner: ((AccountQuotaManager.QuotaSlotTarget, String, String?, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = nil
+    var quotaSlotOwnerResolver: ((AccountQuotaManager.QuotaSlotTarget, String) -> String?)? = nil
     private var observedActiveAppEmail: String? = nil
     private var observedActiveCLIEmail: String? = nil
     private var isAppSwitchInProgress: Bool = false
+    private var isCLISwitchInProgress: Bool = false
     private var lastFSEventFetchAt: Date? = nil
     private var lastCLIStateRefreshAt: Date? = nil
 
@@ -1025,12 +1030,27 @@ final class AGYHubStore: ObservableObject {
         }
     }
 
+    private func quotaEpoch(for slot: AccountQuotaManager.QuotaSlotTarget) -> UInt64 {
+        switch slot {
+        case .activeApp: return appQuotaEpoch
+        case .activeCLI: return cliQuotaEpoch
+        }
+    }
+
+    private func isSlotSwitchInProgress(for slot: AccountQuotaManager.QuotaSlotTarget) -> Bool {
+        switch slot {
+        case .activeApp: return isAppSwitchInProgress
+        case .activeCLI: return isCLISwitchInProgress
+        }
+    }
+
     func refreshQuotasIfNeeded(force: Bool = false) {
         let hDir = homeDir
         let activeApp = resolvedExpectedAppEmail
         let activeCLI = activeCLIProfileName
         let cliIndependent = isCLIIndependentMode
         let customProbeRunner = quotaProbeRunner
+        let customOwnerResolver = quotaSlotOwnerResolver
 
         let targets = AccountQuotaManager.resolveActiveQuotaTargets(
             profiles: profiles,
@@ -1041,6 +1061,13 @@ final class AGYHubStore: ObservableObject {
 
         for target in targets {
             let email = target.email
+            let slot = target.slot
+            if isSlotSwitchInProgress(for: slot) {
+                continue
+            }
+            if slot == .activeApp && hasSharedKeychainMismatch {
+                continue
+            }
             guard AccountQuotaManager.shouldAttemptQuotaFetch(
                 lastSuccess: lastQuotaFetchTimes[email],
                 lastFailure: lastQuotaFailureTimes[email],
@@ -1048,11 +1075,17 @@ final class AGYHubStore: ObservableObject {
             ) else {
                 continue
             }
-            guard !fetchingQuotaEmails.contains(email) else { continue }
+            let currentEpoch = quotaEpoch(for: slot)
+            if let existingToken = fetchingQuotaTokens[email],
+               existingToken.slot == slot && existingToken.epoch == currentEpoch {
+                continue
+            }
+
+            let probeToken = UUID()
+            fetchingQuotaTokens[email] = (token: probeToken, slot: slot, epoch: currentEpoch)
             fetchingQuotaEmails.insert(email)
 
             let tier = target.tier
-            let slot = target.slot
 
             Task.detached(priority: .utility) { [weak self] in
                 let cliRunner: ((AccountQuotaManager.QuotaSlotTarget, String) async -> (exitCode: Int32, stdout: Data, stderr: Data))? = customProbeRunner.map { runner in
@@ -1065,11 +1098,31 @@ final class AGYHubStore: ObservableObject {
                     email: email,
                     tier: tier,
                     homeDir: hDir,
+                    resolveSlotOwner: customOwnerResolver,
                     runCLI: cliRunner
                 )
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
-                    self.fetchingQuotaEmails.remove(email)
+                    if self.fetchingQuotaTokens[email]?.token == probeToken {
+                        self.fetchingQuotaTokens.removeValue(forKey: email)
+                        self.fetchingQuotaEmails.remove(email)
+                    }
+
+                    guard currentEpoch == self.quotaEpoch(for: slot),
+                          !self.isSlotSwitchInProgress(for: slot),
+                          !(slot == .activeApp && self.hasSharedKeychainMismatch) else {
+                        return
+                    }
+                    let latestTargets = AccountQuotaManager.resolveActiveQuotaTargets(
+                        profiles: self.profiles,
+                        activeAppEmail: self.resolvedExpectedAppEmail,
+                        activeCLIEmail: self.activeCLIProfileName,
+                        isCLIIndependentMode: self.isCLIIndependentMode
+                    )
+                    guard latestTargets.contains(where: { $0.slot == slot && $0.email == email }) else {
+                        return
+                    }
+
                     let short = email.components(separatedBy: "@").first ?? email
                     switch result {
                     case .success(let summary):
@@ -1085,6 +1138,8 @@ final class AGYHubStore: ObservableObject {
                         self.lastQuotaFailureTimes[email] = Date()
                     case .failed:
                         self.lastQuotaFailureTimes[email] = Date()
+                    case .slotMismatch:
+                        break
                     }
                 }
             }
@@ -1132,6 +1187,30 @@ final class AGYHubStore: ObservableObject {
         } else {
             selectedSessionUUID = nil
         }
+    }
+
+    /// 清空子 Agent 导航栈，直接返回主界面会话列表
+    func popToRootSessionList() {
+        activeDiagnosticSessionUUID = nil
+        sessionNavigationStack.removeAll()
+        selectedSessionUUID = nil
+    }
+
+    /// 沿面包屑跳回指定祖先节点并截断后续子层级导航栈
+    func navigateToBreadcrumb(uuid: String?) {
+        guard let targetUUID = uuid else {
+            popToRootSessionList()
+            return
+        }
+        guard targetUUID != selectedSessionUUID else { return }
+        activeDiagnosticSessionUUID = nil
+        if let idx = sessionNavigationStack.firstIndex(of: targetUUID) {
+            sessionNavigationStack = Array(sessionNavigationStack.prefix(idx))
+        } else {
+            sessionNavigationStack.removeAll()
+        }
+        selectedSessionUUID = targetUUID
+        fetchSessionDiagnostics(uuid: targetUUID, force: false)
     }
 
     func openSessionDiagnostics(uuid: String) {
@@ -1357,6 +1436,7 @@ final class AGYHubStore: ObservableObject {
     }
 
     func toggleCLIIndependentMode(_ enabled: Bool) {
+        cliQuotaEpoch &+= 1
         isCLIIndependentMode = enabled
         UserDefaults.standard.set(enabled, forKey: "agyhub.cliIndependentMode")
         let hDir = homeDir
@@ -1671,7 +1751,18 @@ final class AGYHubStore: ObservableObject {
         let detectedStorageEmail = LocalAccountDetector.detectEmailFromUserDataDir(defaultAntigravityUserData)
         appStorageEmail = detectedStorageEmail ?? ""
         if expectedAppEmail.isEmpty {
-            expectedAppEmail = appStorageEmail
+            if let existingExpected = CLIAccountManager.readExpectedAppStateFile(profilesRootDir: profilesRootDir),
+               !existingExpected.email.isEmpty {
+                let desktopAppAuthDate = CLIAccountManager.detectLatestDesktopAppAuthDate(homeDir: homeDir)
+                let initialExpected = KeychainDriftPolicy.effectiveExpectedAppEmail(
+                    appStorageEmail: appStorageEmail,
+                    desktopAppAuthDate: desktopAppAuthDate,
+                    expectedSwitchState: existingExpected
+                )
+                expectedAppEmail = initialExpected.isEmpty ? existingExpected.email : initialExpected
+            } else {
+                expectedAppEmail = appStorageEmail
+            }
         }
         let defaultEmail = detectedStorageEmail ?? ""
         let mainName = defaultEmail.isEmpty ? "默认主应用" : defaultEmail
@@ -1765,7 +1856,9 @@ final class AGYHubStore: ObservableObject {
             activeProfileName = mainProfile.name
         }
         saveProfiles()
-        refreshCLIAccountState()
+        if isMonitoringEnabled {
+            refreshCLIAccountState()
+        }
     }
 
     private var isRefreshingCLIState = false
@@ -1787,6 +1880,9 @@ final class AGYHubStore: ObservableObject {
         let authorized = isCLIVaultAuthorized
         let storageEmailSnapshot = appStorageEmail
         let isIndependent = isCLIIndependentMode
+        let capturedExpectedAtStart = expectedAppEmail
+        let capturedAppEpochAtStart = appQuotaEpoch
+        let capturedCliEpochAtStart = cliQuotaEpoch
         DispatchQueue.global(qos: .utility).async { [weak self] in
             autoreleasepool {
                 let mainDir = "\(hDir)/Library/Application Support/Antigravity"
@@ -1842,7 +1938,10 @@ final class AGYHubStore: ObservableObject {
                     if self.sharedKeychainResolution != resolution {
                         self.sharedKeychainResolution = resolution
                     }
-                    if self.expectedAppEmail != computedExpectedApp {
+                    if self.appQuotaEpoch == capturedAppEpochAtStart,
+                       self.expectedAppEmail == capturedExpectedAtStart,
+                       self.expectedAppEmail != computedExpectedApp {
+                        self.appQuotaEpoch &+= 1
                         self.expectedAppEmail = computedExpectedApp
                     }
                     if self.backgroundCLIProcessCount != bgCount {
@@ -1851,7 +1950,10 @@ final class AGYHubStore: ObservableObject {
                     if self.isCLITokenFileReady != tokenFileReady {
                         self.isCLITokenFileReady = tokenFileReady
                     }
-                    if self.activeCLIProfileName != activeCLI {
+                    if !self.isCLISwitchInProgress,
+                       self.cliQuotaEpoch == capturedCliEpochAtStart,
+                       self.activeCLIProfileName != activeCLI {
+                        self.cliQuotaEpoch &+= 1
                         self.activeCLIProfileName = activeCLI
                     }
                     if self.savedCLISlots != slots {
@@ -1976,6 +2078,8 @@ final class AGYHubStore: ObservableObject {
 
         let hDir = homeDir
         let previousCLIEmail = activeCLIProfileName
+        cliQuotaEpoch &+= 1
+        isCLISwitchInProgress = true
         showBanner(L10n.bannerSwitchingCLI(targetEmail, resolvedLanguage))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = CLIAccountManager.switchCLITokenFile(
@@ -1988,6 +2092,7 @@ final class AGYHubStore: ObservableObject {
             let bgCount = CLIAccountManager.runningBackgroundCLIProcessCount()
             Task { @MainActor in
                 guard let self = self else { return }
+                self.isCLISwitchInProgress = false
                 self.savedCLISlots = result.savedSlots
                 self.backgroundCLIProcessCount = bgCount
                 self.isCLITokenFileReady = tokenFileReady
@@ -2030,6 +2135,8 @@ final class AGYHubStore: ObservableObject {
         let currentOwner = sharedKeychainResolution.email
         let hDir = homeDir
         let pRoot = profilesRootDir
+        appQuotaEpoch &+= 1
+        isAppSwitchInProgress = true
         showBanner(L10n.bannerRestoringAppKeychain(targetEmail, resolvedLanguage))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = CLIAccountManager.restoreSharedKeychainFromVault(
@@ -2041,6 +2148,7 @@ final class AGYHubStore: ObservableObject {
             let bgCount = CLIAccountManager.runningBackgroundCLIProcessCount()
             Task { @MainActor in
                 guard let self = self else { return }
+                self.isAppSwitchInProgress = false
                 self.savedCLISlots = result.savedSlots
                 self.backgroundCLIProcessCount = bgCount
                 if result.switchedImmediately {
@@ -2051,6 +2159,7 @@ final class AGYHubStore: ObservableObject {
                         isTokenRefreshHijack: false
                     )
                     self.showBanner(L10n.bannerRestoredAppKeychain(targetEmail, bgCount: bgCount, self.resolvedLanguage))
+                    self.refreshQuotasIfNeeded(force: true)
                 } else {
                     self.showBanner(L10n.bannerRestoreMissingSlot(targetEmail, self.resolvedLanguage))
                 }
@@ -2135,6 +2244,7 @@ final class AGYHubStore: ObservableObject {
             sharedKeychainEmail: sharedKeychainResolution.email,
             activeProfileName: activeProfileName
         )
+        appQuotaEpoch &+= 1
         isAppSwitchInProgress = true
         activeProfileName = profile.name
         observedActiveAppEmail = targetEmail.lowercased()
@@ -2245,11 +2355,17 @@ final class AGYHubStore: ObservableObject {
                 self.isAppSwitchInProgress = false
                 self.savedCLISlots = vaultRes.savedSlots
                 let targetKey = targetEmail.lowercased()
-                self.lastQuotaFailureTimes.removeValue(forKey: targetKey)
-                self.expiredQuotaEmails.remove(targetKey)
                 if vaultRes.switchedImmediately {
+                    self.lastQuotaFailureTimes.removeValue(forKey: targetKey)
+                    self.expiredQuotaEmails.remove(targetKey)
                     self.expectedAppEmail = targetEmail
                     self.appStorageEmail = targetEmail
+                    self.sharedKeychainResolution = CLIAccountManager.SharedKeychainResolution(
+                        email: targetEmail,
+                        source: .agyhubSwitch,
+                        eventDate: Date(),
+                        isTokenRefreshHijack: false
+                    )
                     self.showBanner(L10n.bannerSwitchedApp(profile.name, self.resolvedLanguage))
                     self.refreshQuotasIfNeeded(force: true)
                 } else {

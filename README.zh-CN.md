@@ -39,7 +39,7 @@
     <td align="center" width="50%">
       <img src="./assets/screenshot-detail-zh.png" alt="会话详情 —— 运行中子 Agent 速率、上下文来源环图与缓存失效诊断" width="100%" />
       <br />
-      <em>子 Agent 实时速率监控、上下文来源占比环图与缓存失效多花费用诊断。</em>
+      <em>子 Agent 实时速率监控、账单 / Token 构成占比与缓存失效多花费用诊断。</em>
     </td>
     <td align="center" width="50%">
       <img src="./assets/screenshot-usage-zh.png" alt="近 7 天用量趋势 —— 逐日堆叠柱状图与分模型费用统计" width="100%" />
