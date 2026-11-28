@@ -3089,7 +3089,9 @@ enum LiveTelemetryPolicy {
             return rx * rx + ry * ry
         }
 
-        var bestCandidate: (agentId: String, dist: CGFloat, isRunning: Bool)? = nil
+        var bestAgentId: String? = nil
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        var bestIsRunning: Bool = false
 
         for series in resolvedSeries {
             var minDistSq = CGFloat.greatestFiniteMagnitude
@@ -3112,17 +3114,21 @@ enum LiveTelemetryPolicy {
             guard dist <= hitRadiusPixels else { continue }
             let running = runningById[series.agentId] ?? false
 
-            if let cur = bestCandidate {
-                let nearTie = abs(dist - cur.dist) <= 2.0
-                if (nearTie && running && !cur.isRunning) || (!nearTie && dist < cur.dist) {
-                    bestCandidate = (series.agentId, dist, running)
+            if bestAgentId != nil {
+                let nearTie = abs(dist - bestDist) <= 2.0
+                if (nearTie && running && !bestIsRunning) || (!nearTie && dist < bestDist) {
+                    bestAgentId = series.agentId
+                    bestDist = dist
+                    bestIsRunning = running
                 }
             } else {
-                bestCandidate = (series.agentId, dist, running)
+                bestAgentId = series.agentId
+                bestDist = dist
+                bestIsRunning = running
             }
         }
 
-        return bestCandidate?.agentId
+        return bestAgentId
     }
 
     static func matchingSessionId(
